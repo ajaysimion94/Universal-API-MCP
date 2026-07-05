@@ -1,0 +1,46 @@
+server:
+  port: 8080
+  address: 127.0.0.1   # trusted internal network only — no auth until Phase 6 (plan.md §1)
+
+spring:
+  application:
+    name: mcp-server
+  datasource:
+    url: jdbc:postgresql://localhost:5432/mcpserver
+    username: ${DB_USER:ajaysimion}
+    password: ${DB_PASSWORD:}
+    driver-class-name: org.postgresql.Driver
+  sql:
+    init:
+      mode: always          # run schema.sql on startup (idempotent)
+      continue-on-error: false
+  servlet:
+    multipart:
+      max-file-size: 100MB
+      max-request-size: 100MB
+
+# RAG / search configuration
+rag:
+  embedding:
+    model-dir: ${user.dir}/models/nomic-embed-text-v1.5
+    model-file: model_quantized.onnx
+    dimensions: 768
+    max-sequence-length: 512
+  search:
+    vector-top-k: 40
+    lexical-top-k: 40
+    rrf-k: 60               # Reciprocal Rank Fusion constant
+    final-top-n: 10         # results after rerank
+  ingestion:
+    target-chunk-tokens: 700
+    chunk-overlap-tokens: 100
+  web:
+    searxng-url: http://127.0.0.1:8888
+    page-count: 5
+    chunk-per-query: 8
+    page-fetch-timeout-seconds: 10
+    max-content-chars: 20000
+
+logging:
+  level:
+    com.mcpserver: INFO

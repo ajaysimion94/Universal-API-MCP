@@ -1,0 +1,20 @@
+# Build output
+mcp-server/target/
+
+# Node / frontend
+mcp-server/webui/node_modules/
+mcp-server/webui/dist/
+
+# ONNX models (downloaded, not committed — ~131MB)
+mcp-server/models/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+
+# Logs
+*.log
