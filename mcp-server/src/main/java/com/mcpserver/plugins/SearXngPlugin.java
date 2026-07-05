@@ -19,6 +19,7 @@ public class SearXngPlugin implements Plugin {
     private static final Logger log = LoggerFactory.getLogger(SearXngPlugin.class);
     private static final String PLUGIN_ID = "searxng";
     private static final String INSTALL_DIR = "lib/searxng";
+    private static final String REPO_URL = "https://github.com/searxng/searxng.git";
 
     private final PluginStateStore stateStore;
     private final String searxngUrl;
@@ -60,26 +61,41 @@ public class SearXngPlugin implements Plugin {
 
     @Override
     public void install() throws Exception {
-        Path dir = Path.of(INSTALL_DIR);
-        Files.createDirectories(dir);
-        Path venvDir = dir.resolve("venv");
+        try {
+            Path dir = Path.of(INSTALL_DIR);
+            Files.createDirectories(dir);
+            Path srcDir = dir.resolve("src");
+            Path venvDir = dir.resolve("venv");
 
-        if (!Files.exists(venvDir)) {
-            String python = detectPython();
-            log.info("Creating Python venv with {}", python);
-            runCommand(python, "-m", "venv", venvDir.toString());
+            if (!Files.exists(srcDir.resolve("searx"))) {
+                log.info("Cloning SearXNG source from {}", REPO_URL);
+                runCommand("git", "clone", "--depth", "1", REPO_URL, srcDir.toString());
+            }
+
+            if (!Files.exists(venvDir)) {
+                String python = detectPython();
+                log.info("Creating Python venv with {}", python);
+                runCommand(python, "-m", "venv", venvDir.toString());
+            }
+
+            Path pip = venvBin("pip");
+            if (!Files.exists(dir.resolve(".installed"))) {
+                log.info("Installing SearXNG and its dependencies from source");
+                runCommand(pip.toString(), "install", "--upgrade", "pip", "setuptools", "wheel");
+                // requirements.txt must land first: setup.py imports the package at build
+                // time (e.g. msgspec), which fails inside pip's isolated build env otherwise.
+                runCommand(pip.toString(), "install", "-r", srcDir.resolve("requirements.txt").toString());
+                runCommand(pip.toString(), "install", "--no-build-isolation", "-e", srcDir.toString());
+                Files.writeString(dir.resolve(".installed"), "installed");
+            }
+
+            writeSettingsFile(dir);
+            stateStore.setInstalled(PLUGIN_ID, true);
+            errorMsg = null;
+        } catch (Exception e) {
+            errorMsg = e.getMessage();
+            throw e;
         }
-
-        Path pip = venvBin("pip");
-        if (!Files.exists(dir.resolve(".installed"))) {
-            log.info("Installing searxng in venv");
-            runCommand(pip.toString(), "install", "searxng");
-            Files.writeString(dir.resolve(".installed"), "installed");
-        }
-
-        writeSettingsFile(dir);
-        stateStore.setInstalled(PLUGIN_ID, true);
-        errorMsg = null;
     }
 
     @Override
@@ -104,12 +120,13 @@ public class SearXngPlugin implements Plugin {
         if (process != null && process.isAlive()) return;
 
         Path dir = Path.of(INSTALL_DIR);
-        Path searxngRun = venvBin(isWindows() ? "python" : "searxng-run");
+        Path srcDir = dir.resolve("src");
+        Path python = venvBin("python").toAbsolutePath();
         Path settingsFile = dir.resolve("settings.yml");
 
-        ProcessBuilder pb = new ProcessBuilder(searxngRun.toString());
+        ProcessBuilder pb = new ProcessBuilder(python.toString(), "-m", "searx.webapp");
         pb.environment().put("SEARXNG_SETTINGS_PATH", settingsFile.toAbsolutePath().toString());
-        pb.directory(dir.toFile());
+        pb.directory(srcDir.toFile());
         pb.redirectErrorStream(true);
         process = pb.start();
         log.info("SearXNG process started (pid={})", process.pid());
