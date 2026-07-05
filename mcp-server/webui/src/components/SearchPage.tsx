@@ -211,6 +211,17 @@ export function SearchPage() {
             <div className="setup-banner-content">
               <span className="setup-banner-title">Search requires setup</span>
               <span className="setup-banner-text">{response.message}</span>
+              {response.pluginStatus && response.pluginStatus.length > 0 && (
+                <ul className="setup-plugin-list">
+                  {response.pluginStatus.map((plugin) => (
+                    <li key={plugin.id} className="setup-plugin-item">
+                      <span className="setup-plugin-name">{plugin.name}</span>
+                      <span className="setup-plugin-status mono">{plugin.status}</span>
+                      <span className="setup-plugin-health">{plugin.health}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
             <Link to="/plugins" className="btn btn-primary">
               Go to Plugins

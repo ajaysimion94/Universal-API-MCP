@@ -131,6 +131,13 @@ export interface SearchResponse {
   tool?: string;
   message?: string;
   requiresSetup?: string[];
+  pluginStatus?: {
+    id: string;
+    name: string;
+    status: PluginStatus;
+    ready: boolean;
+    health: string;
+  }[];
 }
 
 export async function search(query: string, topK = 20, web = false): Promise<SearchResponse> {

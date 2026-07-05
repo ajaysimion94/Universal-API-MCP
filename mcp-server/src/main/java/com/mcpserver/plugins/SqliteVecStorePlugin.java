@@ -89,11 +89,7 @@ public class SqliteVecStorePlugin implements Plugin {
             log.info("Extracted sqlite-vec to {}", libPath);
         }
 
-        String extPath = libPath.toAbsolutePath().toString();
-        if (extPath.endsWith(ext)) {
-            extPath = extPath.substring(0, extPath.length() - ext.length());
-        }
-        chunkRepository.loadVecExtensionAndInit(extPath);
+        chunkRepository.loadVecExtensionAndInit(extensionLoadPath(libPath));
         stateStore.setInstalled(PLUGIN_ID, true);
         errorMsg = null;
     }
@@ -127,15 +123,15 @@ public class SqliteVecStorePlugin implements Plugin {
         Path libPath = Path.of(LIB_DIR, "vec0" + ext);
         if (!Files.exists(libPath)) return;
         try {
-            String extPath = libPath.toAbsolutePath().toString();
-            if (extPath.endsWith(ext)) {
-                extPath = extPath.substring(0, extPath.length() - ext.length());
-            }
-            chunkRepository.loadVecExtensionAndInit(extPath);
+            chunkRepository.loadVecExtensionAndInit(extensionLoadPath(libPath));
         } catch (Exception e) {
             errorMsg = "Failed to load sqlite-vec: " + e.getMessage();
             log.warn("Failed to load sqlite-vec extension: {}", e.getMessage());
         }
+    }
+
+    private static String extensionLoadPath(Path libPath) {
+        return libPath.toAbsolutePath().normalize().toString();
     }
 
     private void extractTarGz(Path tarGzPath, Path destDir) throws IOException, InterruptedException {

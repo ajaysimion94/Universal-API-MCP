@@ -47,7 +47,17 @@ public class SearchController {
             response.put("query", query);
             response.put("mode", "notReady");
             response.put("requiresSetup", notReady);
-            response.put("message", "Search requires plugins to be installed. Visit the Plugins page to set up the embedding model and vector store.");
+            response.put("pluginStatus", pluginRegistry.getAll().stream()
+                    .filter(p -> notReady.contains(p.id()))
+                    .map(p -> Map.of(
+                            "id", p.id(),
+                            "name", p.name(),
+                            "status", p.status().name(),
+                            "ready", p.isReady(),
+                            "health", p.health()
+                    ))
+                    .toList());
+            response.put("message", "Search requires the embedding model and vector store to be active. Open Plugins and check the listed plugin health.");
             response.put("results", List.of());
             return response;
         }

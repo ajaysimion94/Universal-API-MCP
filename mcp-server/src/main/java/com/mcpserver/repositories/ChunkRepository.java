@@ -128,9 +128,8 @@ public class ChunkRepository {
                 SELECT c.id, c.source_file_id, c.source_name, c.source_path, c.content, c.embedding, c.acl_tags, c.position, c.token_count, c.created_at
                 FROM chunks_vec v
                 JOIN chunks c ON c.id = v.chunk_id
-                WHERE v.embedding MATCH ?
+                WHERE v.embedding MATCH ? AND k = ?
                 ORDER BY v.distance
-                LIMIT ?
                 """;
         try {
             return jdbc.query(sql, MAPPER, queryJson, topK);

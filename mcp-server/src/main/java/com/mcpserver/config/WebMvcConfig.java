@@ -10,9 +10,11 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     @Override
     public void addViewControllers(ViewControllerRegistry registry) {
-        // SPA fallback: unknown non-API paths serve index.html so client-side routing works.
-        registry.addViewController("/{spring:[^\\.]*}").setViewName("forward:/index.html");
-        registry.addViewController("/{spring:[^\\.]*}/**").setViewName("forward:/index.html");
+        // SPA route forwards. Keep these explicit so hashed Vite assets under /assets
+        // are served as static files instead of being forwarded to index.html.
+        registry.addViewController("/files").setViewName("forward:/index.html");
+        registry.addViewController("/files/**").setViewName("forward:/index.html");
+        registry.addViewController("/plugins").setViewName("forward:/index.html");
     }
 
     @Override

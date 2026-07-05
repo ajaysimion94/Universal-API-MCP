@@ -92,3 +92,9 @@ Format:
 **Re-litigates:** The settled "PostgreSQL + pgvector first (HNSW)" decision from plan.md. Scale-up path: sqlite-vec HNSW for moderate corpora; swap the store seam to pgvector if chunks exceed ~50k.
 **Status:** active (supersedes the Postgres+pgvector storage decision)
 **Refs:** `docs/plugins-plan.md`; `DECISIONS.md`; `AGENTS.md`; `config/DatasourceConfig.java`; `repositories/ChunkRepository.java`; `plugins/` package
+
+### 2026-07-06 — SQLite uses one shared connection so sqlite-vec stays loaded
+**Decision:** Use Spring's `SingleConnectionDataSource` for embedded SQLite instead of returning fresh connections from `SQLiteDataSource`.
+**Why:** SQLite loadable extensions are connection-scoped. The sqlite-vec plugin can load `vec0` successfully at startup, but later ingestion/search calls on a different connection see `no such module: vec0`. A single shared embedded connection keeps the extension active across plugin init, chunk writes, and search.
+**Status:** active
+**Refs:** `config/DatasourceConfig.java`; `repositories/ChunkRepository.java`; `plugins/SqliteVecStorePlugin.java`
