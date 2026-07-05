@@ -19,4 +19,7 @@ public interface EmbeddingClient {
 
     /** Dimensionality of the embedding vector. */
     int dimensions();
+
+    /** Whether the embedding model is loaded and ready to produce vectors. */
+    default boolean isReady() { return true; }
 }

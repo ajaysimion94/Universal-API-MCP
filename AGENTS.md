@@ -8,7 +8,7 @@ High-signal notes for OpenCode sessions. Read this before working in this repo.
 - `docs/plan.md` — execution tracker (**in what order**, E2E checklists per phase). Check which phase is current before adding features; deliver per the phase's build + E2E checklist.
 - `.impeccable.md` — **read this before any UI/design work**. It holds the design context (users, brand, aesthetic direction, anti-references) that the `impeccable` skill requires. Do not start frontend work without it.
 - `DECISIONS.md` — append-only log of significant choices made (stack, scope, sequencing, conventions). **Read it for context, and add an entry whenever you make a non-trivial decision** — don't let decisions live only in chat.
-- `DEVELOPMENT.md` — dev workflow, project layout, testing, build internals. `DEPLOYMENT.md` — setup, build, run, config, API reference. `SETUP-WINDOWS.md` / `SETUP-LINUX.md` — platform setup. `README.md` is the navigation hub.
+- `DEVELOPMENT.md` — dev workflow, project layout, testing, build internals. `DEPLOYMENT.md` — setup, build, run, config, API reference. `README.md` is the navigation hub.
 
 ## Layout
 
@@ -56,11 +56,12 @@ Two-process dev mode is the norm, not a single process:
 
 ## Backend conventions
 
-- Package root: `com.mcpserver`. Module subpackages per `docs/product-idea.md` §4: `config`, `controllers`, `services`, `repositories`, `models`, plus `rag/{chunking,embedding,retrieval,reranker}` and others as phases land.
+- Package root: `com.mcpserver`. Module subpackages per `docs/product-idea.md` §4: `config`, `controllers`, `services`, `repositories`, `models`, plus `rag/{chunking,embedding,retrieval,reranker}` and `plugins/`.
 - **Separate business logic from MCP protocol handling** — `services/`/`repositories/` reusable outside MCP; `mcp/` only adapts to the protocol; the Web UI is a REST channel over the same services, never a second implementation.
-- The chunk store uses **PostgreSQL + pgvector** (direct JDBC via `JdbcTemplate`, not JPA — pgvector's `vector` type has no JPA binding). `schema.sql` runs on startup (`spring.sql.init.mode=always`); the `vector` extension must be installed externally first.
-- The RAG pipeline lives in `rag/{chunking,embedding,retrieval,reranker,web}` with swappable seams (`EmbeddingClient`, `SearchPipeline`, `Reranker`, `WebFetcher`). The default embedding impl runs **nomic-embed-text-v1.5 ONNX in-process** via ONNX Runtime + DJL tokenizer — the model files live in `mcp-server/models/` (gitignored, ~131MB; download separately). Web augmentation uses a local **SearXNG** instance (native Python process on `127.0.0.1:8888`) — must be started separately.
-- File nodes are still **in-memory** (`InMemoryFileRepository`) — resets on restart. Chunks persist in Postgres. On restart, orphaned chunks from deleted/re-uploaded files may remain because the file IDs reset; truncate `chunks` if needed.
+- The chunk store uses **embedded SQLite + sqlite-vec + FTS5** (via `org.xerial:sqlite-jdbc`, bundled native SQLite per-platform in the JAR). The sqlite-vec extension is downloaded on demand by the `SqliteVecStorePlugin` and loaded via `SELECT load_extension(...)`. FTS5 is built into SQLite. The base `chunks` table + `chunks_fts` (FTS5) are created by `schema.sql` on startup; the `chunks_vec` (vec0) virtual table is created by the plugin after extension load. `DatasourceConfig` provides a `SQLiteDataSource` with `enableLoadExtension=true` and WAL mode.
+- The RAG pipeline lives in `rag/{chunking,embedding,retrieval,reranker,web}` with swappable seams (`EmbeddingClient`, `SearchPipeline`, `Reranker`, `WebFetcher`). The default embedding impl runs **nomic-embed-text-v1.5 ONNX in-process** via ONNX Runtime + DJL tokenizer — the model files live in `mcp-server/models/` (gitignored, ~131MB; downloaded via the Plugins page). Web augmentation uses a local **SearXNG** instance (native Python process on `127.0.0.1:8888`) — also managed via the Plugins page.
+- **Plugins system** (`plugins/` package): `Plugin` interface, `PluginRegistry`, `PluginStateStore` (JSON file), `PluginController` (`/api/plugins`). Three plugins: `SqliteVecStorePlugin` (vector store), `NomicEmbeddingPlugin` (embedding model), `SearXngPlugin` (web search). The app boots in degraded mode when plugins aren't installed — file management works, search/ingestion return a "not ready" state.
+- File nodes are still **in-memory** (`InMemoryFileRepository`) — resets on restart. Chunks persist in SQLite. On restart, orphaned chunks from deleted/re-uploaded files may remain because the file IDs reset; delete the `data/mcpserver.db` file if needed.
 - Errors: `IllegalArgumentException` → 400, `IllegalStateException` → 409, handled in controller `@ExceptionHandler` methods. Follow that pattern for new controllers.
 
 ## Frontend conventions
@@ -74,31 +75,17 @@ Two-process dev mode is the norm, not a single process:
 
 ## Testing
 
-- Backend: JUnit 5 + Spring Boot Test + AssertJ. `@SpringBootTest` in `FileServiceTests` boots the full context (including ONNX model load + Postgres) — tests take ~7s. Run a single test: `mvn test -Dtest=FileServiceTests#canUploadFileAndItAppearsAsAChild`.
-- **Tests write to the real `mcpserver` Postgres DB** (chunks from test uploads persist). Truncate `chunks` before a clean run: `psql -d mcpserver -c "TRUNCATE chunks;"`.
+- Backend: JUnit 5 + Spring Boot Test + AssertJ. `@SpringBootTest` in `FileServiceTests` boots the full context (including ONNX model load + SQLite) — tests take ~7s. Run a single test: `mvn test -Dtest=FileServiceTests#canUploadFileAndItAppearsAsAChild`.
+- **Tests write to the SQLite DB** (`data/mcpserver.db`). Delete the file for a clean run: `rm -f mcp-server/data/mcpserver.db`.
 - Frontend: no test runner configured yet. `npm run typecheck` is the only gate.
 - Phase 1 adds a golden-set eval harness (`eval-harness/golden-set/`) + CI regression gate — not yet present.
 
 ## Setup prerequisites
 
-Java 21+, Maven 3.9+, Node 20+ (built on 24), npm 10+. Postgres 15 with **pgvector 0.8.4** installed (built from source against pg15 — the Homebrew bottle only ships for pg17/18). The `mcpserver` DB must exist with `CREATE EXTENSION vector` run once. The nomic-embed-text-v1.5 ONNX model + tokenizer must be downloaded to `mcp-server/models/nomic-embed-text-v1.5/` (gitignored, ~131MB).
+Java 21+, Maven 3.9+, Node 20+ (built on 24), npm 10+. **No external database or services required** — the app uses embedded SQLite (bundled in the JAR via `org.xerial:sqlite-jdbc`) and downloads the sqlite-vec extension + nomic embedding model on demand via the Plugins page. SearXNG (optional, for web search) is also managed from the Plugins page.
 
 ```sh
-# pgvector (built against pg15 — Homebrew bottle is pg17/18 only)
-git clone --depth 1 --branch v0.8.4 https://github.com/pgvector/pgvector.git /tmp/pgvector
-cd /tmp/pgvector && make PG_CONFIG=$(pg_config --bindir)/pg_config install
-createdb mcpserver && psql -d mcpserver -c "CREATE EXTENSION vector;"
-
-# nomic embedding model (~131MB quantized ONNX)
-mkdir -p mcp-server/models/nomic-embed-text-v1.5
-cd mcp-server/models/nomic-embed-text-v1.5
-curl -L -o model_quantized.onnx "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5/resolve/main/onnx/model_quantized.onnx"
-curl -L -o tokenizer.json "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5/resolve/main/tokenizer.json"
-
-# SearXNG (web search toggle — native Python process, open-source)
-git clone --depth 1 https://github.com/searxng/searxng.git /tmp/searxng
-cd /tmp/searxng && python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt && pip install --no-build-isolation -e .
-# Enable JSON API in settings.yml: search.formats: [html, json], server.port: 8888, server.limiter: false
-SEARXNG_SETTINGS_PATH=/path/to/settings.yml ./venv/bin/searxng-run
+# build + run
+cd mcp-server && mvn package && java -jar target/mcp-server.jar
+# open http://127.0.0.1:8080 → go to /plugins → install what you need
 ```

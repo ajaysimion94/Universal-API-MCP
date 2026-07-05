@@ -473,17 +473,18 @@ E2E test checklist (includes all tests deferred from earlier phases):
   the same services — never a second implementation.
 - **Every tool is an independent module** with a JSON Schema interface and its own tests.
 - **Open-source-first:** the default stack is open source end to end — in-process ONNX embedding +
-  reranking, Caffeine cache (Valkey at scale), Postgres-outbox eventing (Kafka at scale), pgvector,
-  Keycloak (Phase 6). Proprietary services (Microsoft Graph/Entra/Azure Bot) are deferred to Phase 4.
+  reranking, Caffeine cache (Valkey at scale), Postgres-outbox eventing (Kafka at scale), embedded
+  SQLite + sqlite-vec (pgvector at scale), Keycloak (Phase 6). Proprietary services (Microsoft
+  Graph/Entra/Azure Bot) are deferred to Phase 4.
 - **Native processes only (current constraint):** no Docker, Kubernetes, or other virtualization — the
   server is a single runnable JAR with in-process ML inference; PostgreSQL, observability, and (from
   Phase 6) Keycloak run as natively installed services. Containerization is revisited in Phase 5+ only if
   the constraint is lifted.
 - **Settled decisions are not re-litigated:** MCP-over-Streamable-HTTP (stateless mode); deterministic
   workflow engine; preview → single-use confirmation-token approval flow; dedicated agent identity +
-  confused-deputy guard (activated Phase 6); idempotency + audit; pgvector first (HNSW); hybrid search
-  merged via RRF + cross-encoder rerank (ACL filter activates Phase 6); open-source-first stack;
-  in-process ONNX inference (no Ollama, no sidecars); Postgres-outbox-first eventing; Caffeine-first
-  caching; single-tenant posture; `{app}_{request-name}` tool naming doubling as the Web UI `#keyword`
-  grammar; the Web UI as a REST channel over the same services; **auth & access control as the final
-  phase**.
+  confused-deputy guard (activated Phase 6); idempotency + audit; embedded SQLite + sqlite-vec
+  (HNSW at scale via pgvector swap); hybrid search merged via RRF + cross-encoder rerank (ACL filter
+  activates Phase 6); open-source-first stack; in-process ONNX inference (no Ollama, no sidecars);
+  Postgres-outbox-first eventing; Caffeine-first caching; single-tenant posture;
+  `{app}_{request-name}` tool naming doubling as the Web UI `#keyword` grammar; the Web UI as a REST
+  channel over the same services; **auth & access control as the final phase**.

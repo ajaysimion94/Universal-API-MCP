@@ -1,28 +1,23 @@
 package com.mcpserver.controllers;
 
 import com.mcpserver.rag.retrieval.SearchPipeline;
+import com.mcpserver.services.SearchService;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Search REST endpoint — the context/retrieval path (plan.md §2.1, §5.6, §5.8).
- * <p>
- * Plain keywords run RAG retrieval and return cited context. {@code #keyword} invocations
- * are the action path (Phase 3); until tools are registered, they return a structured
- * "no tools" response deterministically — no LLM in the loop. When {@code web=true},
- * results are augmented with live-web-fetched content (in-memory, not persisted).
- */
 @RestController
 @RequestMapping("/api/search")
 public class SearchController {
 
     private final SearchPipeline searchPipeline;
+    private final SearchService searchService;
 
-    public SearchController(SearchPipeline searchPipeline) {
+    public SearchController(SearchPipeline searchPipeline, SearchService searchService) {
         this.searchPipeline = searchPipeline;
+        this.searchService = searchService;
     }
 
     @GetMapping
@@ -33,7 +28,6 @@ public class SearchController {
             return Map.of("query", "", "results", List.of(), "mode", "empty");
         }
 
-        // #keyword action path — deterministic tool routing (Phase 3 seam).
         if (query.startsWith("#")) {
             return Map.of(
                     "query", query,
@@ -44,7 +38,17 @@ public class SearchController {
             );
         }
 
-        // Plain keywords → RAG context path (optionally web-augmented).
+        List<String> notReady = searchService.getNotReadyPlugins();
+        if (!notReady.isEmpty()) {
+            Map<String, Object> response = new HashMap<>();
+            response.put("query", query);
+            response.put("mode", "notReady");
+            response.put("requiresSetup", notReady);
+            response.put("message", "Search requires plugins to be installed. Visit the Plugins page to set up the embedding model and vector store.");
+            response.put("results", List.of());
+            return response;
+        }
+
         List<SearchPipeline.SearchResult> results =
                 searchPipeline.search(query, topK, List.of(), web);
 

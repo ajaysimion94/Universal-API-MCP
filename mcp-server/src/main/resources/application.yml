@@ -6,14 +6,12 @@ spring:
   application:
     name: mcp-server
   datasource:
-    url: jdbc:postgresql://localhost:5432/mcpserver
-    username: ${DB_USER:ajaysimion}
-    password: ${DB_PASSWORD:}
-    driver-class-name: org.postgresql.Driver
+    url: jdbc:sqlite:./data/mcpserver.db
+    driver-class-name: org.sqlite.JDBC
   sql:
     init:
-      mode: always          # run schema.sql on startup (idempotent)
-      continue-on-error: false
+      mode: always          # run schema.sql on startup (idempotent); tolerates absent store
+      continue-on-error: true
   servlet:
     multipart:
       max-file-size: 100MB

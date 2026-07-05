@@ -1,12 +1,11 @@
 # Deployment
 
 How to set up, build, and run the MCP Server. For dev workflow (hot reload, testing, build internals),
-see [`DEVELOPMENT.md`](DEVELOPMENT.md). For Windows/Linux-specific setup, see
-[`SETUP-WINDOWS.md`](SETUP-WINDOWS.md) / [`SETUP-LINUX.md`](SETUP-LINUX.md).
+see [`DEVELOPMENT.md`](DEVELOPMENT.md).
 
-> **Cross-platform note:** the build/run commands below work identically on macOS, Linux, and Windows.
-> Only the native-prerequisite setup differs by OS — see
-> [`README.md`](README.md#cross-platform--read-this-before-setup).
+> **Cross-platform:** the build/run commands below work identically on macOS, Linux, and Windows.
+> No external database or services are required — all dependencies are embedded or downloaded
+> via the Plugins page.
 
 ---
 
@@ -18,9 +17,6 @@ cd mcp-server && mvn package
 
 # run it (serves SPA + API on http://127.0.0.1:8080)
 cd mcp-server && java -jar target/mcp-server.jar
-
-# start SearXNG separately (only if you want the web search toggle)
-SEARXNG_SETTINGS_PATH=/tmp/searxng-settings.yml /tmp/searxng/venv/bin/searxng-run
 
 # quick API check
 curl http://127.0.0.1:8080/api/files
@@ -40,89 +36,27 @@ The server binds to `127.0.0.1` only — trusted internal network, no auth yet (
 | Maven | 3.9+ | `mvn -version` |
 | Node.js | 20+ (built and tested on 24) | `node -v` |
 | npm | 10+ | `npm -v` |
-| PostgreSQL | 15+ | `psql --version` |
-| pgvector | 0.8.4 | `psql -d mcpserver -c "SELECT extversion FROM pg_extension WHERE extname='vector';"` |
 | Python | 3.10+ | `python3 --version` (only for SearXNG / web toggle) |
 
-No Docker or virtualization is required — the server ships as a single runnable JAR and all backing
-services run as native processes.
-
-> **Windows users:** see [`SETUP-WINDOWS.md`](SETUP-WINDOWS.md) (Visual Studio build tools for
-> pgvector, PowerShell venv activation, `python -m searx.webapp` instead of `searxng-run`).
-> **Linux users:** see [`SETUP-LINUX.md`](SETUP-LINUX.md) (apt/dnf/pacman, `build-essential` for
-> pgvector, systemd, SELinux/firewall notes).
+No Docker, PostgreSQL, or other external services are required. The app uses embedded SQLite
+(bundled in the JAR via `org.xerial:sqlite-jdbc`) and downloads the sqlite-vec extension + nomic
+embedding model on demand via the Plugins page.
 
 ---
 
 ## One-time setup
 
-### 1. PostgreSQL + pgvector
+**There is no one-time setup.** Build and run the JAR, then open **http://127.0.0.1:8080** and go to
+the **Plugins** page to install what you need:
 
-pgvector must be built from source against your Postgres version (the Homebrew bottle only ships for
-pg17/18). The `mcpserver` DB must exist with the `vector` extension enabled:
+| Plugin | What it does | Install action |
+| --- | --- | --- |
+| **Embedded vector store** | SQLite + sqlite-vec + FTS5 — vector and lexical search | Downloads sqlite-vec native extension (~1-2MB) |
+| **Nomic embedding model** | nomic-embed-text-v1.5 (768-dim) — in-process ONNX embedding | Downloads model + tokenizer (~131MB) from HuggingFace |
+| **SearXNG web search** | Self-hosted meta-search engine for web augmentation (optional) | Creates Python venv + installs searxng; start/stop from UI |
 
-```sh
-# build + install pgvector against pg15
-git clone --depth 1 --branch v0.8.4 https://github.com/pgvector/pgvector.git /tmp/pgvector
-cd /tmp/pgvector && make PG_CONFIG=$(pg_config --bindir)/pg_config install
-
-# create the DB + enable the extension
-createdb mcpserver
-psql -d mcpserver -c "CREATE EXTENSION vector;"
-```
-
-The `chunks` table (with `vector(768)` HNSW index + `tsvector` lexical leg) is created automatically
-from `src/main/resources/schema.sql` on every startup (`spring.sql.init.mode=always`).
-
-### 2. nomic-embed-text-v1.5 ONNX model (~131MB, gitignored)
-
-The embedding model runs in-process via ONNX Runtime — no sidecar. Download it to `mcp-server/models/`:
-
-```sh
-mkdir -p mcp-server/models/nomic-embed-text-v1.5
-cd mcp-server/models/nomic-embed-text-v1.5
-curl -L -o model_quantized.onnx "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5/resolve/main/onnx/model_quantized.onnx"
-curl -L -o tokenizer.json "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5/resolve/main/tokenizer.json"
-```
-
-### 3. SearXNG (optional — only for the Web search toggle)
-
-SearXNG is a self-hosted open-source meta-search engine. It runs as a **native Python process**,
-separate from the MCP server JAR — it is **not** bundled. The Web toggle on the search page won't
-return web results unless SearXNG is running on `127.0.0.1:8888`.
-
-```sh
-git clone --depth 1 https://github.com/searxng/searxng.git /tmp/searxng
-cd /tmp/searxng && python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt && pip install --no-build-isolation -e .
-```
-
-Create a settings file that enables the JSON API (the default config disables it):
-
-```yaml
-# /tmp/searxng-settings.yml
-use_default_settings: true
-general:
-  instance_name: "MCP Local SearXNG"
-search:
-  formats: [html, json]      # ← JSON API must be enabled
-  default_lang: "en"
-server:
-  secret_key: "change-me-to-a-random-string"
-  bind_address: "127.0.0.1"
-  port: 8888
-  limiter: false             # ← disable rate limiting for local use
-redis:
-  url: false
-```
-
-Start it (separate terminal — it stays running alongside the MCP server):
-
-```sh
-SEARXNG_SETTINGS_PATH=/tmp/searxng-settings.yml /tmp/searxng/venv/bin/searxng-run
-```
-
-Verify: `curl "http://127.0.0.1:8888/search?q=test&format=json"` should return JSON with results.
+The app boots in **degraded mode** (file management only) when plugins aren't installed. Install
+the vector store + embedding model to enable search; install SearXNG to enable the web toggle.
 
 ---
 
@@ -135,6 +69,7 @@ java -jar target/mcp-server.jar      # serves SPA + API on http://127.0.0.1:8080
 ```
 
 Open **http://127.0.0.1:8080** — the universal search page (landing). Files & folders is at **/files**.
+Plugins is at **/plugins**.
 
 To run the backend without rebuilding the SPA (fast):
 
@@ -154,17 +89,16 @@ java -jar target/mcp-server.jar      # API works; UI 404s unless SPA was built o
 | --- | --- | --- |
 | `server.port` | `8080` | HTTP port |
 | `server.address` | `127.0.0.1` | Trusted-network bind — do not expose publicly until Phase 6 |
+| `spring.datasource.url` | `jdbc:sqlite:./data/mcpserver.db` | SQLite database path |
 | `spring.sql.init.mode` | `always` | Runs `schema.sql` on startup (idempotent) |
 | `spring.servlet.multipart.max-file-size` | `100MB` | Upload limit |
 | `rag.embedding.model-dir` | `${user.dir}/models/nomic-embed-text-v1.5` | Path to the ONNX model + tokenizer |
-| `rag.search.vector-top-k` | `40` | Candidates from the pgvector leg |
+| `rag.search.vector-top-k` | `40` | Candidates from the vector leg |
 | `rag.search.lexical-top-k` | `40` | Candidates from the FTS leg |
 | `rag.search.rrf-k` | `60` | Reciprocal Rank Fusion constant |
 | `rag.web.searxng-url` | `http://127.0.0.1:8888` | SearXNG JSON API endpoint (web toggle) |
 | `rag.web.page-count` | `5` | Max web pages fetched per query |
 | `rag.web.chunk-per-query` | `8` | Max web chunks embedded in-memory per query |
-
-Override DB credentials via env vars: `DB_USER`, `DB_PASSWORD`.
 
 ---
 
@@ -212,7 +146,7 @@ curl http://127.0.0.1:8080/api/files/root/children
 | --- | --- | --- |
 | `GET` | `/api/search?q=...&topK=20&web=false` | RAG search — cited context from ingested documents |
 
-Plain keywords run the RAG pipeline (embed query → hybrid search: pgvector cosine + PostgreSQL FTS,
+Plain keywords run the RAG pipeline (embed query → hybrid search: sqlite-vec cosine + FTS5,
 RRF-merged → rerank → cited context). `#keyword` invocations are the deterministic tool path (Phase 3
 seam — returns "no tools registered" until then). The server returns **cited context, not generated
 answers**.
@@ -223,7 +157,7 @@ persisted), and merges the web chunks into results tagged `sourceKind="web"` wit
 provenance. Requires SearXNG running; if it's down, the toggle degrades gracefully to local-only.
 
 ```sh
-# upload a document (triggers ingestion: chunk → embed → store in pgvector)
+# upload a document (triggers ingestion: chunk → embed → store)
 curl -X POST http://127.0.0.1:8080/api/files/root/upload -F "file=@runbook.md;type=text/markdown"
 
 # search it (local only)
@@ -235,25 +169,31 @@ curl "http://127.0.0.1:8080/api/search?q=database+outage+failover&web=true"
 
 ---
 
+## The plugins API
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET`  | `/api/plugins` | List all plugins with status |
+| `POST` | `/api/plugins/{id}/install` | Trigger install (returns jobId) |
+| `POST` | `/api/plugins/{id}/enable` | Enable a plugin |
+| `POST` | `/api/plugins/{id}/disable` | Disable a plugin |
+| `POST` | `/api/plugins/{id}/start` | Start a process plugin (SearXNG) |
+| `POST` | `/api/plugins/{id}/stop` | Stop a process plugin (SearXNG) |
+| `GET`  | `/api/plugins/jobs/{jobId}` | Poll install job progress |
+
+---
+
 ## Troubleshooting
 
-- **Server fails to start: "extension vector is not available"** — pgvector isn't installed for your
-  Postgres version. Build it from source (see [One-time setup](#one-time-setup)) and run
-  `CREATE EXTENSION vector;` in the `mcpserver` DB.
-- **Server fails to start: embedding model not found** — the nomic ONNX model isn't in
-  `mcp-server/models/nomic-embed-text-v1.5/`. Download it (see [One-time setup](#one-time-setup)).
-- **Server fails to start: "connection refused" to Postgres** — Postgres isn't running, or auth
-  config blocks the connection. Override credentials: `DB_USER=postgres DB_PASSWORD=... java -jar ...`
 - **Port 8080 already in use** — set `server.port` in `application.yml` or run with
   `--server.port=8081`.
 - **Web toggle shows "web results unavailable"** — SearXNG isn't running on `127.0.0.1:8888`. Start
-  it separately (it's a native Python process, not part of the JAR), and confirm JSON API is enabled
-  in its settings (`search.formats: [html, json]`).
+  it from the Plugins page.
 - **404 on a deep UI route** — only happens if the SPA wasn't bundled (you ran with
   `-Dskip.frontend=true` and there's no `static/index.html`). Build the frontend once with
   `mvn package`, or use the Vite dev server (see [`DEVELOPMENT.md`](DEVELOPMENT.md)).
-- **Tests leave stale chunks in the DB** — `@SpringBootTest` writes to the real `mcpserver` DB. Clean
-  with `psql -d mcpserver -c "TRUNCATE chunks;"`.
+- **Tests leave stale chunks in the DB** — `@SpringBootTest` writes to the SQLite DB. Delete
+  `mcp-server/data/mcpserver.db` for a clean run.
 
 ---
 

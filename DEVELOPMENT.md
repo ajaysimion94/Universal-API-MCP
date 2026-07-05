@@ -1,12 +1,10 @@
 # Development
 
 How to develop the MCP Server — hot reload, project layout, testing, and build internals. For setup
-and running the built JAR, see [`DEPLOYMENT.md`](DEPLOYMENT.md). For Windows/Linux-specific setup,
-see [`SETUP-WINDOWS.md`](SETUP-WINDOWS.md) / [`SETUP-LINUX.md`](SETUP-LINUX.md).
+and running the built JAR, see [`DEPLOYMENT.md`](DEPLOYMENT.md).
 
-> **Cross-platform note:** the commands below work identically on macOS, Linux, and Windows
-> (PowerShell). Only the native-prerequisite setup differs by OS — see
-> [`README.md`](README.md#cross-platform--read-this-before-setup).
+> **Cross-platform:** the commands below work identically on macOS, Linux, and Windows. No
+> OS-specific setup is needed — all dependencies are embedded or downloaded via the Plugins page.
 
 ---
 
@@ -34,15 +32,18 @@ cd mcp-server && mvn test -Dtest=FileServiceTests#canUploadFileAndItAppearsAsACh
 mcp-server/
 ├── pom.xml                  # Maven build — backend + frontend bundled into one JAR
 ├── models/                  # nomic-embed-text-v1.5 ONNX model + tokenizer (gitignored, ~131MB)
+├── data/                    # SQLite database (gitignored)
+├── lib/                     # sqlite-vec native extension (gitignored, downloaded by plugin)
 ├── src/
 │   ├── main/
 │   │   ├── java/com/mcpserver/
 │   │   │   ├── McpServerApplication.java    # Spring Boot entrypoint
-│   │   │   ├── config/                      # WebMvcConfig (SPA fallback, CORS)
+│   │   │   ├── config/                      # WebMvcConfig, DatasourceConfig (SQLite)
 │   │   │   ├── controllers/                 # FileController, SearchController (REST)
 │   │   │   ├── services/                    # FileService, IngestionService, SearchService
-│   │   │   ├── repositories/                # InMemoryFileRepository, ChunkRepository (JDBC)
+│   │   │   ├── repositories/                # InMemoryFileRepository, ChunkRepository (SQLite)
 │   │   │   ├── models/                      # FileNode, Chunk, BulkUploadResult
+│   │   │   ├── plugins/                     # Plugin system (SqliteVecStore, Nomic, SearXNG)
 │   │   │   └── rag/                         # RAG pipeline (swappable seams)
 │   │   │       ├── chunking/                #   Chunker + StructureAwareChunker
 │   │   │       ├── embedding/               #   EmbeddingClient + OnnxEmbeddingClient (nomic)
@@ -51,7 +52,7 @@ mcp-server/
 │   │   │       └── web/                     #   WebFetcher + SearXngWebFetcher
 │   │   └── resources/
 │   │       ├── application.yml              # config
-│   │       ├── schema.sql                   # chunks table (vector(768) HNSW + tsvector)
+│   │       ├── schema.sql                   # chunks table + FTS5 (vec0 created by plugin)
 │   │       └── static/                      # SPA build output lands here (populated by Maven)
 │   └── test/java/com/mcpserver/             # JUnit tests
 └── webui/                  # React + TypeScript SPA (Vite)
@@ -61,7 +62,7 @@ mcp-server/
         ├── main.tsx        # imports styles.css (tokens) + components.css
         ├── api.ts          # all fetch logic lives here
         ├── icons.tsx       # inline SVG icons (16px, currentColor)
-        └── components/     # Topbar, Sidebar, SearchPage, FilesPage, FileTable, Breadcrumbs
+        └── components/     # Topbar, Sidebar, SearchPage, FilesPage, PluginsPage, etc.
 ```
 
 Conventions (full detail in [`AGENTS.md`](AGENTS.md)):
@@ -133,9 +134,9 @@ cd mcp-server/webui && npm run typecheck   # frontend type check
 ```
 
 - Backend: JUnit 5 + Spring Boot Test + AssertJ. `@SpringBootTest` in `FileServiceTests` boots the
-  full context (ONNX model load + Postgres) — tests take ~7s.
-- **Tests write to the real `mcpserver` Postgres DB** (chunks from test uploads persist). Clean with
-  `psql -d mcpserver -c "TRUNCATE chunks;"`.
+  full context (ONNX model load + SQLite) — tests take ~7s.
+- **Tests write to the SQLite DB** (`data/mcpserver.db`). Delete the file for a clean run:
+  `rm -f mcp-server/data/mcpserver.db`.
 - Frontend: no test runner yet; `npm run typecheck` is the only gate.
 
 ---
@@ -164,5 +165,5 @@ UI 404s — either run `mvn package` once, or use the Vite dev server in dev mod
   own Node/npm into `target/` by default, so a system install is only needed for `npm run dev`.
 - **TypeScript build fails on unused imports** — strict mode (`noUnusedLocals`,
   `noUnusedParameters`) is intentional. Remove the unused symbol; don't disable the rule.
-- **Tests leave stale chunks in the DB** — `@SpringBootTest` writes to the real `mcpserver` DB.
-  Clean with `psql -d mcpserver -c "TRUNCATE chunks;"`.
+- **Tests leave stale chunks in the DB** — `@SpringBootTest` writes to the SQLite DB. Delete
+  `mcp-server/data/mcpserver.db` for a clean run.

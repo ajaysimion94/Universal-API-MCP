@@ -1,38 +1,72 @@
 package com.mcpserver.repositories;
 
 import com.mcpserver.models.Chunk;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
-import java.sql.Array;
-import java.sql.PreparedStatement;
+import java.sql.Connection;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-/**
- * JDBC repository over the chunks table (plan.md §3 — direct JDBC to pgvector).
- * <p>
- * Stores embeddings as pgvector {@code vector(768)} and content as a generated tsvector lexical leg.
- */
+import org.springframework.jdbc.core.ConnectionCallback;
+
 @Repository
 public class ChunkRepository {
 
+    private static final Logger log = LoggerFactory.getLogger(ChunkRepository.class);
+
     private final JdbcTemplate jdbc;
+    private volatile boolean vec0Available = false;
 
     public ChunkRepository(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
     }
 
-    private static final RowMapper<Chunk> MAPPER = (rs, rowNum) -> {
-        java.sql.Array aclArr = rs.getArray("acl_tags");
-        String[] acl = aclArr == null ? new String[0] : (String[]) aclArr.getArray();
-        float[] embedding = null;
+    public void enableVec0() {
+        this.vec0Available = true;
+    }
+
+    public boolean isVec0Available() {
+        return vec0Available;
+    }
+
+    public void createVec0Table() {
         try {
-            String embStr = rs.getString("embedding");
-            embedding = embStr != null ? parseVector(embStr) : null;
-        } catch (Exception ignored) {}
+            jdbc.execute("CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(chunk_id TEXT PRIMARY KEY, embedding float[768])");
+            this.vec0Available = true;
+            log.info("chunks_vec (vec0) virtual table created/verified");
+        } catch (Exception e) {
+            log.warn("Failed to create chunks_vec table (sqlite-vec extension may not be loaded): {}", e.getMessage());
+            this.vec0Available = false;
+        }
+    }
+
+    public void loadVecExtensionAndInit(String extensionPath) {
+        jdbc.execute((ConnectionCallback<Void>) con -> {
+            try (Statement st = con.createStatement()) {
+                st.execute("SELECT load_extension('" + extensionPath.replace("'", "''") + "')");
+                log.info("Loaded sqlite-vec extension from {}", extensionPath);
+                st.execute("CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(chunk_id TEXT PRIMARY KEY, embedding float[768])");
+                log.info("chunks_vec (vec0) virtual table created/verified");
+                vec0Available = true;
+            }
+            return null;
+        });
+    }
+
+    private static final RowMapper<Chunk> MAPPER = (rs, rowNum) -> {
+        String aclJson = rs.getString("acl_tags");
+        List<String> acl = parseJsonArray(aclJson);
+        float[] embedding = null;
+        String embStr = rs.getString("embedding");
+        if (embStr != null && !embStr.isBlank()) {
+            embedding = parseJsonFloatArray(embStr);
+        }
         return new Chunk(
                 rs.getString("id"),
                 rs.getString("source_file_id"),
@@ -40,64 +74,89 @@ public class ChunkRepository {
                 rs.getString("source_path"),
                 rs.getString("content"),
                 embedding,
-                Arrays.asList(acl),
+                acl,
                 rs.getInt("position"),
                 rs.getInt("token_count"),
-                rs.getTimestamp("created_at").toInstant()
+                java.time.Instant.parse(rs.getString("created_at"))
         );
     };
 
     public void save(Chunk chunk) {
-        String vectorLit = toVectorLiteral(chunk.embedding());
-        String sql = """
-                INSERT INTO chunks (id, source_file_id, source_name, source_path, content, embedding, acl_tags, position, token_count)
-                VALUES (?::uuid, ?, ?, ?, ?, ?::vector, ?::text[], ?, ?)
-                """;
-        jdbc.execute((java.sql.Connection con) -> {
-            Array aclArray = con.createArrayOf("text", chunk.aclTags().toArray());
-            try (PreparedStatement ps = con.prepareStatement(sql)) {
-                ps.setString(1, chunk.id());
-                ps.setString(2, chunk.sourceFileId());
-                ps.setString(3, chunk.sourceName());
-                ps.setString(4, chunk.sourcePath());
-                ps.setString(5, chunk.content());
-                ps.setString(6, vectorLit);
-                ps.setArray(7, aclArray);
-                ps.setInt(8, chunk.position());
-                ps.setInt(9, chunk.tokenCount());
-                return ps.executeUpdate();
+        String embeddingJson = chunk.embedding() != null ? toJsonFloatArray(chunk.embedding()) : null;
+        String aclJson = toJsonStringArray(chunk.aclTags());
+        jdbc.update(
+                "INSERT OR REPLACE INTO chunks (id, source_file_id, source_name, source_path, content, embedding, acl_tags, position, token_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                chunk.id(), chunk.sourceFileId(), chunk.sourceName(), chunk.sourcePath(),
+                chunk.content(), embeddingJson, aclJson, chunk.position(), chunk.tokenCount()
+        );
+        jdbc.update(
+                "INSERT OR REPLACE INTO chunks_fts (content, chunk_id) VALUES (?, ?)",
+                chunk.content(), chunk.id()
+        );
+        if (vec0Available && embeddingJson != null) {
+            try {
+                jdbc.update(
+                        "INSERT OR REPLACE INTO chunks_vec (chunk_id, embedding) VALUES (?, ?)",
+                        chunk.id(), embeddingJson
+                );
+            } catch (Exception e) {
+                log.warn("Failed to insert into chunks_vec (vec0 may not be ready): {}", e.getMessage());
             }
-        });
+        }
     }
 
     public void deleteBySourceFileId(String sourceFileId) {
+        List<String> chunkIds = jdbc.queryForList(
+                "SELECT id FROM chunks WHERE source_file_id = ?", String.class, sourceFileId);
         jdbc.update("DELETE FROM chunks WHERE source_file_id = ?", sourceFileId);
+        for (String id : chunkIds) {
+            try {
+                jdbc.update("DELETE FROM chunks_fts WHERE chunk_id = ?", id);
+            } catch (Exception ignored) {}
+            if (vec0Available) {
+                try {
+                    jdbc.update("DELETE FROM chunks_vec WHERE chunk_id = ?", id);
+                } catch (Exception ignored) {}
+            }
+        }
     }
 
-    /** Vector cosine ANN over the HNSW index — returns chunks best-first. */
     public List<Chunk> vectorSearch(float[] queryEmbedding, int topK) {
-        String vectorLit = toVectorLiteral(queryEmbedding);
+        if (!vec0Available) return List.of();
+        String queryJson = toJsonFloatArray(queryEmbedding);
         String sql = """
-                SELECT id, source_file_id, source_name, source_path, content, embedding, acl_tags, position, token_count, created_at
-                FROM chunks
-                ORDER BY embedding <=> ?::vector
+                SELECT c.id, c.source_file_id, c.source_name, c.source_path, c.content, c.embedding, c.acl_tags, c.position, c.token_count, c.created_at
+                FROM chunks_vec v
+                JOIN chunks c ON c.id = v.chunk_id
+                WHERE v.embedding MATCH ?
+                ORDER BY v.distance
                 LIMIT ?
                 """;
-        return jdbc.query(sql, MAPPER, vectorLit, topK);
+        try {
+            return jdbc.query(sql, MAPPER, queryJson, topK);
+        } catch (Exception e) {
+            log.warn("Vector search failed: {}", e.getMessage());
+            return List.of();
+        }
     }
 
-    /** Lexical full-text search via ts_rank — returns chunks best-first. */
     public List<Chunk> lexicalSearch(String query, int topK) {
-        String tsQuery = toTsQuery(query);
-        if (tsQuery.isBlank()) return List.of();
+        String ftsQuery = toFtsQuery(query);
+        if (ftsQuery.isBlank()) return List.of();
         String sql = """
-                SELECT id, source_file_id, source_name, source_path, content, embedding, acl_tags, position, token_count, created_at
-                FROM chunks
-                WHERE tsv @@ to_tsquery('english', ?)
-                ORDER BY ts_rank(tsv, to_tsquery('english', ?)) DESC
+                SELECT c.id, c.source_file_id, c.source_name, c.source_path, c.content, c.embedding, c.acl_tags, c.position, c.token_count, c.created_at
+                FROM chunks_fts f
+                JOIN chunks c ON c.id = f.chunk_id
+                WHERE f.content MATCH ?
+                ORDER BY bm25(chunks_fts)
                 LIMIT ?
                 """;
-        return jdbc.query(sql, MAPPER, tsQuery, tsQuery, topK);
+        try {
+            return jdbc.query(sql, MAPPER, ftsQuery, topK);
+        } catch (Exception e) {
+            log.warn("Lexical search failed: {}", e.getMessage());
+            return List.of();
+        }
     }
 
     public long count() {
@@ -105,7 +164,7 @@ public class ChunkRepository {
         return n == null ? 0 : n;
     }
 
-    private static String toVectorLiteral(float[] vec) {
+    private static String toJsonFloatArray(float[] vec) {
         StringBuilder sb = new StringBuilder("[");
         for (int i = 0; i < vec.length; i++) {
             if (i > 0) sb.append(',');
@@ -115,19 +174,51 @@ public class ChunkRepository {
         return sb.toString();
     }
 
-    private static float[] parseVector(String s) {
-        if (s == null || s.isBlank()) return null;
-        s = s.replaceAll("[\\[\\]\\s]", "");
-        String[] parts = s.split(",");
-        float[] out = new float[parts.length];
-        for (int i = 0; i < parts.length; i++) out[i] = Float.parseFloat(parts[i]);
+    private static String toJsonStringArray(List<String> list) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < list.size(); i++) {
+            if (i > 0) sb.append(',');
+            sb.append('"').append(list.get(i).replace("\"", "\\\"")).append('"');
+        }
+        sb.append(']');
+        return sb.toString();
+    }
+
+    private static List<String> parseJsonArray(String json) {
+        if (json == null || json.isBlank() || json.equals("[]")) return List.of();
+        json = json.trim();
+        if (json.startsWith("[")) json = json.substring(1);
+        if (json.endsWith("]")) json = json.substring(0, json.length() - 1);
+        if (json.isBlank()) return List.of();
+        List<String> out = new ArrayList<>();
+        for (String part : json.split(",")) {
+            String s = part.trim();
+            if (s.startsWith("\"")) s = s.substring(1);
+            if (s.endsWith("\"")) s = s.substring(0, s.length() - 1);
+            s = s.replace("\\\"", "\"");
+            if (!s.isEmpty()) out.add(s);
+        }
         return out;
     }
 
-    private static String toTsQuery(String query) {
+    private static float[] parseJsonFloatArray(String json) {
+        if (json == null || json.isBlank()) return null;
+        json = json.trim();
+        if (json.startsWith("[")) json = json.substring(1);
+        if (json.endsWith("]")) json = json.substring(0, json.length() - 1);
+        if (json.isBlank()) return null;
+        String[] parts = json.split(",");
+        float[] out = new float[parts.length];
+        for (int i = 0; i < parts.length; i++) {
+            out[i] = Float.parseFloat(parts[i].trim());
+        }
+        return out;
+    }
+
+    private static String toFtsQuery(String query) {
         String[] terms = query.toLowerCase().replaceAll("[^a-z0-9\\s]", " ").trim().split("\\s+");
         List<String> parts = new ArrayList<>();
         for (String t : terms) if (!t.isBlank()) parts.add(t);
-        return String.join(" & ", parts);
+        return String.join(" ", parts);
     }
 }

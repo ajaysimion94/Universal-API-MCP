@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, Link } from "react-router-dom";
 import { search, SearchResult, SearchResponse } from "../api";
 import {
   SearchIcon,
@@ -162,6 +162,18 @@ export function SearchPage() {
                 <div className="skel-line skel-meta" />
               </div>
             ))}
+          </div>
+        )}
+
+        {!loading && !error && response && response.mode === "notReady" && (
+          <div className="setup-banner" role="status">
+            <div className="setup-banner-content">
+              <span className="setup-banner-title">Search requires setup</span>
+              <span className="setup-banner-text">{response.message}</span>
+            </div>
+            <Link to="/plugins" className="btn btn-primary">
+              Go to Plugins
+            </Link>
           </div>
         )}
 

@@ -8,6 +8,11 @@ mcp-server/webui/dist/
 # ONNX models (downloaded, not committed — ~131MB)
 mcp-server/models/
 
+# SQLite database + plugins
+mcp-server/data/
+mcp-server/lib/
+mcp-server/plugins-state.json
+
 # IDE
 .idea/
 .vscode/

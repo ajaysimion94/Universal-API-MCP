@@ -120,7 +120,7 @@ export interface SearchResult {
 
 export interface SearchResponse {
   query: string;
-  mode: "rag" | "tool" | "empty";
+  mode: "rag" | "tool" | "empty" | "notReady";
   results: SearchResult[];
   total?: number;
   localCount?: number;
@@ -128,10 +128,70 @@ export interface SearchResponse {
   web?: boolean;
   tool?: string;
   message?: string;
+  requiresSetup?: string[];
 }
 
 export async function search(query: string, topK = 20, web = false): Promise<SearchResponse> {
   return json<SearchResponse>(
     await fetch(`/api/search?q=${encodeURIComponent(query)}&topK=${topK}&web=${web}`),
   );
+}
+
+/* ── Plugins ── */
+
+export type PluginStatus =
+  | "NOT_INSTALLED"
+  | "INSTALLING"
+  | "INSTALLED"
+  | "ACTIVE"
+  | "ERROR"
+  | "DISABLED";
+
+export interface PluginInfo {
+  id: string;
+  name: string;
+  description: string;
+  category: "REQUIRED" | "OPTIONAL";
+  status: PluginStatus;
+  enabled: boolean;
+  running: boolean;
+  ready: boolean;
+  health: string;
+}
+
+export interface PluginJob {
+  jobId: string;
+  pluginId: string;
+  status: "running" | "completed" | "failed";
+  error?: string;
+}
+
+const PLUGINS_API = "/api/plugins";
+
+export async function listPlugins(): Promise<PluginInfo[]> {
+  return json<PluginInfo[]>(await fetch(PLUGINS_API));
+}
+
+export async function installPlugin(id: string): Promise<{ jobId: string; status: string }> {
+  return json(await fetch(`${PLUGINS_API}/${id}/install`, { method: "POST" }));
+}
+
+export async function enablePlugin(id: string): Promise<PluginInfo> {
+  return json<PluginInfo>(await fetch(`${PLUGINS_API}/${id}/enable`, { method: "POST" }));
+}
+
+export async function disablePlugin(id: string): Promise<PluginInfo> {
+  return json<PluginInfo>(await fetch(`${PLUGINS_API}/${id}/disable`, { method: "POST" }));
+}
+
+export async function startPlugin(id: string): Promise<PluginInfo> {
+  return json<PluginInfo>(await fetch(`${PLUGINS_API}/${id}/start`, { method: "POST" }));
+}
+
+export async function stopPlugin(id: string): Promise<PluginInfo> {
+  return json<PluginInfo>(await fetch(`${PLUGINS_API}/${id}/stop`, { method: "POST" }));
+}
+
+export async function getPluginJob(jobId: string): Promise<PluginJob> {
+  return json<PluginJob>(await fetch(`${PLUGINS_API}/jobs/${jobId}`));
 }

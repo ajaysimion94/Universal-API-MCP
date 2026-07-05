@@ -20,6 +20,9 @@ export function Topbar() {
           <NavLink to="/files" className={({ isActive }) => "nav-link" + (isActive ? " is-active" : "")}>
             Files
           </NavLink>
+          <NavLink to="/plugins" className={({ isActive }) => "nav-link" + (isActive ? " is-active" : "")}>
+            Plugins
+          </NavLink>
         </nav>
       </div>
 
