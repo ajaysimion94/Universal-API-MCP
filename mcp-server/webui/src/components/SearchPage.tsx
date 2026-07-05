@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
-import { search, SearchResult, SearchResponse } from "../api";
+import { search, listPlugins, PluginInfo, SearchResult, SearchResponse } from "../api";
 import {
   SearchIcon,
   HashIcon,
@@ -8,6 +8,7 @@ import {
   ChevronRightIcon,
   GlobeIcon,
   ExternalLinkIcon,
+  AlertIcon,
 } from "../icons";
 
 interface FileGroup {
@@ -27,7 +28,15 @@ export function SearchPage() {
   const [response, setResponse] = useState<SearchResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [plugins, setPlugins] = useState<PluginInfo[]>([]);
+  const [pluginsLoaded, setPluginsLoaded] = useState(false);
+  const [initialWebWarning, setInitialWebWarning] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const searxngReady = useMemo(() => {
+    const p = plugins.find((p) => p.id === "searxng");
+    return p?.status === "ACTIVE";
+  }, [plugins]);
 
   const runSearch = async (query: string, web: boolean) => {
     const trimmed = query.trim();
@@ -51,11 +60,26 @@ export function SearchPage() {
   };
 
   useEffect(() => {
-    const w = params.get("web") === "1";
-    setWebOn(w);
-    if (initialQuery) runSearch(initialQuery, w);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    listPlugins()
+      .then(setPlugins)
+      .catch(() => {})
+      .finally(() => setPluginsLoaded(true));
   }, []);
+
+  useEffect(() => {
+    if (!pluginsLoaded) return;
+    const urlWeb = params.get("web") === "1";
+    const q = params.get("q") ?? "";
+    if (urlWeb && !searxngReady) {
+      setWebOn(false);
+      setInitialWebWarning(true);
+      if (q.trim()) runSearch(q, false);
+    } else {
+      setWebOn(urlWeb);
+      if (q.trim()) runSearch(q, urlWeb);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pluginsLoaded]);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -126,10 +150,11 @@ export function SearchPage() {
               placeholder="Search documents, runbooks, SOPs… or #tool_name"
               aria-label="Search query"
             />
-            <label className="web-toggle" title="Augment results with live web content">
+            <label className="web-toggle" title={!searxngReady ? "Web search requires SearXNG — install on the Plugins page" : "Augment results with live web content"}>
               <input
                 type="checkbox"
                 checked={webOn}
+                disabled={!searxngReady}
                 onChange={(e) => {
                   setWebOn(e.target.checked);
                   if (input.trim()) runSearch(input, e.target.checked);
@@ -149,6 +174,22 @@ export function SearchPage() {
         {error && (
           <div className="error-banner" role="alert">
             {error}
+          </div>
+        )}
+
+        {initialWebWarning && (
+          <div className="warning-banner" role="status">
+            <AlertIcon size={16} />
+            <span>Web search is unavailable — the SearXNG plugin is not installed or active.</span>
+            <Link to="/plugins" className="btn btn-sm">Go to Plugins</Link>
+          </div>
+        )}
+
+        {!initialWebWarning && response?.mode === "rag" && response.webReady === false && (
+          <div className="warning-banner" role="status">
+            <AlertIcon size={16} />
+            <span>{response.webMessage || "Web augmentation requires the SearXNG plugin."}</span>
+            <Link to="/plugins" className="btn btn-sm">Go to Plugins</Link>
           </div>
         )}
 

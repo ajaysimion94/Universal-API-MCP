@@ -1,5 +1,6 @@
 package com.mcpserver.controllers;
 
+import com.mcpserver.plugins.PluginRegistry;
 import com.mcpserver.rag.retrieval.SearchPipeline;
 import com.mcpserver.services.SearchService;
 import org.springframework.web.bind.annotation.*;
@@ -14,10 +15,12 @@ public class SearchController {
 
     private final SearchPipeline searchPipeline;
     private final SearchService searchService;
+    private final PluginRegistry pluginRegistry;
 
-    public SearchController(SearchPipeline searchPipeline, SearchService searchService) {
+    public SearchController(SearchPipeline searchPipeline, SearchService searchService, PluginRegistry pluginRegistry) {
         this.searchPipeline = searchPipeline;
         this.searchService = searchService;
+        this.pluginRegistry = pluginRegistry;
     }
 
     @GetMapping
@@ -49,6 +52,8 @@ public class SearchController {
             return response;
         }
 
+        boolean webReady = !web || pluginRegistry.isReady("searxng");
+
         List<SearchPipeline.SearchResult> results =
                 searchPipeline.search(query, topK, List.of(), web);
 
@@ -59,6 +64,10 @@ public class SearchController {
         response.put("query", query);
         response.put("mode", "rag");
         response.put("web", web);
+        response.put("webReady", webReady);
+        if (!webReady) {
+            response.put("webMessage", "Web augmentation requires the SearXNG plugin — install it on the Plugins page.");
+        }
         response.put("results", results.stream().map(r -> {
             Map<String, Object> m = new HashMap<>();
             m.put("id", r.chunk().id());

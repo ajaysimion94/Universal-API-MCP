@@ -126,6 +126,8 @@ export interface SearchResponse {
   localCount?: number;
   webCount?: number;
   web?: boolean;
+  webReady?: boolean;
+  webMessage?: string;
   tool?: string;
   message?: string;
   requiresSetup?: string[];

@@ -861,6 +861,11 @@
   width: 0;
   height: 0;
 }
+.web-toggle:has(input:disabled) {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
 .web-toggle-label {
   font-weight: 500;
   letter-spacing: 0.01em;
@@ -1192,6 +1197,26 @@
 .setup-banner-text {
   font-size: var(--text-sm);
   color: var(--text-secondary);
+}
+
+.warning-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  margin: 0 var(--space-md) var(--space-sm);
+  padding: var(--space-2xs) var(--space-2xs) var(--space-2xs) var(--space-xs);
+  background: oklch(0.24 0.03 68 / 0.5);
+  border: 1px solid oklch(0.62 0.12 68 / 0.35);
+  border-radius: var(--radius);
+  font-size: var(--text-sm);
+  color: oklch(0.82 0.09 68);
+  line-height: 1.4;
+}
+.warning-banner .btn-sm {
+  margin-left: auto;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  padding: 3px var(--space-2xs);
 }
 
 /* ── Plugins page ── */
