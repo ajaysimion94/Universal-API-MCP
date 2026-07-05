@@ -4,6 +4,8 @@ mcp-server/target/
 # Node / frontend
 mcp-server/webui/node_modules/
 mcp-server/webui/dist/
+mcp-server/webui/node/
+mcp-server/webui/tsconfig.tsbuildinfo
 
 # ONNX models (downloaded, not committed — ~131MB)
 mcp-server/models/
