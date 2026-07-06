@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   FileNode,
+  IngestionProgress,
   fetchRoot,
   fetchChildren,
   fetchPath,
+  fetchIngestionProgress,
   createFolder,
   uploadFile,
   uploadFolder,
@@ -28,6 +30,7 @@ export function FilesPage() {
   const [dragOver, setDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
+  const [ingestProgress, setIngestProgress] = useState<IngestionProgress | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
@@ -67,6 +70,30 @@ export function FilesPage() {
   const refresh = useCallback(async () => {
     if (current) await loadFolder(current);
   }, [current, loadFolder]);
+
+  // While an upload request is in flight, poll the server-side ingestion
+  // progress (extract → chunk → embed) to drive the progress bar.
+  useEffect(() => {
+    if (!uploading) {
+      setIngestProgress(null);
+      return;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const p = await fetchIngestionProgress();
+        if (!cancelled) setIngestProgress(p.active ? p : null);
+      } catch {
+        /* transient poll failures are fine — the bar just doesn't update */
+      }
+    };
+    poll();
+    const id = window.setInterval(poll, 400);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [uploading]);
 
   const handleCreateFolder = async () => {
     const name = newFolderName.trim();
@@ -244,6 +271,10 @@ export function FilesPage() {
           </div>
         </div>
 
+        {uploading && (
+          <IngestProgressBanner progress={ingestProgress} />
+        )}
+
         {uploadStatus && !error && (
           <div className="status-banner" role="status">
             {uploadStatus}
@@ -302,6 +333,43 @@ export function FilesPage() {
           </div>
         )}
       </main>
+    </div>
+  );
+}
+
+function IngestProgressBanner({ progress }: { progress: IngestionProgress | null }) {
+  const embedding = progress?.phase === "embedding" && progress.chunksTotal > 0;
+  const percent = embedding
+    ? Math.round((progress.chunksDone / progress.chunksTotal) * 100)
+    : 0;
+
+  let label = "Uploading…";
+  if (progress?.active && progress.fileName) {
+    const file =
+      progress.totalFiles > 1
+        ? `${progress.fileName} (file ${progress.fileIndex} of ${progress.totalFiles})`
+        : progress.fileName;
+    if (progress.phase === "extracting") label = `Extracting text — ${file}`;
+    else if (progress.phase === "chunking") label = `Chunking — ${file}`;
+    else if (progress.phase === "embedding") label = `Embedding — ${file}`;
+  }
+
+  return (
+    <div className="ingest-banner" role="status">
+      <div className="ingest-info">
+        <span className="ingest-label">{label}</span>
+        {embedding && (
+          <span className="ingest-count mono">
+            {progress.chunksDone}/{progress.chunksTotal} chunks · {percent}%
+          </span>
+        )}
+      </div>
+      <div className="ingest-track">
+        <div
+          className={`ingest-fill ${embedding ? "" : "ingest-indeterminate"}`}
+          style={embedding ? { width: `${percent}%` } : undefined}
+        />
+      </div>
     </div>
   );
 }

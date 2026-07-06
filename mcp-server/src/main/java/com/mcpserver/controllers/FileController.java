@@ -3,6 +3,7 @@ package com.mcpserver.controllers;
 import com.mcpserver.models.BulkUploadResult;
 import com.mcpserver.models.FileNode;
 import com.mcpserver.services.FileService;
+import com.mcpserver.services.IngestionProgressTracker;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -17,9 +18,17 @@ import java.util.Map;
 public class FileController {
 
     private final FileService fileService;
+    private final IngestionProgressTracker progressTracker;
 
-    public FileController(FileService fileService) {
+    public FileController(FileService fileService, IngestionProgressTracker progressTracker) {
         this.fileService = fileService;
+        this.progressTracker = progressTracker;
+    }
+
+    /** Polled by the UI while an upload is in flight to render ingestion progress. */
+    @GetMapping("/ingestion-progress")
+    public IngestionProgressTracker.Snapshot ingestionProgress() {
+        return progressTracker.snapshot();
     }
 
     @GetMapping

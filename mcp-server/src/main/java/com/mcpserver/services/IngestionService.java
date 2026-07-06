@@ -26,6 +26,7 @@ public class IngestionService {
     private final EmbeddingClient embeddingClient;
     private final ChunkRepository chunkRepository;
     private final PluginRegistry pluginRegistry;
+    private final IngestionProgressTracker progressTracker;
     private final int targetChunkTokens;
     private final int chunkOverlapTokens;
     private final Tika tika;
@@ -34,12 +35,14 @@ public class IngestionService {
                             EmbeddingClient embeddingClient,
                             ChunkRepository chunkRepository,
                             PluginRegistry pluginRegistry,
+                            IngestionProgressTracker progressTracker,
                             @Value("${rag.ingestion.target-chunk-tokens}") int targetChunkTokens,
                             @Value("${rag.ingestion.chunk-overlap-tokens}") int chunkOverlapTokens) {
         this.chunker = chunker;
         this.embeddingClient = embeddingClient;
         this.chunkRepository = chunkRepository;
         this.pluginRegistry = pluginRegistry;
+        this.progressTracker = progressTracker;
         this.targetChunkTokens = targetChunkTokens;
         this.chunkOverlapTokens = chunkOverlapTokens;
         this.tika = new Tika();
@@ -52,6 +55,8 @@ public class IngestionService {
             return;
         }
 
+        progressTracker.startFile(sourceName);
+
         String text = extractText(contentBytes, mimeType, sourceName);
         if (text == null || text.isBlank()) {
             log.info("Skipping ingestion for {} — no extractable text (mimeType={})", sourceName, mimeType);
@@ -60,13 +65,16 @@ public class IngestionService {
 
         chunkRepository.deleteBySourceFileId(sourceFileId);
 
+        progressTracker.chunking();
         List<Chunker.ChunkText> chunkTexts = chunker.chunk(text, targetChunkTokens, chunkOverlapTokens);
         log.info("Ingesting {} → {} chunks (mimeType={})", sourceName, chunkTexts.size(), mimeType);
+        progressTracker.startEmbedding(chunkTexts.size());
         for (Chunker.ChunkText ct : chunkTexts) {
             float[] embedding = embeddingClient.embed(ct.content(), EmbeddingClient.Mode.DOCUMENT);
             Chunk chunk = Chunk.create(sourceFileId, sourceName, sourcePath,
                     ct.content(), embedding, aclTags, ct.position(), ct.approxTokenCount());
             chunkRepository.save(chunk);
+            progressTracker.chunkEmbedded();
         }
         log.info("Ingested {} chunks for {}", chunkTexts.size(), sourceName);
     }

@@ -94,6 +94,25 @@ export async function uploadFolder(
   );
 }
 
+/**
+ * Snapshot of the server-side ingestion pipeline (text extraction → chunking →
+ * embedding). Polled while an upload request is in flight to drive a progress bar.
+ */
+export interface IngestionProgress {
+  active: boolean;
+  phase: "idle" | "starting" | "extracting" | "chunking" | "embedding";
+  fileName: string | null;
+  fileIndex: number;
+  totalFiles: number;
+  chunksDone: number;
+  chunksTotal: number;
+  updatedAt: number;
+}
+
+export async function fetchIngestionProgress(): Promise<IngestionProgress> {
+  return json<IngestionProgress>(await fetch(`${API}/ingestion-progress`));
+}
+
 export async function deleteNode(id: string): Promise<void> {
   const res = await fetch(`${API}/${id}`, { method: "DELETE" });
   if (!res.ok && res.status !== 204) {

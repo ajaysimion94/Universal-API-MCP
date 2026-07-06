@@ -331,6 +331,50 @@
   background: oklch(0.78 0.15 68 / 0.18);
 }
 
+/* Ingestion progress banner (upload → extract → chunk → embed) */
+
+.ingest-banner {
+  margin: 0 var(--space-md) var(--space-2xs);
+  padding: var(--space-2xs) var(--space-xs);
+  background: var(--accent-tint);
+  border: 1px solid oklch(0.78 0.15 68 / 0.3);
+  border-radius: var(--radius);
+}
+.ingest-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-2xs);
+  color: var(--accent);
+  font-size: var(--text-sm);
+}
+.ingest-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ingest-count {
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+.ingest-track {
+  height: 4px;
+  background: oklch(0.30 0.01 75 / 0.4);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.ingest-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+.ingest-fill.ingest-indeterminate {
+  width: 30%;
+  animation: install-slide 1.2s ease-in-out infinite;
+}
+
 /* Error banner */
 
 .error-banner {
