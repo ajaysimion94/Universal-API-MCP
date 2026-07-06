@@ -95,12 +95,13 @@ export async function uploadFolder(
 }
 
 /**
- * Snapshot of the server-side ingestion pipeline (text extraction → chunking →
- * embedding). Polled while an upload request is in flight to drive a progress bar.
+ * Snapshot of the server-side ingestion queue (text extraction → chunking →
+ * embedding, or lexical-only indexing). Ingestion runs in the background after
+ * the upload request returns; polled while active to drive the progress bar.
  */
 export interface IngestionProgress {
   active: boolean;
-  phase: "idle" | "starting" | "extracting" | "chunking" | "embedding";
+  phase: "idle" | "starting" | "extracting" | "chunking" | "embedding" | "indexing";
   fileName: string | null;
   fileIndex: number;
   totalFiles: number;
@@ -147,6 +148,8 @@ export interface SearchResponse {
   web?: boolean;
   webReady?: boolean;
   webMessage?: string;
+  lexicalOnly?: boolean;
+  lexicalMessage?: string;
   tool?: string;
   message?: string;
   requiresSetup?: string[];
@@ -180,6 +183,7 @@ export interface PluginInfo {
   name: string;
   description: string;
   category: "REQUIRED" | "OPTIONAL";
+  builtin: boolean;
   status: PluginStatus;
   enabled: boolean;
   running: boolean;

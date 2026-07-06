@@ -193,6 +193,17 @@ export function SearchPage() {
           </div>
         )}
 
+        {response?.mode === "rag" && response.lexicalOnly && (
+          <div className="warning-banner" role="status">
+            <AlertIcon size={16} />
+            <span>
+              {response.lexicalMessage ||
+                "Semantic search is off — showing keyword matches only."}
+            </span>
+            <Link to="/plugins" className="btn btn-sm">Go to Plugins</Link>
+          </div>
+        )}
+
         {loading && (
           <div className="search-skeleton">
             {[0, 1, 2].map((i) => (

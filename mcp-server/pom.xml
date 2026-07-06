@@ -23,6 +23,14 @@
         <npm.version>11.16.0</npm.version>
         <frontend.dir>${project.basedir}/webui</frontend.dir>
         <frontend.build.dir>${frontend.dir}/dist</frontend.build.dir>
+        <!-- Skip downloading/bundling model + native libs + searxng source (-Dskip.bundle=true).
+             The jar then relies on files already extracted on disk (dev loops only). -->
+        <skip.bundle>false</skip.bundle>
+        <bundled.dir>${project.build.outputDirectory}/bundled</bundled.dir>
+        <sqlite-vec.version>0.1.9</sqlite-vec.version>
+        <sqlite-vec.base>https://github.com/asg017/sqlite-vec/releases/download/v${sqlite-vec.version}/sqlite-vec-${sqlite-vec.version}-loadable</sqlite-vec.base>
+        <!-- Pinned SearXNG source snapshot (same commit as the previously tested checkout) -->
+        <searxng.ref>a6438586a5bf7e3657c4208d07296c883cd0f06d</searxng.ref>
     </properties>
 
     <dependencies>
@@ -138,6 +146,110 @@
                         <phase>generate-resources</phase>
                         <configuration>
                             <arguments>run build</arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Bundle the embedding model, per-platform sqlite-vec libs, and the SearXNG
+                 source snapshot into the JAR so a fresh machine needs zero runtime downloads.
+                 Downloads are sha256-verified and cached outside target/ (survives mvn clean).
+                 Skippable with -Dskip.bundle=true for fast backend loops. -->
+            <plugin>
+                <groupId>com.googlecode.maven-download-plugin</groupId>
+                <artifactId>download-maven-plugin</artifactId>
+                <version>1.13.0</version>
+                <configuration>
+                    <skip>${skip.bundle}</skip>
+                    <cacheDirectory>${settings.localRepository}/.cache/mcp-server-bundle</cacheDirectory>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>bundle-nomic-model</id>
+                        <phase>generate-resources</phase>
+                        <goals><goal>wget</goal></goals>
+                        <configuration>
+                            <url>https://huggingface.co/nomic-ai/nomic-embed-text-v1.5/resolve/main/onnx/model_quantized.onnx</url>
+                            <outputDirectory>${bundled.dir}/model</outputDirectory>
+                            <outputFileName>model_quantized.onnx</outputFileName>
+                            <sha256>b4342336debaea79de872370664b0aaeb67dea4605513d00ee236ea871a81f27</sha256>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>bundle-nomic-tokenizer</id>
+                        <phase>generate-resources</phase>
+                        <goals><goal>wget</goal></goals>
+                        <configuration>
+                            <url>https://huggingface.co/nomic-ai/nomic-embed-text-v1.5/resolve/main/tokenizer.json</url>
+                            <outputDirectory>${bundled.dir}/model</outputDirectory>
+                            <outputFileName>tokenizer.json</outputFileName>
+                            <sha256>d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66</sha256>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>bundle-sqlite-vec-macos-aarch64</id>
+                        <phase>generate-resources</phase>
+                        <goals><goal>wget</goal></goals>
+                        <configuration>
+                            <url>${sqlite-vec.base}-macos-aarch64.tar.gz</url>
+                            <unpack>true</unpack>
+                            <outputDirectory>${bundled.dir}/sqlite-vec/macos-aarch64</outputDirectory>
+                            <sha256>8282126333399ddfe98bbbcc7a1936e7252625aac49df056a98be602e46bfd29</sha256>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>bundle-sqlite-vec-macos-x86_64</id>
+                        <phase>generate-resources</phase>
+                        <goals><goal>wget</goal></goals>
+                        <configuration>
+                            <url>${sqlite-vec.base}-macos-x86_64.tar.gz</url>
+                            <unpack>true</unpack>
+                            <outputDirectory>${bundled.dir}/sqlite-vec/macos-x86_64</outputDirectory>
+                            <sha256>53ad76e400786515e2edcaed2f01271dda846316390b761fadbd2dcf56aa4713</sha256>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>bundle-sqlite-vec-linux-x86_64</id>
+                        <phase>generate-resources</phase>
+                        <goals><goal>wget</goal></goals>
+                        <configuration>
+                            <url>${sqlite-vec.base}-linux-x86_64.tar.gz</url>
+                            <unpack>true</unpack>
+                            <outputDirectory>${bundled.dir}/sqlite-vec/linux-x86_64</outputDirectory>
+                            <sha256>b959baa1d8dc88861b1edb337b8587178cdcb12d60b4998f9d10b6a82052d5d7</sha256>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>bundle-sqlite-vec-linux-aarch64</id>
+                        <phase>generate-resources</phase>
+                        <goals><goal>wget</goal></goals>
+                        <configuration>
+                            <url>${sqlite-vec.base}-linux-aarch64.tar.gz</url>
+                            <unpack>true</unpack>
+                            <outputDirectory>${bundled.dir}/sqlite-vec/linux-aarch64</outputDirectory>
+                            <sha256>ea03d39541e478fab5974253c461e1cb5d77742f69e40cf96e3fad5bc309a37c</sha256>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>bundle-sqlite-vec-windows-x86_64</id>
+                        <phase>generate-resources</phase>
+                        <goals><goal>wget</goal></goals>
+                        <configuration>
+                            <url>${sqlite-vec.base}-windows-x86_64.tar.gz</url>
+                            <unpack>true</unpack>
+                            <outputDirectory>${bundled.dir}/sqlite-vec/windows-x86_64</outputDirectory>
+                            <sha256>51581189d52066b4dfc6631f6d7a3eab7dedc2260656ab09ca97ab3fb8165983</sha256>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>bundle-searxng-source</id>
+                        <phase>generate-resources</phase>
+                        <goals><goal>wget</goal></goals>
+                        <configuration>
+                            <url>https://github.com/searxng/searxng/archive/${searxng.ref}.zip</url>
+                            <outputDirectory>${bundled.dir}/searxng</outputDirectory>
+                            <outputFileName>searxng-src.zip</outputFileName>
+                            <sha256>250b5dbf0bd545dcad4b138336b71ffe278d66d6963121ee2bb7d07242f312d1</sha256>
                         </configuration>
                     </execution>
                 </executions>

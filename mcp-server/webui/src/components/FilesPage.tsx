@@ -71,13 +71,11 @@ export function FilesPage() {
     if (current) await loadFolder(current);
   }, [current, loadFolder]);
 
-  // While an upload request is in flight, poll the server-side ingestion
-  // progress (extract → chunk → embed) to drive the progress bar.
+  // Ingestion runs in the background after uploads return, so poll the queue's
+  // progress while an upload is in flight OR the server still reports activity,
+  // and once on mount to pick up a queue already running.
+  const ingestActive = uploading || (ingestProgress?.active ?? false);
   useEffect(() => {
-    if (!uploading) {
-      setIngestProgress(null);
-      return;
-    }
     let cancelled = false;
     const poll = async () => {
       try {
@@ -88,12 +86,13 @@ export function FilesPage() {
       }
     };
     poll();
+    if (!ingestActive) return;
     const id = window.setInterval(poll, 400);
     return () => {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [uploading]);
+  }, [ingestActive]);
 
   const handleCreateFolder = async () => {
     const name = newFolderName.trim();
@@ -271,8 +270,8 @@ export function FilesPage() {
           </div>
         </div>
 
-        {uploading && (
-          <IngestProgressBanner progress={ingestProgress} />
+        {ingestActive && (
+          <IngestProgressBanner progress={ingestProgress} uploading={uploading} />
         )}
 
         {uploadStatus && !error && (
@@ -337,13 +336,21 @@ export function FilesPage() {
   );
 }
 
-function IngestProgressBanner({ progress }: { progress: IngestionProgress | null }) {
-  const embedding = progress?.phase === "embedding" && progress.chunksTotal > 0;
-  const percent = embedding
-    ? Math.round((progress.chunksDone / progress.chunksTotal) * 100)
+function IngestProgressBanner({
+  progress,
+  uploading,
+}: {
+  progress: IngestionProgress | null;
+  uploading: boolean;
+}) {
+  const counting =
+    (progress?.phase === "embedding" || progress?.phase === "indexing") &&
+    (progress?.chunksTotal ?? 0) > 0;
+  const percent = counting
+    ? Math.round((progress!.chunksDone / progress!.chunksTotal) * 100)
     : 0;
 
-  let label = "Uploading…";
+  let label = uploading ? "Uploading…" : "Processing…";
   if (progress?.active && progress.fileName) {
     const file =
       progress.totalFiles > 1
@@ -352,22 +359,23 @@ function IngestProgressBanner({ progress }: { progress: IngestionProgress | null
     if (progress.phase === "extracting") label = `Extracting text — ${file}`;
     else if (progress.phase === "chunking") label = `Chunking — ${file}`;
     else if (progress.phase === "embedding") label = `Embedding — ${file}`;
+    else if (progress.phase === "indexing") label = `Indexing — ${file}`;
   }
 
   return (
     <div className="ingest-banner" role="status">
       <div className="ingest-info">
         <span className="ingest-label">{label}</span>
-        {embedding && (
+        {counting && (
           <span className="ingest-count mono">
-            {progress.chunksDone}/{progress.chunksTotal} chunks · {percent}%
+            {progress!.chunksDone}/{progress!.chunksTotal} chunks · {percent}%
           </span>
         )}
       </div>
       <div className="ingest-track">
         <div
-          className={`ingest-fill ${embedding ? "" : "ingest-indeterminate"}`}
-          style={embedding ? { width: `${percent}%` } : undefined}
+          className={`ingest-fill ${counting ? "" : "ingest-indeterminate"}`}
+          style={counting ? { width: `${percent}%` } : undefined}
         />
       </div>
     </div>

@@ -41,8 +41,10 @@ public class SearchController {
             );
         }
 
+        // Missing plugins only block search entirely when nothing has been indexed yet —
+        // lexically-indexed chunks remain searchable without the embedding/vector plugins.
         List<String> notReady = searchService.getNotReadyPlugins();
-        if (!notReady.isEmpty()) {
+        if (!notReady.isEmpty() && !searchService.hasIndexedChunks()) {
             Map<String, Object> response = new HashMap<>();
             response.put("query", query);
             response.put("mode", "notReady");
@@ -77,6 +79,11 @@ public class SearchController {
         response.put("webReady", webReady);
         if (!webReady) {
             response.put("webMessage", "Web augmentation requires the SearXNG plugin — install it on the Plugins page.");
+        }
+        if (!notReady.isEmpty()) {
+            response.put("lexicalOnly", true);
+            response.put("lexicalMessage",
+                    "Semantic search is off — showing keyword matches only. Install the embedding model and vector store on the Plugins page for full search.");
         }
         response.put("results", results.stream().map(r -> {
             Map<String, Object> m = new HashMap<>();

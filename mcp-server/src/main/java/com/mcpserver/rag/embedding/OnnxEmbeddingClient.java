@@ -9,7 +9,6 @@ import org.springframework.stereotype.Component;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Arrays;
 
 @Component
 public class OnnxEmbeddingClient implements EmbeddingClient {
@@ -72,33 +71,47 @@ public class OnnxEmbeddingClient implements EmbeddingClient {
         }
     }
 
+    /**
+     * Release the ONNX session and tokenizer (frees several hundred MB of native
+     * memory). Called when the embedding plugin is disabled; {@link #ensureLoaded()}
+     * reloads on re-enable. Synchronized against embed() so an in-flight inference
+     * finishes before the session closes.
+     */
+    public synchronized void unload() {
+        try { if (session != null) session.close(); } catch (Exception ignored) {}
+        try { if (tokenizer != null) tokenizer.close(); } catch (Exception ignored) {}
+        session = null;
+        tokenizer = null;
+        loaded = false;
+        loadError = null;
+    }
+
     @Override
-    public float[] embed(String text, Mode mode) {
+    public synchronized float[] embed(String text, Mode mode) {
         ensureLoaded();
         if (!loaded) {
             throw new IllegalStateException("Embedding model not ready: " + loadError);
         }
         String prefixed = (mode == Mode.QUERY ? "query: " : "passage: ") + text;
         try {
+            // The tokenizer truncates to maxLength; run at the actual sequence length —
+            // padding everything to maxLength would make short chunks pay the full
+            // transformer cost (the model has dynamic sequence-length axes).
             var encoding = tokenizer.encode(prefixed);
             long[] inputIds = encoding.getIds();
             long[] attentionMask = encoding.getAttentionMask();
             long[] typeIds = encoding.getTypeIds();
 
-            long[] paddedIds = pad(inputIds, maxLength, 0L);
-            long[] paddedMask = pad(attentionMask, maxLength, 0L);
-            long[] paddedTypes = pad(typeIds, maxLength, 0L);
-
-            try (ai.onnxruntime.OnnxTensor idsTensor = ai.onnxruntime.OnnxTensor.createTensor(env, new long[][]{paddedIds});
-                 ai.onnxruntime.OnnxTensor maskTensor = ai.onnxruntime.OnnxTensor.createTensor(env, new long[][]{paddedMask});
-                 ai.onnxruntime.OnnxTensor typeTensor = ai.onnxruntime.OnnxTensor.createTensor(env, new long[][]{paddedTypes});
+            try (ai.onnxruntime.OnnxTensor idsTensor = ai.onnxruntime.OnnxTensor.createTensor(env, new long[][]{inputIds});
+                 ai.onnxruntime.OnnxTensor maskTensor = ai.onnxruntime.OnnxTensor.createTensor(env, new long[][]{attentionMask});
+                 ai.onnxruntime.OnnxTensor typeTensor = ai.onnxruntime.OnnxTensor.createTensor(env, new long[][]{typeIds});
                  ai.onnxruntime.OrtSession.Result result = session.run(
                          java.util.Map.of("input_ids", idsTensor,
                                  "attention_mask", maskTensor,
                                  "token_type_ids", typeTensor))) {
 
                 float[][][] hidden = (float[][][]) result.get(0).getValue();
-                return meanPoolNormalize(hidden[0], paddedMask);
+                return meanPoolNormalize(hidden[0], attentionMask);
             }
         } catch (Exception e) {
             throw new RuntimeException("Embedding inference failed", e);
@@ -108,13 +121,6 @@ public class OnnxEmbeddingClient implements EmbeddingClient {
     @Override
     public int dimensions() {
         return dimensions;
-    }
-
-    private long[] pad(long[] input, int length, long fill) {
-        long[] out = new long[length];
-        Arrays.fill(out, fill);
-        System.arraycopy(input, 0, out, 0, Math.min(input.length, length));
-        return out;
     }
 
     private float[] meanPoolNormalize(float[][] tokenEmbeddings, long[] mask) {

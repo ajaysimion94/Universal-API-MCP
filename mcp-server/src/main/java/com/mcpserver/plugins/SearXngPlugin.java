@@ -19,7 +19,8 @@ public class SearXngPlugin implements Plugin {
     private static final Logger log = LoggerFactory.getLogger(SearXngPlugin.class);
     private static final String PLUGIN_ID = "searxng";
     private static final String INSTALL_DIR = "lib/searxng";
-    private static final String REPO_URL = "https://github.com/searxng/searxng.git";
+    /** Pinned SearXNG source snapshot bundled in the jar at build time (see pom.xml). */
+    private static final String BUNDLED_SOURCE = "bundled/searxng/searxng-src.zip";
 
     private final PluginStateStore stateStore;
     private final String searxngUrl;
@@ -39,7 +40,7 @@ public class SearXngPlugin implements Plugin {
     public String name() { return "SearXNG web search"; }
 
     @Override
-    public String description() { return "Self-hosted meta-search engine for web augmentation. Native Python process on :8888. Optional — only needed for the Web toggle on search."; }
+    public String description() { return "Self-hosted meta-search engine for web augmentation. Native Python process on :8888. Optional — only needed for the Web toggle on search. Source ships in the jar; install requires Python 3.10+ and internet (pip dependencies)."; }
 
     @Override
     public Category category() { return Category.OPTIONAL; }
@@ -68,8 +69,8 @@ public class SearXngPlugin implements Plugin {
             Path venvDir = dir.resolve("venv");
 
             if (!Files.exists(srcDir.resolve("searx"))) {
-                log.info("Cloning SearXNG source from {}", REPO_URL);
-                runCommand("git", "clone", "--depth", "1", REPO_URL, srcDir.toString());
+                log.info("Extracting bundled SearXNG source to {}", srcDir);
+                extractBundledSource(srcDir);
             }
 
             if (!Files.exists(venvDir)) {
@@ -155,6 +156,44 @@ public class SearXngPlugin implements Plugin {
     @Override
     public boolean isReady() {
         return isEnabled() && process != null && process.isAlive();
+    }
+
+    /**
+     * Extract the bundled SearXNG source zip (GitHub zipball) from the classpath —
+     * pure-Java unzip, so target machines need no git/tar/curl. The zipball wraps
+     * everything in a top-level {@code searxng-<ref>/} directory, which is stripped.
+     */
+    private void extractBundledSource(Path srcDir) throws IOException {
+        var resource = new org.springframework.core.io.ClassPathResource(BUNDLED_SOURCE);
+        if (!resource.exists()) {
+            throw new IllegalStateException(
+                    "SearXNG source not bundled in this build (jar built with -Dskip.bundle=true?)");
+        }
+        Path root = srcDir.toAbsolutePath().normalize();
+        Files.createDirectories(root);
+        try (var zip = new java.util.zip.ZipInputStream(resource.getInputStream())) {
+            java.util.zip.ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                String name = entry.getName();
+                int slash = name.indexOf('/');
+                if (slash < 0) continue; // top-level wrapper dir entry itself
+                String relative = name.substring(slash + 1);
+                if (relative.isEmpty()) continue;
+                Path target = root.resolve(relative).normalize();
+                if (!target.startsWith(root)) {
+                    throw new IOException("Blocked zip entry escaping target dir: " + name);
+                }
+                if (entry.isDirectory()) {
+                    Files.createDirectories(target);
+                } else {
+                    Files.createDirectories(target.getParent());
+                    Files.copy(zip, target, StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+        }
+        if (!Files.exists(srcDir.resolve("searx"))) {
+            throw new IOException("Bundled SearXNG source extracted but searx/ package not found in " + srcDir);
+        }
     }
 
     private String detectPython() {

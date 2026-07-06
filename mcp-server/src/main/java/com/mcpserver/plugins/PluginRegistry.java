@@ -41,6 +41,12 @@ public class PluginRegistry {
     }
 
     public String startInstall(String pluginId) {
+        Plugin target = findById(pluginId)
+                .orElseThrow(() -> new IllegalArgumentException("Plugin not found: " + pluginId));
+        if (target.builtIn()) {
+            throw new IllegalArgumentException(
+                    target.name() + " is built into the app — there is nothing to install");
+        }
         String jobId = "job-" + jobCounter.incrementAndGet();
         InstallJob job = new InstallJob(pluginId, "running");
         jobs.put(jobId, job);

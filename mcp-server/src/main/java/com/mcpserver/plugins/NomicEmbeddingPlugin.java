@@ -6,12 +6,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.io.*;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.file.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 @Component
 public class NomicEmbeddingPlugin implements Plugin {
@@ -23,18 +19,27 @@ public class NomicEmbeddingPlugin implements Plugin {
     private final PluginStateStore stateStore;
     private final String modelDir;
     private final String modelFile;
-    private volatile String errorMsg;
 
+    /**
+     * The extractor dependency guarantees the bundled model files are on disk before
+     * this constructor loads them. Loading is skipped while the plugin is disabled —
+     * the RAM escape hatch for low-memory machines (search falls back to keyword-only).
+     */
     public NomicEmbeddingPlugin(
             OnnxEmbeddingClient embeddingClient,
             PluginStateStore stateStore,
+            BundledResourceExtractor extractor,
             @Value("${rag.embedding.model-dir}") String modelDir,
             @Value("${rag.embedding.model-file}") String modelFile) {
         this.embeddingClient = embeddingClient;
         this.stateStore = stateStore;
         this.modelDir = modelDir;
         this.modelFile = modelFile;
-        tryLoadIfInstalled();
+        if (isEnabled() && filesExist()) {
+            embeddingClient.ensureLoaded();
+        } else if (!isEnabled()) {
+            log.info("Embedding model disabled — running keyword-only search (enable via Plugins page)");
+        }
     }
 
     @Override
@@ -44,49 +49,48 @@ public class NomicEmbeddingPlugin implements Plugin {
     public String name() { return "Nomic embedding model"; }
 
     @Override
-    public String description() { return "nomic-embed-text-v1.5 (768-dim) — in-process ONNX embedding for RAG search. Downloads ~131MB from HuggingFace."; }
+    public String description() { return "nomic-embed-text-v1.5 (768-dim) — in-process ONNX embedding for RAG search. Built into the app; disable on low-memory machines to run keyword-only search."; }
 
     @Override
     public Category category() { return Category.REQUIRED; }
 
     @Override
+    public boolean builtIn() { return true; }
+
+    @Override
     public Status status() {
-        if (errorMsg != null) return Status.ERROR;
+        if (!isEnabled()) return Status.DISABLED;
         if (embeddingClient.isReady()) return Status.ACTIVE;
-        if (filesExist()) return Status.INSTALLED;
-        return Status.NOT_INSTALLED;
+        if (!filesExist()) return Status.ERROR;
+        return embeddingClient.getLoadError() != null ? Status.ERROR : Status.INSTALLED;
     }
 
     @Override
-    public boolean isEnabled() { return true; }
+    public boolean isEnabled() { return stateStore.isEnabled(PLUGIN_ID); }
 
     @Override
     public boolean isRunning() { return embeddingClient.isReady(); }
 
     @Override
-    public void install() throws Exception {
-        Path dir = Path.of(modelDir);
-        Files.createDirectories(dir);
-        Path modelPath = dir.resolve(modelFile);
-        Path tokenizerPath = dir.resolve("tokenizer.json");
-
-        if (!Files.exists(modelPath)) {
-            download("https://huggingface.co/nomic-ai/nomic-embed-text-v1.5/resolve/main/onnx/model_quantized.onnx", modelPath);
-        }
-        if (!Files.exists(tokenizerPath)) {
-            download("https://huggingface.co/nomic-ai/nomic-embed-text-v1.5/resolve/main/tokenizer.json", tokenizerPath);
-        }
-
-        embeddingClient.ensureLoaded();
-        stateStore.setInstalled(PLUGIN_ID, true);
-        errorMsg = null;
+    public void install() {
+        // Built-in: nothing to install. Retry the load in case the first attempt failed.
+        if (isEnabled() && !embeddingClient.isReady()) embeddingClient.ensureLoaded();
     }
 
     @Override
-    public void enable() {}
+    public void enable() {
+        stateStore.setEnabled(PLUGIN_ID, true);
+        if (filesExist()) {
+            embeddingClient.ensureLoaded();
+        }
+    }
 
     @Override
-    public void disable() {}
+    public void disable() {
+        stateStore.setEnabled(PLUGIN_ID, false);
+        embeddingClient.unload();
+        log.info("Embedding model disabled and unloaded — search is keyword-only until re-enabled");
+    }
 
     @Override
     public void start() {}
@@ -96,9 +100,13 @@ public class NomicEmbeddingPlugin implements Plugin {
 
     @Override
     public String health() {
+        if (!isEnabled()) return "disabled — keyword-only search";
         if (embeddingClient.isReady()) return "model loaded, ready to embed";
-        if (filesExist()) return "files present, loading…";
-        return errorMsg != null ? errorMsg : "not installed";
+        if (!filesExist()) {
+            return "model files missing at " + modelDir + " (jar built with -Dskip.bundle=true?)";
+        }
+        String err = embeddingClient.getLoadError();
+        return err != null ? err : "files present, loading…";
     }
 
     @Override
@@ -106,28 +114,5 @@ public class NomicEmbeddingPlugin implements Plugin {
 
     private boolean filesExist() {
         return Files.exists(Path.of(modelDir, modelFile)) && Files.exists(Path.of(modelDir, "tokenizer.json"));
-    }
-
-    private void tryLoadIfInstalled() {
-        if (!stateStore.isInstalled(PLUGIN_ID)) return;
-        if (!filesExist()) return;
-        try {
-            embeddingClient.ensureLoaded();
-            errorMsg = null;
-        } catch (Exception e) {
-            errorMsg = "Failed to load model: " + e.getMessage();
-            log.warn("Failed to load embedding model: {}", e.getMessage());
-        }
-    }
-
-    private void download(String url, Path target) throws Exception {
-        log.info("Downloading {} to {}", url, target);
-        HttpClient client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.ALWAYS).build();
-        HttpRequest req = HttpRequest.newBuilder().uri(URI.create(url)).GET().build();
-        HttpResponse<Path> resp = client.send(req, HttpResponse.BodyHandlers.ofFile(target));
-        if (resp.statusCode() != 200) {
-            throw new IOException("Download failed with status " + resp.statusCode() + " for " + url);
-        }
-        log.info("Downloaded {} ({} bytes)", target, Files.size(target));
     }
 }

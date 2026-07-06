@@ -65,17 +65,16 @@ public class SearchService implements SearchPipeline {
     public List<SearchResult> search(String query, int topN, List<String> userAclTags, boolean includeWeb) {
         if (query == null || query.isBlank()) return List.of();
 
-        boolean embeddingReady = embeddingClient.isReady();
-        boolean vecReady = chunkRepository.isVec0Available();
-
-        if (!embeddingReady && !vecReady) {
-            log.info("Search skipped: embedding and/or vector store not ready");
-            return List.of();
+        // Lexical FTS5 search always works (built into SQLite); the vector leg needs
+        // both the embedding model and the sqlite-vec store. Degrade gracefully.
+        boolean vectorLegReady = embeddingClient.isReady() && chunkRepository.isVec0Available();
+        if (!vectorLegReady) {
+            log.info("Vector leg unavailable (embedding model or vector store not ready) — lexical-only search");
         }
 
-        float[] queryEmbedding = embeddingClient.embed(query, EmbeddingClient.Mode.QUERY);
-
-        List<Chunk> vectorHits = vecReady ? chunkRepository.vectorSearch(queryEmbedding, vectorTopK) : List.of();
+        List<Chunk> vectorHits = vectorLegReady
+                ? chunkRepository.vectorSearch(embeddingClient.embed(query, EmbeddingClient.Mode.QUERY), vectorTopK)
+                : List.of();
         List<Chunk> lexicalHits = chunkRepository.lexicalSearch(query, lexicalTopK);
 
         List<String> vectorIds = vectorHits.stream().map(Chunk::id).toList();
@@ -120,6 +119,15 @@ public class SearchService implements SearchPipeline {
         if (!pluginRegistry.isReady("sqlite-vec-store")) notReady.add("sqlite-vec-store");
         if (!pluginRegistry.isReady("nomic-embedding")) notReady.add("nomic-embedding");
         return notReady;
+    }
+
+    /** Whether anything has been ingested at all (lexical-only chunks count). */
+    public boolean hasIndexedChunks() {
+        try {
+            return chunkRepository.count() > 0;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private List<SearchResult> fetchWebResults(String query, int topN) {

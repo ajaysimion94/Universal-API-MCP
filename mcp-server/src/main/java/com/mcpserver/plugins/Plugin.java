@@ -10,6 +10,8 @@ public interface Plugin {
     String name();
     String description();
     Category category();
+    /** Bundled inside the jar — nothing to install, no downloads. */
+    default boolean builtIn() { return false; }
     Status status();
     boolean isEnabled();
     boolean isRunning();

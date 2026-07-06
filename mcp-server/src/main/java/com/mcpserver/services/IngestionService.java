@@ -5,6 +5,7 @@ import com.mcpserver.plugins.PluginRegistry;
 import com.mcpserver.rag.chunking.Chunker;
 import com.mcpserver.rag.embedding.EmbeddingClient;
 import com.mcpserver.repositories.ChunkRepository;
+import jakarta.annotation.PreDestroy;
 import org.apache.tika.Tika;
 import org.apache.tika.exception.TikaException;
 import org.slf4j.Logger;
@@ -15,7 +16,14 @@ import org.springframework.stereotype.Service;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 @Service
 public class IngestionService {
@@ -30,6 +38,16 @@ public class IngestionService {
     private final int targetChunkTokens;
     private final int chunkOverlapTokens;
     private final Tika tika;
+
+    // Single worker so at most one file is extracted/embedded at a time — embedding is
+    // CPU- and memory-bound, and uploads must not block on it (they enqueue and return).
+    private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "ingestion-worker");
+        t.setDaemon(true);
+        return t;
+    });
+    private final Set<String> pendingSources = ConcurrentHashMap.newKeySet();
+    private final Set<String> cancelledSources = ConcurrentHashMap.newKeySet();
 
     public IngestionService(Chunker chunker,
                             EmbeddingClient embeddingClient,
@@ -48,13 +66,40 @@ public class IngestionService {
         this.tika = new Tika();
     }
 
+    /**
+     * Queue a file for background ingestion and return immediately. {@code payload} is a
+     * temp file owned by this service from here on — the worker deletes it when done.
+     * Progress is reported via {@link IngestionProgressTracker} for the UI poller.
+     */
+    public void enqueue(String sourceFileId, String sourceName, String sourcePath,
+                        Path payload, String mimeType, List<String> aclTags) {
+        pendingSources.add(sourceFileId);
+        progressTracker.filesEnqueued(1);
+        worker.submit(() -> {
+            try {
+                if (cancelledSources.remove(sourceFileId)) return;
+                byte[] bytes = Files.readAllBytes(payload);
+                ingest(sourceFileId, sourceName, sourcePath, bytes, mimeType, aclTags);
+                // Deleted while we were ingesting: remove the chunks we just wrote.
+                if (cancelledSources.remove(sourceFileId)) {
+                    chunkRepository.deleteBySourceFileId(sourceFileId);
+                }
+            } catch (Exception e) {
+                log.warn("Ingestion failed for {} (search will not cover this file): {}",
+                        sourceName, e.getMessage());
+            } finally {
+                pendingSources.remove(sourceFileId);
+                progressTracker.fileFinished();
+                try {
+                    Files.deleteIfExists(payload);
+                } catch (IOException ignored) {
+                }
+            }
+        });
+    }
+
     public void ingest(String sourceFileId, String sourceName, String sourcePath,
                        byte[] contentBytes, String mimeType, List<String> aclTags) {
-        if (!pluginRegistry.isReady("nomic-embedding")) {
-            log.info("Skipping ingestion for {} — embedding model not installed (install via Plugins page)", sourceName);
-            return;
-        }
-
         progressTracker.startFile(sourceName);
 
         String text = extractText(contentBytes, mimeType, sourceName);
@@ -67,10 +112,21 @@ public class IngestionService {
 
         progressTracker.chunking();
         List<Chunker.ChunkText> chunkTexts = chunker.chunk(text, targetChunkTokens, chunkOverlapTokens);
-        log.info("Ingesting {} → {} chunks (mimeType={})", sourceName, chunkTexts.size(), mimeType);
-        progressTracker.startEmbedding(chunkTexts.size());
+
+        // Without the embedding model, still chunk and FTS-index so lexical search works;
+        // embeddings stay null and the vector leg simply has nothing for this file.
+        boolean embeddingReady = pluginRegistry.isReady("nomic-embedding");
+        log.info("Ingesting {} → {} chunks (mimeType={}{})", sourceName, chunkTexts.size(), mimeType,
+                embeddingReady ? "" : ", lexical only — embedding model not installed");
+        if (embeddingReady) {
+            progressTracker.startEmbedding(chunkTexts.size());
+        } else {
+            progressTracker.startIndexing(chunkTexts.size());
+        }
         for (Chunker.ChunkText ct : chunkTexts) {
-            float[] embedding = embeddingClient.embed(ct.content(), EmbeddingClient.Mode.DOCUMENT);
+            float[] embedding = embeddingReady
+                    ? embeddingClient.embed(ct.content(), EmbeddingClient.Mode.DOCUMENT)
+                    : null;
             Chunk chunk = Chunk.create(sourceFileId, sourceName, sourcePath,
                     ct.content(), embedding, aclTags, ct.position(), ct.approxTokenCount());
             chunkRepository.save(chunk);
@@ -80,8 +136,23 @@ public class IngestionService {
     }
 
     public void purgeSource(String sourceFileId) {
+        // If the file is still queued or mid-ingestion, flag it so the worker skips it
+        // (or cleans up after itself); then remove whatever chunks already exist.
+        if (pendingSources.contains(sourceFileId)) {
+            cancelledSources.add(sourceFileId);
+        }
         chunkRepository.deleteBySourceFileId(sourceFileId);
         log.info("Purged chunks for source {}", sourceFileId);
+    }
+
+    @PreDestroy
+    void shutdown() {
+        worker.shutdown();
+        try {
+            worker.awaitTermination(5, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private String extractText(byte[] bytes, String mimeType, String fileName) {

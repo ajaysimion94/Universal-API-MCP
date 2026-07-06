@@ -51,12 +51,27 @@ the **Plugins** page to install what you need:
 
 | Plugin | What it does | Install action |
 | --- | --- | --- |
-| **Embedded vector store** | SQLite + sqlite-vec + FTS5 — vector and lexical search | Downloads sqlite-vec native extension (~1-2MB) |
-| **Nomic embedding model** | nomic-embed-text-v1.5 (768-dim) — in-process ONNX embedding | Downloads model + tokenizer (~131MB) from HuggingFace |
-| **SearXNG web search** | Self-hosted meta-search engine for web augmentation (optional) | Creates Python venv + installs searxng; start/stop from UI |
+| **Embedded vector store** | SQLite + sqlite-vec + FTS5 — vector and lexical search | **Built-in** — native extension ships inside the jar, active on first boot |
+| **Nomic embedding model** | nomic-embed-text-v1.5 (768-dim) — in-process ONNX embedding | **Built-in** — model ships inside the jar, loads on first boot; toggle off on low-RAM machines |
+| **SearXNG web search** | Self-hosted meta-search engine for web augmentation (optional) | One click on the Plugins page. Source ships in the jar (no git needed); requires **Python 3.10+** and internet for pip dependencies |
 
-The app boots in **degraded mode** (file management only) when plugins aren't installed. Install
-the vector store + embedding model to enable search; install SearXNG to enable the web toggle.
+Copy the jar to any machine and `java -jar` — file management **and full search work
+immediately, offline, with zero downloads**. Only the optional SearXNG web toggle needs an
+install step. Bundled artifacts are extracted next to the jar (`models/`, `lib/`) on first run.
+
+### Low-memory machines (< 4GB RAM)
+
+Uploads return immediately — extraction, chunking, and embedding run on a background
+queue (the Files page shows live progress). Even so, in-process ONNX embedding needs
+roughly 700MB–1GB of RAM on top of the OS; on a 2GB Windows machine that means heavy
+swapping and very slow ingestion. On such machines:
+
+- **Disable the Nomic embedding model** (toggle on the Plugins page) — this unloads the
+  model from memory. Files are still chunked and FTS-indexed, so keyword (lexical) search
+  works — the search page shows a "semantic search is off" notice. ~4GB is the practical
+  minimum for full semantic search.
+- Cap the heap explicitly: `java -Xmx512m -jar target/mcp-server.jar`.
+- Don't install/run SearXNG there (a Python process costs a few hundred MB more).
 
 ---
 
@@ -64,9 +79,13 @@ the vector store + embedding model to enable search; install SearXNG to enable t
 
 ```sh
 cd mcp-server
-mvn package                          # builds JAR + SPA, bundles SPA into JAR
+mvn package                          # builds JAR + SPA + bundles model/native libs/searxng source (~390MB jar)
 java -jar target/mcp-server.jar      # serves SPA + API on http://127.0.0.1:8080
 ```
+
+The first `mvn package` downloads the bundled artifacts (sha256-verified) into a cache under
+`~/.m2` — later builds, including after `mvn clean`, reuse it. `-Dskip.bundle=true` skips
+bundling for fast dev loops (the app then relies on already-extracted `models/` and `lib/`).
 
 Open **http://127.0.0.1:8080** — the universal search page (landing). Files & folders is at **/files**.
 Plugins is at **/plugins**.

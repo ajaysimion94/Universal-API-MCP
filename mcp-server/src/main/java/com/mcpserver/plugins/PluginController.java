@@ -82,8 +82,8 @@ public class PluginController {
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
-    public Map<String, String> handleIllegalArgument(IllegalArgumentException e) {
-        return Map.of("error", e.getMessage());
+    public org.springframework.http.ResponseEntity<Map<String, String>> handleIllegalArgument(IllegalArgumentException e) {
+        return org.springframework.http.ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
     }
 
     private Map<String, Object> toMap(Plugin p) {
@@ -92,6 +92,7 @@ public class PluginController {
         map.put("name", p.name());
         map.put("description", p.description());
         map.put("category", p.category().name());
+        map.put("builtin", p.builtIn());
         map.put("status", p.status().name());
         map.put("enabled", p.isEnabled());
         map.put("running", p.isRunning());

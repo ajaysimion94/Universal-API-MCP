@@ -162,6 +162,7 @@ function PluginRow({
   onStartStop: () => void;
 }) {
   const isSearxng = plugin.id === "searxng";
+  const canToggle = isSearxng || plugin.id === "nomic-embedding";
   const statusIcon = getStatusIcon(plugin.status);
   const statusLabel = getStatusLabel(plugin.status, installing);
 
@@ -174,6 +175,11 @@ function PluginRow({
           <span className={`plugin-category mono ${plugin.category === "REQUIRED" ? "required" : "optional"}`}>
             {plugin.category === "REQUIRED" ? "Required" : "Optional"}
           </span>
+          {plugin.builtin && (
+            <span className="plugin-category mono optional" title="Ships inside the jar — no download or install needed">
+              Built-in
+            </span>
+          )}
         </div>
         <p className="plugin-description">{plugin.description}</p>
         <div className="plugin-health mono">{plugin.health}</div>
@@ -187,7 +193,7 @@ function PluginRow({
       </div>
 
       <div className="plugin-actions">
-        {plugin.status === "NOT_INSTALLED" && (
+        {plugin.status === "NOT_INSTALLED" && !plugin.builtin && (
           <button className="btn btn-primary" onClick={onInstall} disabled={installing}>
             <DownloadIcon size={14} />
             {installing ? "Installing…" : "Install"}
@@ -200,21 +206,23 @@ function PluginRow({
           </div>
         )}
 
-        {isSearxng && plugin.status !== "NOT_INSTALLED" && (
+        {canToggle && plugin.status !== "NOT_INSTALLED" && (
           <>
             <Toggle
               checked={plugin.enabled}
               onChange={onToggle}
               label={plugin.enabled ? "Enabled" : "Disabled"}
             />
-            <button
-              className="btn btn-ghost"
-              onClick={onStartStop}
-              disabled={!plugin.enabled}
-            >
-              <PowerIcon size={14} />
-              {plugin.running ? "Stop" : "Start"}
-            </button>
+            {isSearxng && (
+              <button
+                className="btn btn-ghost"
+                onClick={onStartStop}
+                disabled={!plugin.enabled}
+              >
+                <PowerIcon size={14} />
+                {plugin.running ? "Stop" : "Start"}
+              </button>
+            )}
           </>
         )}
       </div>

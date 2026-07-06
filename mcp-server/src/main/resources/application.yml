@@ -30,8 +30,10 @@ rag:
     rrf-k: 60               # Reciprocal Rank Fusion constant
     final-top-n: 10         # results after rerank
   ingestion:
-    target-chunk-tokens: 700
-    chunk-overlap-tokens: 100
+    # Must fit the embedding model's 512-token window (incl. "passage: " prefix and
+    # tokenizer variance) — larger chunks get silently truncated before embedding.
+    target-chunk-tokens: 450
+    chunk-overlap-tokens: 80
   web:
     searxng-url: http://127.0.0.1:8888
     page-count: 5

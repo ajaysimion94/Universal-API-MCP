@@ -9,6 +9,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -19,13 +21,10 @@ public class FileService {
 
     private final InMemoryFileRepository repository;
     private final IngestionService ingestionService;
-    private final IngestionProgressTracker progressTracker;
 
-    public FileService(InMemoryFileRepository repository, IngestionService ingestionService,
-                       IngestionProgressTracker progressTracker) {
+    public FileService(InMemoryFileRepository repository, IngestionService ingestionService) {
         this.repository = repository;
         this.ingestionService = ingestionService;
-        this.progressTracker = progressTracker;
     }
 
     public FileNode getRoot() {
@@ -66,12 +65,7 @@ public class FileService {
                 owner,
                 visibility
         ));
-        progressTracker.startBatch(1);
-        try {
-            ingest(node, upload.getBytes(), visibility);
-        } finally {
-            progressTracker.finishBatch();
-        }
+        queueIngestion(node, upload, visibility, buildSourcePath(parentId) + " / " + name);
         return node;
     }
 
@@ -95,50 +89,45 @@ public class FileService {
         int filesUploaded = 0;
         int filesSkipped = 0;
 
-        progressTracker.startBatch(files.size());
-        try {
-            for (int i = 0; i < files.size(); i++) {
-                String relative = relativePaths.get(i);
-                MultipartFile file = files.get(i);
-                String[] segments = relative.split("[/\\\\]+");
-                String currentParentId = rootParentId;
+        for (int i = 0; i < files.size(); i++) {
+            String relative = relativePaths.get(i);
+            MultipartFile file = files.get(i);
+            String[] segments = relative.split("[/\\\\]+");
+            String currentParentId = rootParentId;
 
-                // Walk folder segments (everything except the last = file name).
-                for (int s = 0; s < segments.length - 1; s++) {
-                    String segment = segments[s];
-                    if (segment.isBlank()) continue;
-                    FileNode existing = repository.findFolderByParentAndName(currentParentId, segment)
-                            .orElse(null);
-                    if (existing != null) {
-                        currentParentId = existing.id();
-                    } else {
-                        FileNode created = repository.save(
-                                FileNode.folder(FileNode.newId(), currentParentId, segment, owner, visibility));
-                        currentParentId = created.id();
-                        foldersCreated++;
-                    }
-                }
-
-                String fileName = segments[segments.length - 1];
-                if (repository.existsByParentAndName(currentParentId, fileName, FileNode.NodeType.FILE)) {
-                    filesSkipped++;
+            // Walk folder segments (everything except the last = file name).
+            for (int s = 0; s < segments.length - 1; s++) {
+                String segment = segments[s];
+                if (segment.isBlank()) continue;
+                FileNode existing = repository.findFolderByParentAndName(currentParentId, segment)
+                        .orElse(null);
+                if (existing != null) {
+                    currentParentId = existing.id();
                 } else {
-                    FileNode node = repository.save(FileNode.file(
-                            FileNode.newId(),
-                            currentParentId,
-                            fileName,
-                            file.getSize(),
-                            file.getContentType(),
-                            owner,
-                            visibility
-                    ));
-                    filesUploaded++;
-                    String path = buildSourcePath(currentParentId) + " / " + fileName;
-                    ingest(node, file.getBytes(), visibility, path);
+                    FileNode created = repository.save(
+                            FileNode.folder(FileNode.newId(), currentParentId, segment, owner, visibility));
+                    currentParentId = created.id();
+                    foldersCreated++;
                 }
             }
-        } finally {
-            progressTracker.finishBatch();
+
+            String fileName = segments[segments.length - 1];
+            if (repository.existsByParentAndName(currentParentId, fileName, FileNode.NodeType.FILE)) {
+                filesSkipped++;
+            } else {
+                FileNode node = repository.save(FileNode.file(
+                        FileNode.newId(),
+                        currentParentId,
+                        fileName,
+                        file.getSize(),
+                        file.getContentType(),
+                        owner,
+                        visibility
+                ));
+                filesUploaded++;
+                queueIngestion(node, file, visibility,
+                        buildSourcePath(currentParentId) + " / " + fileName);
+            }
         }
 
         return new BulkUploadResult(foldersCreated, filesUploaded, filesSkipped, files.size());
@@ -156,19 +145,21 @@ public class FileService {
         }
     }
 
-    private void ingest(FileNode fileNode, byte[] bytes, String visibility) {
-        String path = buildSourcePath(fileNode.parentId()) + " / " + fileNode.name();
-        ingest(fileNode, bytes, visibility, path);
-    }
-
-    private void ingest(FileNode fileNode, byte[] bytes, String visibility, String sourcePath) {
+    /**
+     * Hand the upload's content to the background ingestion queue via a temp file
+     * (keeps large payloads off the heap) and return immediately — the upload
+     * response must not wait for extract/chunk/embed.
+     */
+    private void queueIngestion(FileNode node, MultipartFile upload, String visibility, String sourcePath) {
         try {
-            List<String> aclTags = List.of("vis:" + visibility, "owner:" + fileNode.owner());
-            ingestionService.ingest(fileNode.id(), fileNode.name(), sourcePath,
-                    bytes, fileNode.mimeType(), aclTags);
+            Path payload = Files.createTempFile("mcp-ingest-", ".bin");
+            upload.transferTo(payload);
+            List<String> aclTags = List.of("vis:" + visibility, "owner:" + node.owner());
+            ingestionService.enqueue(node.id(), node.name(), sourcePath,
+                    payload, node.mimeType(), aclTags);
         } catch (Exception e) {
-            log.warn("Ingestion failed for {} (search will not cover this file): {}",
-                    fileNode.name(), e.getMessage());
+            log.warn("Failed to queue ingestion for {} (search will not cover this file): {}",
+                    node.name(), e.getMessage());
         }
     }
 
