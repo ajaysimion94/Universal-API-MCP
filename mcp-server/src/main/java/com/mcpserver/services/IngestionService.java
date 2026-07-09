@@ -110,8 +110,13 @@ public class IngestionService {
 
         chunkRepository.deleteBySourceFileId(sourceFileId);
 
+        // Prepend the filename and path so they're searchable in both FTS5 and vector space.
+        String augmented = "Title: " + sourceName
+                + (sourcePath != null && !sourcePath.isBlank() ? "\nPath: " + sourcePath : "")
+                + "\n\n" + text;
+
         progressTracker.chunking();
-        List<Chunker.ChunkText> chunkTexts = chunker.chunk(text, targetChunkTokens, chunkOverlapTokens);
+        List<Chunker.ChunkText> chunkTexts = chunker.chunk(augmented, targetChunkTokens, chunkOverlapTokens);
 
         // Without the embedding model, still chunk and FTS-index so lexical search works;
         // embeddings stay null and the vector leg simply has nothing for this file.

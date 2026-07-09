@@ -94,13 +94,22 @@ public class SearchService implements SearchPipeline {
 
         List<Reranker.ScoredChunk> reranked = reranker.rerank(query, candidates);
 
+        String[] queryTerms = query.toLowerCase().replaceAll("[^a-z0-9\\s]", " ").trim().split("\\s+");
+
         List<SearchResult> results = new ArrayList<>();
         int limit = Math.min(topN, reranked.size());
         for (int i = 0; i < limit; i++) {
             Reranker.ScoredChunk sc = reranked.get(i);
             Chunk c = sc.chunk();
+            float score = sc.score();
+            for (String term : queryTerms) {
+                if (term.length() > 2 && c.sourceName().toLowerCase().contains(term)) {
+                    score *= 3f;
+                    break;
+                }
+            }
             results.add(new SearchResult(
-                    c, sc.score(), c.sourceName(), c.sourcePath(), null, "local",
+                    c, score, c.sourceName(), c.sourcePath(), null, "local",
                     c.aclTags(), excerpt(c.content(), query)
             ));
         }
