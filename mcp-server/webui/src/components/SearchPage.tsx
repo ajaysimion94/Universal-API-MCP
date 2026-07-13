@@ -1,15 +1,40 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
-import { search, listPlugins, PluginInfo, SearchResult, SearchResponse } from "../api";
+import {
+  search,
+  listPlugins,
+  listTools,
+  ApiToolInfo,
+  PluginInfo,
+  SearchResult,
+  SearchResponse,
+} from "../api";
 import {
   SearchIcon,
   HashIcon,
+  AtSignIcon,
   FileIcon,
   ChevronRightIcon,
   GlobeIcon,
   ExternalLinkIcon,
   AlertIcon,
 } from "../icons";
+import { ToolFormPanel } from "./ToolFormPanel";
+import { ToolConfirmPanel } from "./ToolConfirmPanel";
+import { ToolResultPanel } from "./ToolResultPanel";
+
+/** The @/# token being typed at the end of the input, if any — drives autocomplete. */
+function activeToken(input: string): { sigil: "@" | "#"; fragment: string; start: number } | null {
+  const trimmedStart = input.trimStart();
+  if (!trimmedStart.startsWith("@") && !trimmedStart.startsWith("#")) return null;
+  const match = /(^|\s)([@#])([\w-]*)$/.exec(input);
+  if (!match) return null;
+  return {
+    sigil: match[2] as "@" | "#",
+    fragment: match[3].toLowerCase(),
+    start: match.index + match[1].length,
+  };
+}
 
 interface FileGroup {
   sourceName: string;
@@ -33,10 +58,88 @@ export function SearchPage() {
   const [initialWebWarning, setInitialWebWarning] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Tool autocomplete: the full tool list is small — fetch once, filter as you type.
+  const [allTools, setAllTools] = useState<ApiToolInfo[]>([]);
+  const [acIndex, setAcIndex] = useState(0);
+  const [acDismissed, setAcDismissed] = useState(false);
+
   const searxngReady = useMemo(() => {
     const p = plugins.find((p) => p.id === "searxng");
     return p?.status === "ACTIVE";
   }, [plugins]);
+
+  useEffect(() => {
+    listTools().then(setAllTools).catch(() => {});
+  }, []);
+
+  const token = useMemo(() => activeToken(input), [input]);
+
+  const acItems = useMemo(() => {
+    if (!token || acDismissed) return [];
+    if (token.sigil === "@") {
+      const apps = new Map<string, number>();
+      for (const t of allTools) {
+        if (t.appSlug.startsWith(token.fragment)) {
+          apps.set(t.appSlug, (apps.get(t.appSlug) ?? 0) + 1);
+        }
+      }
+      return Array.from(apps.entries()).slice(0, 8).map(([app, count]) => ({
+        key: "@" + app,
+        sigil: "@" as const,
+        value: app,
+        label: app,
+        detail: `${count} ${count === 1 ? "tool" : "tools"}`,
+        method: null as string | null,
+      }));
+    }
+    // '#' — scope by a preceding @app if one was typed
+    const appMatch = /^@([\w-]+)\s/.exec(input.trimStart());
+    const appScope = appMatch ? appMatch[1].toLowerCase() : null;
+    return allTools
+      .filter((t) => t.enabled)
+      .filter((t) => !appScope || t.appSlug === appScope)
+      .filter((t) =>
+        token.fragment === "" ||
+        t.name.includes(token.fragment) ||
+        t.requestSlug.includes(token.fragment))
+      .slice(0, 8)
+      .map((t) => ({
+        key: "#" + t.name,
+        sigil: "#" as const,
+        value: appScope ? t.requestSlug : t.name,
+        label: appScope ? t.requestSlug : t.name,
+        detail: t.displayName,
+        method: t.method,
+      }));
+  }, [token, acDismissed, allTools, input]);
+
+  useEffect(() => {
+    setAcIndex(0);
+  }, [acItems.length, token?.fragment]);
+
+  const acceptSuggestion = (item: { sigil: "@" | "#"; value: string }) => {
+    if (!token) return;
+    const next = input.slice(0, token.start) + item.sigil + item.value + " ";
+    setInput(next);
+    setAcDismissed(false);
+    inputRef.current?.focus();
+  };
+
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (acItems.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setAcIndex((i) => (i + 1) % acItems.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setAcIndex((i) => (i - 1 + acItems.length) % acItems.length);
+    } else if (e.key === "Tab" || (e.key === "Enter" && token && token.fragment !== acItems[acIndex]?.value)) {
+      e.preventDefault();
+      acceptSuggestion(acItems[acIndex]);
+    } else if (e.key === "Escape") {
+      setAcDismissed(true);
+    }
+  };
 
   const runSearch = async (query: string, web: boolean) => {
     const trimmed = query.trim();
@@ -85,7 +188,7 @@ export function SearchPage() {
     inputRef.current?.focus();
   }, []);
 
-  const isToolQuery = input.trim().startsWith("#");
+  const isToolQuery = input.trim().startsWith("#") || input.trim().startsWith("@");
 
   const { localGroups, webResults } = useMemo(() => {
     if (!response || response.mode !== "rag") return { localGroups: [], webResults: [] };
@@ -146,10 +249,45 @@ export function SearchPage() {
               type="text"
               className={`search-box-input ${isToolQuery ? "is-tool" : ""}`}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Search documents, runbooks, SOPs… or #tool_name"
+              onChange={(e) => {
+                setInput(e.target.value);
+                setAcDismissed(false);
+              }}
+              onKeyDown={handleInputKeyDown}
+              placeholder="Search documents, runbooks, SOPs… or @app #tool_name"
               aria-label="Search query"
+              autoComplete="off"
             />
+            {acItems.length > 0 && (
+              <ul className="tool-autocomplete" role="listbox">
+                {acItems.map((item, i) => (
+                  <li key={item.key} role="option" aria-selected={i === acIndex}>
+                    <button
+                      type="button"
+                      className={`tool-ac-item ${i === acIndex ? "tool-ac-active" : ""}`}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        acceptSuggestion(item);
+                      }}
+                      onMouseEnter={() => setAcIndex(i)}
+                    >
+                      {item.sigil === "@" ? (
+                        <AtSignIcon size={13} className="tool-ac-icon" />
+                      ) : (
+                        <HashIcon size={13} className="tool-ac-icon" />
+                      )}
+                      <span className="tool-ac-name mono">{item.label}</span>
+                      {item.method && (
+                        <span className={`method-badge mono ${item.method === "GET" ? "" : "method-write"}`}>
+                          {item.method}
+                        </span>
+                      )}
+                      <span className="tool-ac-detail">{item.detail}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
             <label className="web-toggle" title={!searxngReady ? "Web search requires SearXNG — install on the Plugins page" : "Augment results with live web content"}>
               <input
                 type="checkbox"
@@ -247,7 +385,56 @@ export function SearchPage() {
               <span className="tool-result-name mono">{response.tool}</span>
             </div>
             <p className="tool-result-message">{response.message}</p>
+            {response.suggestions && response.suggestions.length > 0 && (
+              <ul className="tool-suggestion-list">
+                {response.suggestions.map((s) => (
+                  <li key={s.id}>
+                    <button
+                      type="button"
+                      className="tool-ac-item"
+                      onClick={() => {
+                        const q = `#${s.name} `;
+                        setInput(q);
+                        inputRef.current?.focus();
+                      }}
+                    >
+                      <HashIcon size={13} className="tool-ac-icon" />
+                      <span className="tool-ac-name mono">{s.name}</span>
+                      <span className={`method-badge mono ${s.method === "GET" ? "" : "method-write"}`}>
+                        {s.method}
+                      </span>
+                      <span className="tool-ac-detail">{s.displayName}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
+        )}
+
+        {!loading && !error && response?.mode === "tool-form" && response.toolInfo && (
+          <ToolFormPanel
+            key={response.query}
+            tool={response.toolInfo}
+            prefill={response.prefill}
+            missingRequired={response.missingRequired}
+            violations={response.violations}
+            parseError={response.error}
+          />
+        )}
+
+        {!loading && !error && response?.mode === "tool-confirm" && response.toolInfo && response.preview && (
+          <ToolConfirmPanel
+            key={response.query}
+            tool={response.toolInfo}
+            preview={response.preview}
+            args={response.args ?? {}}
+            onCancel={() => setResponse(null)}
+          />
+        )}
+
+        {!loading && !error && response?.mode === "tool-result" && response.toolInfo && response.result && (
+          <ToolResultPanel toolName={response.toolInfo.name} result={response.result} />
         )}
 
         {!loading && !error && response && response.mode === "rag" && (

@@ -1,0 +1,17 @@
+openapi: 3.0.3
+info:
+  title: Petstore (YAML)
+  version: 1.0.0
+servers:
+  - url: https://petstore.example.com/api/v1
+paths:
+  /pets:
+    get:
+      operationId: listPets
+      summary: List pets
+      tags: [pets]
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer

@@ -75,3 +75,40 @@ CREATE TABLE IF NOT EXISTS ingestion_events (
 
 CREATE INDEX IF NOT EXISTS idx_ingestion_events_status ON ingestion_events(status);
 CREATE INDEX IF NOT EXISTS idx_ingestion_events_connection_id ON ingestion_events(connection_id);
+
+-- Spec source for API_COLLECTION connections (Postman collection / OpenAPI spec import).
+-- spec_document keeps the raw spec text so re-import/diff needs no file storage; specs are
+-- small text documents, fine for SQLite.
+ALTER TABLE connections ADD COLUMN spec_source_url TEXT;
+ALTER TABLE connections ADD COLUMN spec_format TEXT;
+ALTER TABLE connections ADD COLUMN spec_document TEXT;
+
+-- Tools generated from an imported Postman collection / OpenAPI spec (product-idea.md §8).
+-- One row per request/operation; enabled tools are callable from search (# grammar) and MCP.
+-- GET tools are enabled on import; state-changing tools start pending until approved.
+CREATE TABLE IF NOT EXISTS api_tools (
+    id               TEXT PRIMARY KEY,
+    connection_id    TEXT NOT NULL,
+    app_slug         TEXT NOT NULL,
+    name             TEXT NOT NULL,
+    request_slug     TEXT NOT NULL,
+    display_name     TEXT NOT NULL,
+    description      TEXT,
+    category         TEXT NOT NULL DEFAULT 'general',
+    http_method      TEXT NOT NULL,
+    url_template     TEXT NOT NULL,
+    params_schema    TEXT NOT NULL DEFAULT '{}',
+    param_locations  TEXT NOT NULL DEFAULT '{}',
+    headers          TEXT NOT NULL DEFAULT '{}',
+    body_template    TEXT,
+    primary_param    TEXT,
+    enabled          INTEGER NOT NULL DEFAULT 0,
+    pending          INTEGER NOT NULL DEFAULT 0,
+    knowledge_source INTEGER NOT NULL DEFAULT 0,
+    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE (connection_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_tools_connection_id ON api_tools(connection_id);
+CREATE INDEX IF NOT EXISTS idx_api_tools_name ON api_tools(name);

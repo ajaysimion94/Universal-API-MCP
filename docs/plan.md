@@ -304,6 +304,17 @@ E2E test checklist:
 
 ### Phase 4 — Integrations (§6.1, §6.2, §8, §11)
 
+> **Pulled forward (2026-07-13, see DECISIONS.md):** the §8 zero-code onboarding slice landed early —
+> `API_COLLECTION` connections import Postman v2.1 / OpenAPI 3.x specs (file or URL, Swagger-UI-page
+> resolution included), generate `{app}_{request-name}` tools (GETs auto-enabled, writes pending
+> approval), expose them over a real MCP endpoint (`/mcp`, Streamable HTTP, runtime addTool/removeTool)
+> and the Web UI `#`/`@app` grammar with auto-generated inline argument forms, and support
+> knowledge-source marking of GET endpoints (scheduled invoke → RAG ingestion). Still open from that
+> checklist: extraction-template stubs/editor, per-tool rate-limit *configuration* UI (a default limit
+> exists), config-driven crawling (Method 2 field mapping), and true sandboxed execution. The Phase 3
+> `#keyword` grammar item is likewise done, minus the confirmation-token workflow engine (§7.2) — write
+> tools use a preview→Run card in the UI instead.
+
 **Goal:** first-party integrations are live and any API-backed application onboards in minutes via file
 upload. Microsoft Teams protected-API track filed at the start of this phase.
 

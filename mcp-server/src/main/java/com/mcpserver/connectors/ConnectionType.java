@@ -4,5 +4,6 @@ package com.mcpserver.connectors;
 public enum ConnectionType {
     CONFLUENCE,
     JIRA,
-    SHAREPOINT
+    SHAREPOINT,
+    API_COLLECTION
 }

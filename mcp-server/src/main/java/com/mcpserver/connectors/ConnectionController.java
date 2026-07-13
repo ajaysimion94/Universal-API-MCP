@@ -3,7 +3,10 @@ package com.mcpserver.connectors;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -31,19 +34,70 @@ public class ConnectionController {
 
     @PostMapping
     public Map<String, Object> create(@RequestBody CreateRequest req) {
-        if (req.type == null || req.name == null || req.baseUrl == null) {
-            throw new IllegalArgumentException("type, name, and baseUrl are required");
-        }
-        ConnectionType type;
-        try {
-            type = ConnectionType.valueOf(req.type.toUpperCase());
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("Unknown connection type: " + req.type);
-        }
+        ConnectionType type = parseType(req.type);
         List<String> aclScope = req.aclScope != null ? req.aclScope : List.of();
-        ConnectionService.CreateResult result =
-                connectionService.create(type, req.name, req.baseUrl, req.username, req.password, aclScope);
+        ConnectionService.CreateResult result;
+        if (type == ConnectionType.API_COLLECTION) {
+            if (req.name == null || req.specUrl == null || req.specUrl.isBlank()) {
+                throw new IllegalArgumentException(
+                        "name and specUrl are required (or upload a spec file via /import-spec)");
+            }
+            result = connectionService.createApiCollection(req.name, req.baseUrl,
+                    parseAuthMode(req.authMode), authUsernameFor(req), req.password, aclScope,
+                    req.specUrl, null);
+        } else {
+            if (req.name == null || req.baseUrl == null) {
+                throw new IllegalArgumentException("type, name, and baseUrl are required");
+            }
+            result = connectionService.create(type, req.name, req.baseUrl, req.username, req.password, aclScope);
+        }
         return Map.of("id", result.connectionId(), "jobId", result.jobId(), "status", "running");
+    }
+
+    /**
+     * API_COLLECTION creation with an uploaded spec file (Postman collection / OpenAPI JSON or
+     * YAML). Multipart sibling of the JSON create — same result shape, same async test job.
+     */
+    @PostMapping("/import-spec")
+    public Map<String, Object> importSpec(@RequestParam("file") MultipartFile file,
+                                          @RequestParam("name") String name,
+                                          @RequestParam(value = "baseUrl", required = false) String baseUrl,
+                                          @RequestParam(value = "authMode", required = false) String authMode,
+                                          @RequestParam(value = "username", required = false) String username,
+                                          @RequestParam(value = "password", required = false) String password,
+                                          @RequestParam(value = "apiKeyHeader", required = false) String apiKeyHeader) throws IOException {
+        if (file.isEmpty()) {
+            throw new IllegalArgumentException("Spec file is empty");
+        }
+        String specDocument = new String(file.getBytes(), StandardCharsets.UTF_8);
+        AuthMode mode = parseAuthMode(authMode);
+        String authUsername = mode == AuthMode.API_KEY_HEADER ? apiKeyHeader : username;
+        ConnectionService.CreateResult result = connectionService.createApiCollection(
+                name, baseUrl, mode, authUsername, password, List.of(), null, specDocument);
+        return Map.of("id", result.connectionId(), "jobId", result.jobId(), "status", "running");
+    }
+
+    private static ConnectionType parseType(String raw) {
+        if (raw == null) throw new IllegalArgumentException("type is required");
+        try {
+            return ConnectionType.valueOf(raw.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Unknown connection type: " + raw);
+        }
+    }
+
+    private static AuthMode parseAuthMode(String raw) {
+        if (raw == null || raw.isBlank()) return AuthMode.NONE;
+        try {
+            return AuthMode.valueOf(raw.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Unknown auth mode: " + raw);
+        }
+    }
+
+    /** For API_KEY_HEADER auth the header name rides in the authUsername column. */
+    private static String authUsernameFor(CreateRequest req) {
+        return parseAuthMode(req.authMode) == AuthMode.API_KEY_HEADER ? req.apiKeyHeader : req.username;
     }
 
     @PutMapping("/{id}")
@@ -123,6 +177,8 @@ public class ConnectionController {
         if (c.lastError() != null) map.put("lastError", c.lastError());
         map.put("webhookRegistered", c.webhookRegistered());
         map.put("aclScope", c.aclScope());
+        if (c.specSourceUrl() != null) map.put("specSourceUrl", c.specSourceUrl());
+        if (c.specFormat() != null) map.put("specFormat", c.specFormat());
         map.put("createdAt", c.createdAt().toString());
         map.put("updatedAt", c.updatedAt().toString());
         if (c.lastSyncedAt() != null) map.put("lastSyncedAt", c.lastSyncedAt().toString());
@@ -136,6 +192,10 @@ public class ConnectionController {
         public String username;
         public String password;
         public List<String> aclScope = new ArrayList<>();
+        // API_COLLECTION only:
+        public String specUrl;
+        public String authMode;
+        public String apiKeyHeader;
     }
 
     public static class UpdateRequest {

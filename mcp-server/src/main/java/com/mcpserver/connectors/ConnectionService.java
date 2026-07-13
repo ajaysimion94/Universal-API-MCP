@@ -1,6 +1,7 @@
 package com.mcpserver.connectors;
 
 import com.mcpserver.repositories.ChunkRepository;
+import com.mcpserver.tools.ApiToolService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -30,6 +31,7 @@ public class ConnectionService {
     private final ChunkRepository chunkRepository;
     private final IngestionEventRepository eventRepository;
     private final CredentialCipher credentialCipher;
+    private final ApiToolService apiToolService;
     private final Map<ConnectionType, SourceConnector> connectorsByType;
 
     private final ExecutorService jobExecutor = Executors.newSingleThreadExecutor(r -> {
@@ -44,11 +46,13 @@ public class ConnectionService {
                               ChunkRepository chunkRepository,
                               IngestionEventRepository eventRepository,
                               CredentialCipher credentialCipher,
+                              ApiToolService apiToolService,
                               List<SourceConnector> connectors) {
         this.connectionRepository = connectionRepository;
         this.chunkRepository = chunkRepository;
         this.eventRepository = eventRepository;
         this.credentialCipher = credentialCipher;
+        this.apiToolService = apiToolService;
         this.connectorsByType = connectors.stream()
                 .collect(Collectors.toMap(SourceConnector::type, Function.identity()));
     }
@@ -77,6 +81,28 @@ public class ConnectionService {
     }
 
     public record CreateResult(String connectionId, String jobId) {}
+
+    /**
+     * API_COLLECTION variant: carries the auth mode and the spec source (URL or raw uploaded
+     * document — exactly one should be set). Base URL may be blank; the connector derives it from
+     * the spec during the test job. The secret may be null for {@link AuthMode#NONE}.
+     */
+    public CreateResult createApiCollection(String name, String baseUrl, AuthMode authMode,
+                                            String username, String secret, List<String> aclScope,
+                                            String specUrl, String specDocument) {
+        connectorFor(ConnectionType.API_COLLECTION);
+        if ((specUrl == null || specUrl.isBlank()) && (specDocument == null || specDocument.isBlank())) {
+            throw new IllegalArgumentException("Either a spec URL or an uploaded spec file is required");
+        }
+        Connection connection = Connection.create(ConnectionType.API_COLLECTION, name,
+                baseUrl == null ? "" : baseUrl, authMode, username,
+                secret == null || secret.isBlank() ? null : credentialCipher.encrypt(secret),
+                aclScope);
+        connection = connection.withSpec(
+                specUrl == null || specUrl.isBlank() ? null : specUrl.trim(), null, specDocument);
+        connectionRepository.save(connection);
+        return new CreateResult(connection.id(), startTestConnectionJob(connection.id()));
+    }
 
     /** Re-tests credentials/reachability for an existing connection; returns the job id. */
     public String startTestConnectionJob(String connectionId) {
@@ -117,7 +143,8 @@ public class ConnectionService {
                 password != null && !password.isBlank() ? credentialCipher.encrypt(password) : existing.authSecretEncrypted(),
                 ConnectionStatus.PENDING, null, existing.syncCursor(), existing.webhookRegistered(),
                 aclScope != null ? aclScope : existing.aclScope(),
-                existing.createdAt(), java.time.Instant.now(), existing.lastSyncedAt()
+                existing.createdAt(), java.time.Instant.now(), existing.lastSyncedAt(),
+                existing.specSourceUrl(), existing.specFormat(), existing.specDocument()
         );
         connectionRepository.save(updated);
         return startTestConnectionJob(connectionId);
@@ -133,12 +160,16 @@ public class ConnectionService {
         }
     }
 
-    /** Deletes the connection and purges every chunk it produced (source_file_id prefix "{id}:"). */
+    /**
+     * Deletes the connection, purges every chunk it produced (source_file_id prefix "{id}:"),
+     * and removes its imported tools (no-op for connection types without tools).
+     */
     public void delete(String connectionId) {
         findById(connectionId); // 404s if missing
         chunkRepository.deleteBySourceFileIdPrefix(connectionId + ":");
+        apiToolService.deleteByConnectionId(connectionId);
         connectionRepository.deleteById(connectionId);
-        log.info("Deleted connection {} and purged its chunks", connectionId);
+        log.info("Deleted connection {} and purged its chunks and tools", connectionId);
     }
 
     /**
