@@ -92,6 +92,14 @@
             <artifactId>junit-platform-launcher</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <!-- Standalone (shaded) build avoids classpath collisions with the app's own Tomcat —
+                 used to stub Confluence/Jira Cloud + Server/DC APIs in connector tests. -->
+            <groupId>org.wiremock</groupId>
+            <artifactId>wiremock-standalone</artifactId>
+            <version>3.9.1</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

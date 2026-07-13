@@ -23,6 +23,9 @@ export function Topbar() {
           <NavLink to="/plugins" className={({ isActive }) => "nav-link" + (isActive ? " is-active" : "")}>
             Plugins
           </NavLink>
+          <NavLink to="/connections" className={({ isActive }) => "nav-link" + (isActive ? " is-active" : "")}>
+            Connections
+          </NavLink>
         </nav>
       </div>
 

@@ -3,6 +3,7 @@ import { Topbar } from "./components/Topbar";
 import { SearchPage } from "./components/SearchPage";
 import { FilesPage } from "./components/FilesPage";
 import { PluginsPage } from "./components/PluginsPage";
+import { ConnectionsPage } from "./components/ConnectionsPage";
 
 export default function App() {
   return (
@@ -15,6 +16,7 @@ export default function App() {
             <Route path="/files" element={<FilesPage />} />
             <Route path="/files/*" element={<FilesPage />} />
             <Route path="/plugins" element={<PluginsPage />} />
+            <Route path="/connections" element={<ConnectionsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </div>

@@ -24,15 +24,16 @@ Execution tracker: [`plan.md`](plan.md) (**in what order**, and how we know each
 | `docs/product-idea.md` | Architecture blueprint — vision, stack, core modules, security, roadmap (source of truth; architecture and sequence diagrams embedded as Mermaid) |
 | `docs/plan.md` | Execution tracker — per-phase build and E2E test checklists (phase-state diagrams embedded as Mermaid) |
 
-The repository is currently **docs-only** (pre-implementation). The `mcp-server/` module (structure in
-`product-idea.md` §4) lands in Phase 1 per the plan.
+The `mcp-server/` module (structure in `product-idea.md` §4) is live — Phase 1 (foundation) and Phase 2
+(knowledge & search, including the Files & Folders and Plugins UI) are implemented; Confluence/Jira
+ingestion connectors are in progress. See `docs/plan.md` for current phase status.
 
 ## Roadmap at a glance
 
 | Phase | Outcome |
 | --- | --- |
 | **1 · Foundation** | An AI client connects over Streamable HTTP and calls a tool — fully traced, with CI and a golden-set evaluation baseline (no auth yet — trusted internal network only) |
-| **2 · Knowledge & Search** | Grounded, cited context from ingested enterprise content (RRF hybrid search: lexical + pgvector, cross-encoder rerank); ACL tags captured on every chunk; Web UI slice 1 — universal search page + files & folders manager |
+| **2 · Knowledge & Search** | Grounded, cited context from ingested enterprise content (RRF hybrid search: lexical + sqlite-vec, cross-encoder rerank); ACL tags captured on every chunk; Web UI slice 1 — universal search page + files & folders manager |
 | **3 · Enterprise Actions** | Deterministic workflow engine with approval gates (preview → confirmation token), audit logs, rate limiting, Caffeine caching; Web UI slice 2 — `#keyword` actions with preview/approve cards |
 | **4 · Integrations** | Jira, Confluence, SharePoint, GitHub, Kubernetes live; zero-code Postman/OpenAPI onboarding (`{app}_{request-name}` tools); Web UI slice 3 — connectors console; Microsoft Teams protected-API track filed |
 | **5 · Production** | High availability, horizontal scaling, full monitoring, disaster recovery, backups |
@@ -43,11 +44,12 @@ Every phase completes a runnable end-to-end flow and exits only when its E2E tes
 
 ## Stack (open-source-first)
 
-Java 21 · Spring Boot 3 · Java MCP SDK (Streamable HTTP, stateless) · PostgreSQL + pgvector (HNSW) +
-lexical full-text leg, merged via RRF · in-process ONNX embeddings (nomic-embed-text-v1.5) +
-cross-encoder reranker (ONNX Runtime — no sidecars) · Caffeine cache (Valkey at scale) · Postgres-outbox
-event queue (Kafka at scale) · Keycloak OIDC (Phase 6) · OpenTelemetry + Prometheus + Grafana · Loki/ELK ·
-Maven.
+Java 21 · Spring Boot 3 · Java MCP SDK (Streamable HTTP, stateless) · embedded SQLite + sqlite-vec (HNSW)
++ FTS5 lexical leg, merged via RRF · in-process ONNX embeddings (nomic-embed-text-v1.5) +
+cross-encoder reranker (ONNX Runtime — no sidecars) · Caffeine cache (Valkey at scale) · SQLite-based
+durable event queue (Kafka at scale) · Keycloak OIDC (Phase 6) · OpenTelemetry + Prometheus + Grafana ·
+Loki/ELK · Maven. Setup is zero-install — SQLite, the embedding model, and SearXNG install/enable from
+the in-app **Plugins** page rather than manual OS-specific steps (see `docs/plugins-plan.md`).
 
 **Runtime constraint:** no Docker or any virtualization for now — the server ships as a single runnable
 JAR and all backing services run as natively installed processes; Kubernetes is revisited only if that

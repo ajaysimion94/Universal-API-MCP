@@ -169,3 +169,13 @@ export function AlertIcon({ size = 16, className }: IconProps) {
     </svg>
   );
 }
+
+export function LinkIcon({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M9 15l6-6" />
+      <path d="M10.5 6.5l1-1a3.54 3.54 0 0 1 5 5l-1 1" />
+      <path d="M13.5 17.5l-1 1a3.54 3.54 0 0 1-5-5l1-1" />
+    </svg>
+  );
+}

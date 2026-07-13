@@ -67,6 +67,7 @@ public class ChunkRepository {
         if (embStr != null && !embStr.isBlank()) {
             embedding = parseJsonFloatArray(embStr);
         }
+        String sourceUpdatedAtStr = rs.getString("updated_at");
         return new Chunk(
                 rs.getString("id"),
                 rs.getString("source_file_id"),
@@ -77,17 +78,24 @@ public class ChunkRepository {
                 acl,
                 rs.getInt("position"),
                 rs.getInt("token_count"),
-                java.time.Instant.parse(rs.getString("created_at"))
+                java.time.Instant.parse(rs.getString("created_at")),
+                rs.getString("source_system"),
+                rs.getString("external_id"),
+                rs.getString("url"),
+                sourceUpdatedAtStr == null ? null : java.time.Instant.parse(sourceUpdatedAtStr)
         );
     };
 
     public void save(Chunk chunk) {
         String embeddingJson = chunk.embedding() != null ? toJsonFloatArray(chunk.embedding()) : null;
         String aclJson = toJsonStringArray(chunk.aclTags());
+        String sourceSystem = chunk.sourceSystem() != null ? chunk.sourceSystem() : "upload";
+        String sourceUpdatedAt = chunk.sourceUpdatedAt() != null ? chunk.sourceUpdatedAt().toString() : null;
         jdbc.update(
-                "INSERT OR REPLACE INTO chunks (id, source_file_id, source_name, source_path, content, embedding, acl_tags, position, token_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO chunks (id, source_file_id, source_name, source_path, content, embedding, acl_tags, position, token_count, source_system, external_id, url, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 chunk.id(), chunk.sourceFileId(), chunk.sourceName(), chunk.sourcePath(),
-                chunk.content(), embeddingJson, aclJson, chunk.position(), chunk.tokenCount()
+                chunk.content(), embeddingJson, aclJson, chunk.position(), chunk.tokenCount(),
+                sourceSystem, chunk.externalId(), chunk.url(), sourceUpdatedAt
         );
         jdbc.update(
                 "INSERT OR REPLACE INTO chunks_fts (content, chunk_id) VALUES (?, ?)",
@@ -109,6 +117,22 @@ public class ChunkRepository {
         List<String> chunkIds = jdbc.queryForList(
                 "SELECT id FROM chunks WHERE source_file_id = ?", String.class, sourceFileId);
         jdbc.update("DELETE FROM chunks WHERE source_file_id = ?", sourceFileId);
+        deleteFromSecondaryLegs(chunkIds);
+    }
+
+    /**
+     * Purges every chunk whose {@code source_file_id} starts with {@code prefix} — used when a
+     * connection is deleted, since connector chunks use {@code "{connectionId}:{externalId}"} as
+     * their source_file_id and there is no single source_file_id to delete by.
+     */
+    public void deleteBySourceFileIdPrefix(String prefix) {
+        List<String> chunkIds = jdbc.queryForList(
+                "SELECT id FROM chunks WHERE source_file_id LIKE ?", String.class, prefix + "%");
+        jdbc.update("DELETE FROM chunks WHERE source_file_id LIKE ?", prefix + "%");
+        deleteFromSecondaryLegs(chunkIds);
+    }
+
+    private void deleteFromSecondaryLegs(List<String> chunkIds) {
         for (String id : chunkIds) {
             try {
                 jdbc.update("DELETE FROM chunks_fts WHERE chunk_id = ?", id);
@@ -125,7 +149,7 @@ public class ChunkRepository {
         if (!vec0Available) return List.of();
         String queryJson = toJsonFloatArray(queryEmbedding);
         String sql = """
-                SELECT c.id, c.source_file_id, c.source_name, c.source_path, c.content, c.embedding, c.acl_tags, c.position, c.token_count, c.created_at
+                SELECT c.id, c.source_file_id, c.source_name, c.source_path, c.content, c.embedding, c.acl_tags, c.position, c.token_count, c.created_at, c.source_system, c.external_id, c.url, c.updated_at
                 FROM chunks_vec v
                 JOIN chunks c ON c.id = v.chunk_id
                 WHERE v.embedding MATCH ? AND k = ?
@@ -143,7 +167,7 @@ public class ChunkRepository {
         String ftsQuery = toFtsQuery(query);
         if (ftsQuery.isBlank()) return List.of();
         String sql = """
-                SELECT c.id, c.source_file_id, c.source_name, c.source_path, c.content, c.embedding, c.acl_tags, c.position, c.token_count, c.created_at
+                SELECT c.id, c.source_file_id, c.source_name, c.source_path, c.content, c.embedding, c.acl_tags, c.position, c.token_count, c.created_at, c.source_system, c.external_id, c.url, c.updated_at
                 FROM chunks_fts f
                 JOIN chunks c ON c.id = f.chunk_id
                 WHERE f.content MATCH ?

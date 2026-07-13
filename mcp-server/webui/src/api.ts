@@ -227,3 +227,91 @@ export async function stopPlugin(id: string): Promise<PluginInfo> {
 export async function getPluginJob(jobId: string): Promise<PluginJob> {
   return json<PluginJob>(await fetch(`${PLUGINS_API}/jobs/${jobId}`));
 }
+
+/* ── Connections (Confluence/Jira/... ingestion connectors) ── */
+
+export type ConnectionType = "CONFLUENCE" | "JIRA" | "SHAREPOINT";
+export type DeploymentType = "CLOUD" | "SERVER_DC" | "UNKNOWN";
+export type ConnectionStatus = "PENDING" | "CONNECTED" | "ERROR" | "DISABLED";
+
+export interface ConnectionInfo {
+  id: string;
+  type: ConnectionType;
+  name: string;
+  baseUrl: string;
+  deploymentType: DeploymentType;
+  authMode: "BASIC" | "OAUTH2";
+  authUsername: string | null;
+  status: ConnectionStatus;
+  lastError?: string;
+  webhookRegistered: boolean;
+  aclScope: string[];
+  createdAt: string;
+  updatedAt: string;
+  lastSyncedAt?: string;
+}
+
+export interface ConnectionJob {
+  jobId: string;
+  connectionId: string;
+  kind: "TEST_CONNECTION" | "BACKFILL";
+  status: "running" | "completed" | "failed";
+  itemsProcessed?: number;
+  itemsTotal?: number;
+  error?: string;
+}
+
+export interface CreateConnectionInput {
+  type: ConnectionType;
+  name: string;
+  baseUrl: string;
+  username: string;
+  password: string;
+  aclScope?: string[];
+}
+
+const CONNECTIONS_API = "/api/connections";
+
+export async function listConnections(): Promise<ConnectionInfo[]> {
+  return json<ConnectionInfo[]>(await fetch(CONNECTIONS_API));
+}
+
+export async function createConnection(
+  input: CreateConnectionInput,
+): Promise<{ id: string; jobId: string; status: string }> {
+  return json(
+    await fetch(CONNECTIONS_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function getConnection(id: string): Promise<ConnectionInfo> {
+  return json<ConnectionInfo>(await fetch(`${CONNECTIONS_API}/${id}`));
+}
+
+export async function deleteConnection(id: string): Promise<void> {
+  const res = await fetch(`${CONNECTIONS_API}/${id}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 204) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(body.error ?? `Delete failed (${res.status})`);
+  }
+}
+
+export async function triggerBackfill(id: string): Promise<{ jobId: string; status: string }> {
+  return json(await fetch(`${CONNECTIONS_API}/${id}/backfill`, { method: "POST" }));
+}
+
+export async function enableConnection(id: string): Promise<ConnectionInfo> {
+  return json<ConnectionInfo>(await fetch(`${CONNECTIONS_API}/${id}/enable`, { method: "POST" }));
+}
+
+export async function disableConnection(id: string): Promise<ConnectionInfo> {
+  return json<ConnectionInfo>(await fetch(`${CONNECTIONS_API}/${id}/disable`, { method: "POST" }));
+}
+
+export async function getConnectionJob(jobId: string): Promise<ConnectionJob> {
+  return json<ConnectionJob>(await fetch(`${CONNECTIONS_API}/jobs/${jobId}`));
+}

@@ -41,6 +41,14 @@ rag:
     page-fetch-timeout-seconds: 10
     max-content-chars: 20000
 
+# Confluence/Jira connectors (com.mcpserver.connectors)
+connectors:
+  poll-interval-ms: 300000   # 5 minutes — delta-poll cadence for every CONNECTED connection
+  # Publicly reachable base URL Confluence/Jira Server-DC would POST webhooks to (e.g. behind a
+  # reverse proxy). Blank (the default, since server.address is 127.0.0.1 — trusted network only)
+  # means webhook registration is skipped and every connection relies on delta polling only.
+  webhook-base-url: ""
+
 logging:
   level:
     com.mcpserver: INFO

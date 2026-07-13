@@ -18,6 +18,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -73,13 +74,26 @@ public class IngestionService {
      */
     public void enqueue(String sourceFileId, String sourceName, String sourcePath,
                         Path payload, String mimeType, List<String> aclTags) {
+        enqueue(sourceFileId, sourceName, sourcePath, payload, mimeType, aclTags,
+                "upload", null, null, null);
+    }
+
+    /**
+     * Connector variant of {@link #enqueue}: same background-ingestion behavior, plus the
+     * source-system metadata (e.g. "confluence", the Confluence page id, its web URL, and its
+     * last-modified timestamp from the source system) that lands on every resulting chunk.
+     */
+    public void enqueue(String sourceFileId, String sourceName, String sourcePath,
+                        Path payload, String mimeType, List<String> aclTags,
+                        String sourceSystem, String externalId, String url, Instant sourceUpdatedAt) {
         pendingSources.add(sourceFileId);
         progressTracker.filesEnqueued(1);
         worker.submit(() -> {
             try {
                 if (cancelledSources.remove(sourceFileId)) return;
                 byte[] bytes = Files.readAllBytes(payload);
-                ingest(sourceFileId, sourceName, sourcePath, bytes, mimeType, aclTags);
+                ingest(sourceFileId, sourceName, sourcePath, bytes, mimeType, aclTags,
+                        sourceSystem, externalId, url, sourceUpdatedAt);
                 // Deleted while we were ingesting: remove the chunks we just wrote.
                 if (cancelledSources.remove(sourceFileId)) {
                     chunkRepository.deleteBySourceFileId(sourceFileId);
@@ -100,6 +114,13 @@ public class IngestionService {
 
     public void ingest(String sourceFileId, String sourceName, String sourcePath,
                        byte[] contentBytes, String mimeType, List<String> aclTags) {
+        ingest(sourceFileId, sourceName, sourcePath, contentBytes, mimeType, aclTags,
+                "upload", null, null, null);
+    }
+
+    public void ingest(String sourceFileId, String sourceName, String sourcePath,
+                       byte[] contentBytes, String mimeType, List<String> aclTags,
+                       String sourceSystem, String externalId, String url, Instant sourceUpdatedAt) {
         progressTracker.startFile(sourceName);
 
         String text = extractText(contentBytes, mimeType, sourceName);
@@ -133,7 +154,8 @@ public class IngestionService {
                     ? embeddingClient.embed(ct.content(), EmbeddingClient.Mode.DOCUMENT)
                     : null;
             Chunk chunk = Chunk.create(sourceFileId, sourceName, sourcePath,
-                    ct.content(), embedding, aclTags, ct.position(), ct.approxTokenCount());
+                    ct.content(), embedding, aclTags, ct.position(), ct.approxTokenCount(),
+                    sourceSystem, externalId, url, sourceUpdatedAt);
             chunkRepository.save(chunk);
             progressTracker.chunkEmbedded();
         }
