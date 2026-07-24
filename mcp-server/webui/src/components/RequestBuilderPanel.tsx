@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ApiToolInfo,
   AuditEntry,
-  AuthOverride,
   JsonSchemaProperty,
   ManualParam,
   RequestOverrides,
@@ -16,6 +15,8 @@ import {
   invokeTool,
   isWorkflowPreview,
   previewTool,
+  updateManualTool,
+  updateToolAuth,
 } from "../api";
 import { ClockIcon, CodeIcon, HashIcon, PlayIcon, PlusIcon, TrashIcon } from "../icons";
 import { Toggle } from "./Toggle";
@@ -25,7 +26,28 @@ import { CodeSnippetPanel } from "./CodeSnippetPanel";
 
 type Tab = "params" | "headers" | "body" | "auth" | "history";
 type BodyMode = "SCHEMA" | "NONE" | "RAW";
-type AuthMode = "INHERIT" | "NONE" | "BASIC" | "BEARER" | "API_KEY_HEADER";
+// OAUTH2 is a reserved, unimplemented mode (see AuthMode.java) — included only so a tool's raw
+// authMode value type-checks; the dropdown never offers it as a selectable option.
+type AuthMode = "INHERIT" | "NONE" | "BASIC" | "BEARER" | "API_KEY_HEADER" | "OAUTH2";
+
+/** Query/header params editable in the manual-request form — path/body params are inferred, not listed here. */
+function paramsFromTool(tool: ApiToolInfo): ManualParam[] {
+  const props = tool.paramsSchema.properties ?? {};
+  const required = new Set(tool.paramsSchema.required ?? []);
+  const out: ManualParam[] = [];
+  for (const [name, prop] of Object.entries(props)) {
+    const loc = tool.paramLocations[name];
+    if (loc !== "query" && loc !== "header") continue;
+    out.push({
+      name,
+      in: loc,
+      required: required.has(name),
+      defaultValue: prop.default !== undefined ? String(prop.default) : "",
+      description: prop.description ?? "",
+    });
+  }
+  return out;
+}
 
 interface KvRow {
   key: string;
@@ -47,6 +69,8 @@ export function RequestBuilderPanel({
   parseError,
   onSaved,
   onDeleted,
+  onToggleEnable,
+  onUpdated,
 }: {
   tool: ApiToolInfo | null;
   connectionId?: string;
@@ -56,6 +80,8 @@ export function RequestBuilderPanel({
   parseError?: string;
   onSaved?: (tool: ApiToolInfo) => void;
   onDeleted?: () => void;
+  onToggleEnable?: (enabled: boolean) => void;
+  onUpdated?: (tool: ApiToolInfo) => void;
 }) {
   if (!tool) {
     return <ManualRequestForm connectionId={connectionId!} onSaved={onSaved} />;
@@ -68,6 +94,8 @@ export function RequestBuilderPanel({
       violations={violations}
       parseError={parseError}
       onDeleted={onDeleted}
+      onToggleEnable={onToggleEnable}
+      onUpdated={onUpdated}
     />
   );
 }
@@ -78,18 +106,22 @@ const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 
 function ManualRequestForm({
   connectionId,
+  initial,
   onSaved,
+  onCancel,
 }: {
   connectionId: string;
+  initial?: ApiToolInfo;
   onSaved?: (tool: ApiToolInfo) => void;
+  onCancel?: () => void;
 }) {
-  const [displayName, setDisplayName] = useState("");
-  const [method, setMethod] = useState("GET");
-  const [path, setPath] = useState("/");
-  const [category, setCategory] = useState("Manual");
-  const [description, setDescription] = useState("");
-  const [params, setParams] = useState<ManualParam[]>([]);
-  const [bodyTemplate, setBodyTemplate] = useState("");
+  const [displayName, setDisplayName] = useState(initial?.displayName ?? "");
+  const [method, setMethod] = useState(initial?.method ?? "GET");
+  const [path, setPath] = useState(initial?.urlTemplate ?? "/");
+  const [category, setCategory] = useState(initial?.category ?? "Manual");
+  const [description, setDescription] = useState(initial?.description ?? "");
+  const [params, setParams] = useState<ManualParam[]>(() => (initial ? paramsFromTool(initial) : []));
+  const [bodyTemplate, setBodyTemplate] = useState(initial?.bodyTemplate ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -105,8 +137,7 @@ function ManualRequestForm({
     setSaving(true);
     setError(null);
     try {
-      const tool = await createManualTool({
-        connectionId,
+      const shape = {
         displayName: displayName.trim(),
         method,
         path: path.trim(),
@@ -114,7 +145,10 @@ function ManualRequestForm({
         description: description.trim() || undefined,
         params: params.filter((p) => p.name.trim()),
         bodyTemplate: bodyTemplate.trim() || undefined,
-      });
+      };
+      const tool = initial
+        ? await updateManualTool(initial.id, shape)
+        : await createManualTool({ connectionId, ...shape });
       onSaved?.(tool);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save request");
@@ -127,7 +161,7 @@ function ManualRequestForm({
     <div className="tool-panel">
       <div className="tool-panel-header">
         <HashIcon size={16} className="tool-result-icon" />
-        <span className="tool-panel-name mono">New request</span>
+        <span className="tool-panel-name mono">{initial ? "Edit request" : "New request"}</span>
       </div>
       {error && (
         <div className="error-banner" role="alert">
@@ -234,8 +268,13 @@ function ManualRequestForm({
         </label>
 
         <div className="form-actions">
+          {onCancel && (
+            <button type="button" className="btn btn-ghost" onClick={onCancel} disabled={saving}>
+              Cancel
+            </button>
+          )}
           <button type="submit" className="btn btn-primary" disabled={saving}>
-            {saving ? "Saving…" : "Save request"}
+            {saving ? "Saving…" : initial ? "Save changes" : "Save request"}
           </button>
         </div>
       </form>
@@ -252,6 +291,8 @@ function RunPanel({
   violations,
   parseError,
   onDeleted,
+  onToggleEnable,
+  onUpdated,
 }: {
   tool: ApiToolInfo;
   prefill?: Record<string, unknown>;
@@ -259,6 +300,8 @@ function RunPanel({
   violations?: ToolViolation[];
   parseError?: string;
   onDeleted?: () => void;
+  onToggleEnable?: (enabled: boolean) => void;
+  onUpdated?: (tool: ApiToolInfo) => void;
 }) {
   const properties = tool.paramsSchema.properties ?? {};
   const required = new Set(tool.paramsSchema.required ?? []);
@@ -285,10 +328,15 @@ function RunPanel({
   const [bodyMode, setBodyMode] = useState<BodyMode>("SCHEMA");
   const [rawBody, setRawBody] = useState("");
   const [rawContentType, setRawContentType] = useState("application/json");
-  const [authMode, setAuthMode] = useState<AuthMode>("INHERIT");
-  const [authUsername, setAuthUsername] = useState("");
+
+  // Persisted per-request auth override (Save button below) — inherited (null) by default.
+  const [authMode, setAuthMode] = useState<AuthMode>(tool.authMode ?? "INHERIT");
+  const [authUsername, setAuthUsername] = useState(tool.authUsername ?? "");
   const [authSecret, setAuthSecret] = useState("");
-  const [authHeaderName, setAuthHeaderName] = useState("");
+  const [authSaving, setAuthSaving] = useState(false);
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
+
+  const [editingShape, setEditingShape] = useState(false);
 
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(parseError ?? null);
@@ -307,19 +355,34 @@ function RunPanel({
     for (const row of extraHeaders) if (row.enabled && row.key.trim()) extraHeadersMap[row.key.trim()] = row.value;
     const extraQueryMap: Record<string, string> = {};
     for (const row of extraQuery) if (row.enabled && row.key.trim()) extraQueryMap[row.key.trim()] = row.value;
-    const auth: AuthOverride | undefined =
-      isRead && authMode !== "INHERIT"
-        ? { mode: authMode, username: authUsername, secret: authSecret, headerName: authHeaderName }
-        : undefined;
     return {
       extraHeaders: extraHeadersMap,
       extraQueryParams: extraQueryMap,
       bodyMode,
       rawBody: bodyMode === "RAW" ? rawBody : undefined,
       rawContentType: bodyMode === "RAW" ? rawContentType : undefined,
-      auth,
     };
-  }, [extraHeaders, extraQuery, bodyMode, rawBody, rawContentType, authMode, authUsername, authSecret, authHeaderName, isRead]);
+  }, [extraHeaders, extraQuery, bodyMode, rawBody, rawContentType]);
+
+  const saveAuth = async () => {
+    setAuthSaving(true);
+    setError(null);
+    setAuthNotice(null);
+    try {
+      const updated = await updateToolAuth(tool.id, {
+        mode: authMode === "INHERIT" ? undefined : authMode,
+        username: authUsername || undefined,
+        secret: authSecret || undefined,
+      });
+      setAuthSecret("");
+      setAuthNotice(authMode === "INHERIT" ? "Cleared — inheriting from the app" : "Saved");
+      onUpdated?.(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save auth");
+    } finally {
+      setAuthSaving(false);
+    }
+  };
 
   const buildArgs = useCallback((): Record<string, unknown> => {
     const args: Record<string, unknown> = {};
@@ -412,20 +475,22 @@ function RunPanel({
     );
   }
 
-  if (result) {
+  if (editingShape) {
     return (
-      <div className="tool-panel-stack">
-        <ToolResultPanel toolName={tool.name} result={result} />
-        <div className="form-actions">
-          <button type="button" className="btn btn-ghost" onClick={() => setResult(null)}>
-            New request
-          </button>
-        </div>
-      </div>
+      <ManualRequestForm
+        connectionId={tool.connectionId}
+        initial={tool}
+        onSaved={(updated) => {
+          setEditingShape(false);
+          onUpdated?.(updated);
+        }}
+        onCancel={() => setEditingShape(false)}
+      />
     );
   }
 
   return (
+    <div className="tool-panel-stack">
     <div className="tool-panel rb-panel">
       <div className="tool-panel-header">
         <HashIcon size={16} className="tool-result-icon" />
@@ -433,11 +498,27 @@ function RunPanel({
         <span className={`method-badge mono ${tool.method === "GET" ? "" : "method-write"} ${tool.method === "DELETE" ? "method-danger" : ""}`}>
           {tool.method}
         </span>
-        {tool.origin === "MANUAL" && (
-          <button type="button" className="btn btn-ghost rb-icon-btn" style={{ marginLeft: "auto" }} onClick={deleteTool} title="Delete this request">
-            <TrashIcon size={13} />
-          </button>
-        )}
+        {tool.pending && <span className="tool-pending-badge mono">pending</span>}
+        {tool.origin === "MANUAL" && <span className="tool-pending-badge mono">manual</span>}
+        <div className="rb-header-actions">
+          {onToggleEnable && (
+            <Toggle
+              checked={tool.enabled}
+              onChange={onToggleEnable}
+              label={tool.enabled ? "Enabled" : "Off"}
+            />
+          )}
+          {tool.origin === "MANUAL" && (
+            <>
+              <button type="button" className="btn btn-ghost" onClick={() => setEditingShape(true)} title="Edit this request">
+                Edit
+              </button>
+              <button type="button" className="btn btn-ghost rb-icon-btn" onClick={deleteTool} title="Delete this request">
+                <TrashIcon size={13} />
+              </button>
+            </>
+          )}
+        </div>
       </div>
       {tool.description && <p className="tool-panel-description">{tool.description}</p>}
       <p className="tool-panel-note">
@@ -475,9 +556,8 @@ function RunPanel({
         </button>
         <button
           type="button"
-          className={`rb-tab ${tab === "auth" ? "is-active" : ""} ${!isRead ? "is-disabled" : ""}`}
-          onClick={() => isRead && setTab("auth")}
-          title={!isRead ? "Write tools always use the connection's stored auth" : undefined}
+          className={`rb-tab ${tab === "auth" ? "is-active" : ""}`}
+          onClick={() => setTab("auth")}
         >
           Auth
         </button>
@@ -561,8 +641,12 @@ function RunPanel({
           </div>
         )}
 
-        {tab === "auth" && isRead && (
+        {tab === "auth" && (
           <div className="rb-tab-body">
+            <p className="tool-panel-note">
+              Saved auth for this request only — overrides the app's default for every invocation
+              (GET and write alike). Leave as "Inherit" to use the app's auth.
+            </p>
             <select className="form-input" value={authMode} onChange={(e) => setAuthMode(e.target.value as AuthMode)}>
               <option value="INHERIT">Inherit from connection</option>
               <option value="NONE">None</option>
@@ -573,19 +657,42 @@ function RunPanel({
             {authMode === "BASIC" && (
               <>
                 <input className="form-input" placeholder="Username" value={authUsername} onChange={(e) => setAuthUsername(e.target.value)} />
-                <input className="form-input" type="password" placeholder="Password" value={authSecret} onChange={(e) => setAuthSecret(e.target.value)} />
+                <input
+                  className="form-input"
+                  type="password"
+                  placeholder={tool.authMode === "BASIC" ? "Password (leave blank to keep existing)" : "Password"}
+                  value={authSecret}
+                  onChange={(e) => setAuthSecret(e.target.value)}
+                />
               </>
             )}
             {authMode === "BEARER" && (
-              <input className="form-input" type="password" placeholder="Token" value={authSecret} onChange={(e) => setAuthSecret(e.target.value)} />
+              <input
+                className="form-input"
+                type="password"
+                placeholder={tool.authMode === "BEARER" ? "Token (leave blank to keep existing)" : "Token"}
+                value={authSecret}
+                onChange={(e) => setAuthSecret(e.target.value)}
+              />
             )}
             {authMode === "API_KEY_HEADER" && (
               <>
-                <input className="form-input" placeholder="Header name (e.g. X-Api-Key)" value={authHeaderName} onChange={(e) => setAuthHeaderName(e.target.value)} />
-                <input className="form-input" type="password" placeholder="Key" value={authSecret} onChange={(e) => setAuthSecret(e.target.value)} />
+                <input className="form-input" placeholder="Header name (e.g. X-Api-Key)" value={authUsername} onChange={(e) => setAuthUsername(e.target.value)} />
+                <input
+                  className="form-input"
+                  type="password"
+                  placeholder={tool.authMode === "API_KEY_HEADER" ? "Key (leave blank to keep existing)" : "Key"}
+                  value={authSecret}
+                  onChange={(e) => setAuthSecret(e.target.value)}
+                />
               </>
             )}
-            <p className="tool-panel-note">Entered here only — never saved, and not sent for write tools.</p>
+            <div className="form-actions">
+              {authNotice && <span className="tool-panel-note rb-auth-notice">{authNotice}</span>}
+              <button type="button" className="btn btn-primary" onClick={saveAuth} disabled={authSaving}>
+                {authSaving ? "Saving…" : "Save auth"}
+              </button>
+            </div>
           </div>
         )}
 
@@ -616,12 +723,19 @@ function RunPanel({
         )}
 
         <div className="form-actions">
+          {result && (
+            <button type="button" className="btn btn-ghost" onClick={() => setResult(null)}>
+              Clear response
+            </button>
+          )}
           <button type="submit" className="btn btn-primary" disabled={running || !tool.enabled}>
             <PlayIcon size={13} />
             {running ? "Sending…" : `Send ${tool.method}`}
           </button>
         </div>
       </form>
+    </div>
+    {result && <ToolResultPanel toolName={tool.name} result={result} />}
     </div>
   );
 }

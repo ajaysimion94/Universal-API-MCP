@@ -1,5 +1,7 @@
 package com.mcpserver.connectors;
 
+import com.mcpserver.tools.SpecFetcher;
+import com.mcpserver.tools.SpecParser;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -17,9 +19,11 @@ import java.util.Map;
 public class ConnectionController {
 
     private final ConnectionService connectionService;
+    private final SpecFetcher specFetcher;
 
-    public ConnectionController(ConnectionService connectionService) {
+    public ConnectionController(ConnectionService connectionService, SpecFetcher specFetcher) {
         this.connectionService = connectionService;
+        this.specFetcher = specFetcher;
     }
 
     @GetMapping
@@ -77,6 +81,35 @@ public class ConnectionController {
         return Map.of("id", result.connectionId(), "jobId", result.jobId(), "status", "running");
     }
 
+    /**
+     * Best-effort, side-effect-free auth suggestion for the connection-setup form: fetches/parses
+     * the same spec the real import would, but only returns the detected auth mode + a non-secret
+     * field identity (never a password/token/key value — the user always types that themselves).
+     * Detection failures (unparseable doc, unreachable URL) are non-fatal — the form just falls
+     * back to manual auth selection.
+     */
+    @PostMapping("/detect-auth")
+    public Map<String, Object> detectAuth(@RequestParam(value = "specUrl", required = false) String specUrl,
+                                          @RequestParam(value = "file", required = false) MultipartFile file) throws IOException {
+        SpecFetcher.FetchedSpec spec;
+        if (file != null && !file.isEmpty()) {
+            spec = specFetcher.parseContent(new String(file.getBytes(), StandardCharsets.UTF_8), null);
+        } else if (specUrl != null && !specUrl.isBlank()) {
+            try {
+                spec = specFetcher.fetch(specUrl);
+            } catch (Exception e) {
+                return Map.of("authMode", "NONE", "username", "");
+            }
+        } else {
+            throw new IllegalArgumentException("Provide a spec file or specUrl");
+        }
+        SpecParser.DetectedAuth detected = spec.parser().detectAuth(spec.parsed());
+        Map<String, Object> body = new HashMap<>();
+        body.put("authMode", detected.authMode().name());
+        body.put("username", detected.username());
+        return body;
+    }
+
     private static ConnectionType parseType(String raw) {
         if (raw == null) throw new IllegalArgumentException("type is required");
         try {
@@ -102,7 +135,8 @@ public class ConnectionController {
 
     @PutMapping("/{id}")
     public Map<String, Object> update(@PathVariable String id, @RequestBody UpdateRequest req) {
-        String jobId = connectionService.update(id, req.name, req.baseUrl, req.username, req.password, req.aclScope);
+        AuthMode authMode = req.authMode == null || req.authMode.isBlank() ? null : parseAuthMode(req.authMode);
+        String jobId = connectionService.update(id, req.name, req.baseUrl, req.username, req.password, authMode, req.aclScope);
         return Map.of("jobId", jobId, "status", "running");
     }
 
@@ -203,6 +237,8 @@ public class ConnectionController {
         public String baseUrl;
         public String username;
         public String password;
+        /** Null/blank leaves the current mode unchanged. For API_KEY_HEADER, put the header name in username. */
+        public String authMode;
         public List<String> aclScope;
     }
 }

@@ -1,6 +1,7 @@
 package com.mcpserver.tools;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.mcpserver.connectors.AuthMode;
 
 import java.util.List;
 
@@ -26,5 +27,19 @@ public interface SpecParser {
      */
     default String extractBaseUrl(JsonNode root) {
         return null;
+    }
+
+    /**
+     * Best-effort auth suggestion for pre-filling the connection setup form — never a secret
+     * value, only the auth <em>shape</em>: which mode, and (for BASIC) a literal username or (for
+     * API_KEY_HEADER) the header/query field name. The actual secret is always left for the user
+     * to type. Null/blank {@code username} when nothing resolvable was found.
+     */
+    record DetectedAuth(AuthMode authMode, String username) {
+        public static final DetectedAuth NONE = new DetectedAuth(AuthMode.NONE, null);
+    }
+
+    default DetectedAuth detectAuth(JsonNode root) {
+        return DetectedAuth.NONE;
     }
 }

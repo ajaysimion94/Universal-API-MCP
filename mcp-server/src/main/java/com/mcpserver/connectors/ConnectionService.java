@@ -144,17 +144,18 @@ public class ConnectionService {
 
     /**
      * Updates name/base URL/ACL scope, and credentials if a new (non-blank) username or password
-     * is supplied. Re-runs the test-connection job afterward since the base URL or credentials may
-     * have changed; returns that job's id.
+     * is supplied. {@code authMode} switches the connection's auth type (e.g. Bearer → Basic);
+     * pass null to leave the current mode unchanged. Re-runs the test-connection job afterward
+     * since the base URL or credentials may have changed; returns that job's id.
      */
     public String update(String connectionId, String name, String baseUrl,
-                          String username, String password, List<String> aclScope) {
+                          String username, String password, AuthMode authMode, List<String> aclScope) {
         Connection existing = findById(connectionId);
         Connection updated = new Connection(
                 existing.id(), existing.type(),
                 name != null && !name.isBlank() ? name : existing.name(),
                 baseUrl != null && !baseUrl.isBlank() ? baseUrl : existing.baseUrl(),
-                existing.deploymentType(), existing.authMode(),
+                existing.deploymentType(), authMode != null ? authMode : existing.authMode(),
                 username != null && !username.isBlank() ? username : existing.authUsername(),
                 password != null && !password.isBlank() ? credentialCipher.encrypt(password) : existing.authSecretEncrypted(),
                 ConnectionStatus.PENDING, null, existing.syncCursor(), existing.webhookRegistered(),

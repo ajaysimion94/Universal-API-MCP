@@ -127,7 +127,7 @@ public class ApiToolExecutor {
         if (overrides.auth() != null) {
             applyAuthOverride(request, overrides.auth());
         } else {
-            applyAuth(request, connection);
+            applyAuth(request, connection, tool);
         }
 
         String body = renderBody(tool, merged, locations, overrides);
@@ -324,14 +324,27 @@ public class ApiToolExecutor {
 
     // --- auth + response ----------------------------------------------------
 
-    private void applyAuth(HttpRequest.Builder request, Connection connection) {
-        String secret = connection.authSecretEncrypted() == null ? null
-                : credentialCipher.decrypt(connection.authSecretEncrypted());
-        switch (connection.authMode()) {
+    /**
+     * A tool's own persisted auth override (if set) takes precedence over its connection's stored
+     * auth — this is a per-endpoint admin decision (e.g. one endpoint needs a different API key
+     * than the rest of the app), distinct from the ephemeral, GET-only {@link #applyAuthOverride}.
+     */
+    private void applyAuth(HttpRequest.Builder request, Connection connection, ApiTool tool) {
+        if (tool.authMode() != null) {
+            applyAuthMode(request, tool.authMode(), tool.authUsername(), tool.authSecretEncrypted());
+        } else {
+            applyAuthMode(request, connection.authMode(), connection.authUsername(), connection.authSecretEncrypted());
+        }
+    }
+
+    private void applyAuthMode(HttpRequest.Builder request, com.mcpserver.connectors.AuthMode mode,
+                               String username, String secretEncrypted) {
+        String secret = secretEncrypted == null ? null : credentialCipher.decrypt(secretEncrypted);
+        switch (mode) {
             case BASIC -> {
                 if (secret != null) {
                     String token = Base64.getEncoder().encodeToString(
-                            (connection.authUsername() + ":" + secret).getBytes(StandardCharsets.UTF_8));
+                            (username + ":" + secret).getBytes(StandardCharsets.UTF_8));
                     request.header("Authorization", "Basic " + token);
                 }
             }
@@ -339,8 +352,8 @@ public class ApiToolExecutor {
                 if (secret != null) request.header("Authorization", "Bearer " + secret);
             }
             case API_KEY_HEADER -> {
-                if (secret != null && connection.authUsername() != null) {
-                    request.header(connection.authUsername(), secret);
+                if (secret != null && username != null) {
+                    request.header(username, secret);
                 }
             }
             case NONE, OAUTH2 -> {
@@ -444,11 +457,13 @@ public class ApiToolExecutor {
                 headers.put(overrides.auth().headerName(), "<will be sent — not shown here>");
             }
         } else {
-            switch (connection.authMode()) {
+            com.mcpserver.connectors.AuthMode effectiveMode = tool.authMode() != null ? tool.authMode() : connection.authMode();
+            String effectiveUsername = tool.authMode() != null ? tool.authUsername() : connection.authUsername();
+            switch (effectiveMode) {
                 case BASIC, BEARER -> headers.put("Authorization", "<will be sent — not shown here>");
                 case API_KEY_HEADER -> {
-                    if (connection.authUsername() != null) {
-                        headers.put(connection.authUsername(), "<will be sent — not shown here>");
+                    if (effectiveUsername != null) {
+                        headers.put(effectiveUsername, "<will be sent — not shown here>");
                     }
                 }
                 default -> { /* NONE, OAUTH2 — nothing to mask */ }

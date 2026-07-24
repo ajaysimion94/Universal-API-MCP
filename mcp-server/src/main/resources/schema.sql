@@ -193,3 +193,10 @@ ALTER TABLE api_tools ADD COLUMN extraction_template TEXT;
 -- 'IMPORTED' (spec-derived, refreshed/pruned on re-import) vs 'MANUAL' (built from scratch in
 -- the request builder — re-import must never touch these). See ApiToolService.importTools().
 ALTER TABLE api_tools ADD COLUMN origin TEXT NOT NULL DEFAULT 'IMPORTED';
+
+-- Per-tool auth override (nullable auth_mode = inherit the connection's stored auth — see
+-- ApiToolExecutor.applyAuth). Same four modes/columns as connections.auth_mode, applies to both
+-- read and write tools since it's a persisted, admin-set value rather than an ephemeral override.
+ALTER TABLE api_tools ADD COLUMN auth_mode TEXT;
+ALTER TABLE api_tools ADD COLUMN auth_username TEXT;
+ALTER TABLE api_tools ADD COLUMN auth_secret_encrypted TEXT;

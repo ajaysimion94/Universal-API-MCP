@@ -2,6 +2,7 @@ package com.mcpserver.tools;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mcpserver.audit.AuditService;
+import com.mcpserver.connectors.AuthMode;
 import com.mcpserver.connectors.Connection;
 import com.mcpserver.connectors.ConnectionService;
 import com.mcpserver.workflow.WorkflowEngine;
@@ -93,6 +94,17 @@ public class ApiToolController {
     public ResponseEntity<Void> delete(@PathVariable String id) {
         apiToolService.deleteManual(id);
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Sets or clears this tool's persisted auth override — works for imported tools too, not just
+     * manual ones (an override is about credentials, not the request shape). {@code mode} of
+     * null/blank clears it back to "inherit the connection's stored auth".
+     */
+    @PutMapping("/{id}/auth")
+    public Map<String, Object> updateAuth(@PathVariable String id, @RequestBody ToolAuthRequest req) {
+        AuthMode mode = req.mode == null || req.mode.isBlank() ? null : AuthMode.valueOf(req.mode.toUpperCase());
+        return toMap(apiToolService.updateAuthOverride(id, mode, req.username, req.secret));
     }
 
     /**
@@ -274,11 +286,20 @@ public class ApiToolController {
         map.put("knowledgeSource", t.knowledgeSource());
         map.put("primaryParam", t.primaryParam());
         map.put("origin", t.origin());
+        map.put("bodyTemplate", t.bodyTemplate());
         try {
             map.put("paramsSchema", mapper.readTree(t.paramsSchema()));
         } catch (Exception e) {
             map.put("paramsSchema", Map.of("type", "object"));
         }
+        try {
+            map.put("paramLocations", mapper.readTree(t.paramLocations()));
+        } catch (Exception e) {
+            map.put("paramLocations", Map.of());
+        }
+        // authMode null means "inherit the connection's stored auth" — never expose the secret.
+        map.put("authMode", t.authMode() == null ? null : t.authMode().name());
+        map.put("authUsername", t.authUsername());
         return map;
     }
 
@@ -304,6 +325,13 @@ public class ApiToolController {
         public String username;
         public String secret;
         public String headerName;
+    }
+
+    /** null/blank {@code mode} clears the tool's override back to "inherit from connection". */
+    public static class ToolAuthRequest {
+        public String mode;
+        public String username;
+        public String secret;
     }
 
     public static class ManualToolRequest {

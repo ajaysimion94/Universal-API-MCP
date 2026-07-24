@@ -4,12 +4,14 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.mcpserver.connectors.AuthMode;
 import org.springframework.stereotype.Component;
 
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -89,6 +91,102 @@ public class PostmanCollectionParser implements SpecParser {
                         }
                     } catch (IllegalArgumentException ignored) {
                         // malformed URL in this request — keep looking
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Header names conventionally used for an API key when no explicit Postman auth block exists. */
+    private static final List<String> API_KEY_HEADER_NAMES = List.of(
+            "x-api-key", "api-key", "x-auth-token", "x-auth-key", "ocp-apim-subscription-key");
+    private static final Pattern BEARER_HEADER =
+            Pattern.compile("^bearer\\s+\\{\\{([^}]+)}}$", Pattern.CASE_INSENSITIVE);
+
+    /**
+     * Prefers the collection's own {@code auth} block (precise — Postman's own convention);
+     * falls back to a best-effort header scan when there's no explicit block, so collections that
+     * just hardcode a credential header still get a suggestion. Never resolves a secret value —
+     * only the auth <em>mode</em> and, for BASIC/API_KEY_HEADER, a non-secret field identity
+     * (a literal username, or the header/query name itself).
+     */
+    @Override
+    public DetectedAuth detectAuth(JsonNode root) {
+        Map<String, String> variables = collectVariables(root);
+        DetectedAuth fromBlock = detectFromAuthBlock(root.path("auth"), variables);
+        if (fromBlock != null) return fromBlock;
+        DetectedAuth fromHeaders = scanHeadersForAuth(root.path("item"));
+        return fromHeaders != null ? fromHeaders : DetectedAuth.NONE;
+    }
+
+    private Map<String, String> collectVariables(JsonNode root) {
+        Map<String, String> vars = new LinkedHashMap<>();
+        for (JsonNode variable : root.path("variable")) {
+            String key = variable.path("key").asText("");
+            if (!key.isBlank()) vars.put(key, variable.path("value").asText(""));
+        }
+        return vars;
+    }
+
+    /** A literal (non-templated), non-blank value for the variable {@code varRef} references, or null. */
+    private String literalValue(Map<String, String> variables, String varRef) {
+        Matcher m = TEMPLATE_VAR.matcher(varRef);
+        String varName = m.matches() ? m.group(1).trim() : varRef;
+        String value = variables.get(varName);
+        if (value == null || value.isBlank() || TEMPLATE_VAR.matcher(value).find()) return null;
+        return value;
+    }
+
+    /** Null return means "no recognizable auth block" (missing, {@code noauth}, or an unhandled type) — the caller falls back to a header scan. */
+    private DetectedAuth detectFromAuthBlock(JsonNode auth, Map<String, String> variables) {
+        String type = auth.path("type").asText("");
+        return switch (type) {
+            case "basic" -> {
+                String usernameRef = authField(auth.path("basic"), "username");
+                yield new DetectedAuth(AuthMode.BASIC, usernameRef == null ? null : literalValue(variables, usernameRef));
+            }
+            case "bearer" -> new DetectedAuth(AuthMode.BEARER, null);
+            case "apikey" -> {
+                String headerName = authField(auth.path("apikey"), "key");
+                yield headerName == null ? null : new DetectedAuth(AuthMode.API_KEY_HEADER, headerName);
+            }
+            default -> null;
+        };
+    }
+
+    /** Postman auth blocks are arrays of {@code {key, value, type}} triples — finds {@code fieldKey}'s value. */
+    private String authField(JsonNode authParams, String fieldKey) {
+        if (!authParams.isArray()) return null;
+        for (JsonNode entry : authParams) {
+            if (fieldKey.equals(entry.path("key").asText(""))) {
+                String value = entry.path("value").asText("");
+                return value.isBlank() ? null : value;
+            }
+        }
+        return null;
+    }
+
+    /** No explicit auth block — scans every request's headers for a Bearer token or a known
+     * API-key header name, stopping at the first hit. */
+    private DetectedAuth scanHeadersForAuth(JsonNode items) {
+        if (!items.isArray()) return null;
+        for (JsonNode item : items) {
+            if (item.has("item")) {
+                DetectedAuth found = scanHeadersForAuth(item.path("item"));
+                if (found != null) return found;
+            } else if (item.has("request")) {
+                for (JsonNode header : item.path("request").path("header")) {
+                    String key = header.path("key").asText("");
+                    String value = header.path("value").asText("");
+                    if (key.isBlank() || value.isBlank()) continue;
+                    if (key.equalsIgnoreCase("Authorization")) {
+                        if (BEARER_HEADER.matcher(value.trim()).matches()) {
+                            return new DetectedAuth(AuthMode.BEARER, null);
+                        }
+                    } else if (API_KEY_HEADER_NAMES.contains(key.toLowerCase(Locale.ROOT))
+                            && TEMPLATE_VAR.matcher(value).find()) {
+                        return new DetectedAuth(AuthMode.API_KEY_HEADER, key);
                     }
                 }
             }

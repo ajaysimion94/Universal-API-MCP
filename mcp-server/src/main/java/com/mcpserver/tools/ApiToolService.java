@@ -4,7 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.mcpserver.connectors.AuthMode;
 import com.mcpserver.connectors.Connection;
+import com.mcpserver.connectors.CredentialCipher;
 import com.mcpserver.workflow.ParameterExtractor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,14 +33,17 @@ public class ApiToolService {
     private final ToolGroupRepository toolGroupRepository;
     private final ApplicationEventPublisher eventPublisher;
     private final ParameterExtractor parameterExtractor;
+    private final CredentialCipher credentialCipher;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public ApiToolService(ApiToolRepository repository, ToolGroupRepository toolGroupRepository,
-                          ApplicationEventPublisher eventPublisher, ParameterExtractor parameterExtractor) {
+                          ApplicationEventPublisher eventPublisher, ParameterExtractor parameterExtractor,
+                          CredentialCipher credentialCipher) {
         this.repository = repository;
         this.toolGroupRepository = toolGroupRepository;
         this.eventPublisher = eventPublisher;
         this.parameterExtractor = parameterExtractor;
+        this.credentialCipher = credentialCipher;
     }
 
     /**
@@ -259,6 +264,29 @@ public class ApiToolService {
         ApiTool updated = existing.withManualDefinition(def);
         repository.save(updated);
         eventPublisher.publishEvent(new ToolsChangedEvent(existing.connectionId()));
+        return updated;
+    }
+
+    /**
+     * Sets or clears a per-tool auth override — unlike the manual-tool shape (path/params/body),
+     * this applies to imported tools too, since one endpoint under an app occasionally needs
+     * different credentials than the rest (e.g. a partner API key vs the app's OAuth token).
+     * {@code mode == null} clears the override back to "inherit the connection's stored auth".
+     * A blank {@code secret} keeps the existing encrypted secret (so username/mode can be edited
+     * without having to retype a token that's already stored).
+     */
+    public ApiTool updateAuthOverride(String id, AuthMode mode, String username, String secret) {
+        ApiTool existing = findById(id);
+        if (mode == null) {
+            ApiTool cleared = existing.withAuthOverride(null, null, null);
+            repository.save(cleared);
+            return cleared;
+        }
+        String secretEncrypted = secret == null || secret.isBlank()
+                ? existing.authSecretEncrypted()
+                : credentialCipher.encrypt(secret);
+        ApiTool updated = existing.withAuthOverride(mode, username, secretEncrypted);
+        repository.save(updated);
         return updated;
     }
 

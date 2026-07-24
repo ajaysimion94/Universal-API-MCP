@@ -387,6 +387,30 @@ export async function getConnection(id: string): Promise<ConnectionInfo> {
   return json<ConnectionInfo>(await fetch(`${CONNECTIONS_API}/${id}`));
 }
 
+export interface UpdateConnectionInput {
+  name?: string;
+  baseUrl?: string;
+  username?: string;
+  password?: string;
+  /** Null/omitted leaves the current mode unchanged. For API_KEY_HEADER, put the header name in username. */
+  authMode?: AuthMode;
+  aclScope?: string[];
+}
+
+/** Updates a connection's settings/credentials and re-tests connectivity; returns the job id. */
+export async function updateConnection(
+  id: string,
+  input: UpdateConnectionInput,
+): Promise<{ jobId: string; status: string }> {
+  return json(
+    await fetch(`${CONNECTIONS_API}/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
 export async function deleteConnection(id: string): Promise<void> {
   const res = await fetch(`${CONNECTIONS_API}/${id}`, { method: "DELETE" });
   if (!res.ok && res.status !== 204) {
@@ -435,6 +459,22 @@ export async function importSpecFile(input: {
   return json(await fetch(`${CONNECTIONS_API}/import-spec`, { method: "POST", body: form }));
 }
 
+/**
+ * Best-effort, side-effect-free scan of a Postman collection / OpenAPI spec for its auth shape —
+ * never a secret, just the mode plus (for Basic/API-key) a non-secret field identity, so the
+ * connection-setup form can pre-fill the auth mode/username and let the user just type the secret.
+ * `authMode: "NONE"` means nothing recognizable was found — fall back to manual selection.
+ */
+export async function detectImportAuth(input: {
+  file?: File;
+  specUrl?: string;
+}): Promise<{ authMode: AuthMode; username: string | null }> {
+  const form = new FormData();
+  if (input.file) form.append("file", input.file);
+  if (input.specUrl) form.append("specUrl", input.specUrl);
+  return json(await fetch(`${CONNECTIONS_API}/detect-auth`, { method: "POST", body: form }));
+}
+
 /* ── Tools (imported from Postman/OpenAPI specs, §8) ── */
 
 export interface ApiToolInfo {
@@ -453,7 +493,12 @@ export interface ApiToolInfo {
   knowledgeSource: boolean;
   primaryParam: string | null;
   paramsSchema: JsonSchema;
+  paramLocations: Record<string, "path" | "query" | "header" | "body">;
+  bodyTemplate: string | null;
   origin: "IMPORTED" | "MANUAL";
+  /** Null means "inherit the connection's stored auth" — see `updateToolAuth`. */
+  authMode: AuthMode | null;
+  authUsername: string | null;
 }
 
 export interface ToolInvokeResult {
@@ -586,6 +631,29 @@ export async function updateManualTool(
 ): Promise<ApiToolInfo> {
   return json<ApiToolInfo>(
     await fetch(`${TOOLS_API}/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export interface ToolAuthInput {
+  /** Null/omitted clears the override back to "inherit from connection". */
+  mode?: AuthMode;
+  username?: string;
+  /** Blank/omitted keeps the currently stored secret (only relevant when changing mode/username). */
+  secret?: string;
+}
+
+/**
+ * Sets or clears this tool's own auth override — works for imported tools too, not just manual
+ * ones. Applies to both read and write tools (unlike the ephemeral per-invocation `auth` override
+ * in `RequestOverrides`, which is GET-only and never persisted).
+ */
+export async function updateToolAuth(id: string, input: ToolAuthInput): Promise<ApiToolInfo> {
+  return json<ApiToolInfo>(
+    await fetch(`${TOOLS_API}/${id}/auth`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),

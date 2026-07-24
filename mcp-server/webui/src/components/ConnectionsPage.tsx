@@ -5,6 +5,7 @@ import {
   ConnectionInfo,
   ConnectionType,
   CreateConnectionInput,
+  UpdateConnectionInput,
   listConnections,
   createConnection,
   deleteConnection,
@@ -17,6 +18,8 @@ import {
   enableTool,
   disableTool,
   setToolKnowledgeSource,
+  updateConnection,
+  detectImportAuth,
 } from "../api";
 import {
   LinkIcon,
@@ -32,6 +35,19 @@ import {
 import { Toggle } from "./Toggle";
 
 const CONNECTABLE_TYPES: ConnectionType[] = ["CONFLUENCE", "JIRA", "API_COLLECTION", "GITHUB"];
+
+function authModeLabel(mode: AuthMode): string {
+  switch (mode) {
+    case "BASIC":
+      return "Basic";
+    case "BEARER":
+      return "Bearer token";
+    case "API_KEY_HEADER":
+      return "API key header";
+    default:
+      return mode;
+  }
+}
 
 function typeLabel(type: ConnectionType): string {
   switch (type) {
@@ -157,6 +173,16 @@ export function ConnectionsPage() {
     }
   };
 
+  const handleUpdateAuth = async (connection: ConnectionInfo, input: UpdateConnectionInput) => {
+    try {
+      const { jobId } = await updateConnection(connection.id, input);
+      setRunningJobs((prev) => ({ ...prev, [connection.id]: jobId }));
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update auth");
+    }
+  };
+
   const handleDelete = async (connection: ConnectionInfo) => {
     const extra = connection.type === "API_COLLECTION" ? " and removes its tools" : "";
     if (!window.confirm(`Delete "${connection.name}"? This purges every chunk it ingested${extra}.`)) return;
@@ -227,6 +253,9 @@ export function ConnectionsPage() {
                 onBackfill={() => handleBackfill(c)}
                 onToggle={(enabled) => handleToggle(c, enabled)}
                 onDelete={() => handleDelete(c)}
+                onUpdateAuth={
+                  c.type === "API_COLLECTION" ? (input) => handleUpdateAuth(c, input) : undefined
+                }
               />
               {c.type === "API_COLLECTION" && (
                 <ToolList connectionId={c.id} busy={!!runningJobs[c.id]} onError={setError} />
@@ -259,9 +288,35 @@ function ConnectionForm({
   const [specFile, setSpecFile] = useState<File | null>(null);
   const [authMode, setAuthMode] = useState<AuthMode>("NONE");
   const [apiKeyHeader, setApiKeyHeader] = useState("X-Api-Key");
+  const [detectingAuth, setDetectingAuth] = useState(false);
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isApi = type === "API_COLLECTION";
+
+  const runDetectAuth = async (input: { file?: File; specUrl?: string }) => {
+    setDetectingAuth(true);
+    setAuthNotice(null);
+    try {
+      const detected = await detectImportAuth(input);
+      if (detected.authMode !== "NONE") {
+        setAuthMode(detected.authMode);
+        if (detected.authMode === "API_KEY_HEADER" && detected.username) {
+          setApiKeyHeader(detected.username);
+        } else if (detected.authMode === "BASIC" && detected.username) {
+          setUsername(detected.username);
+        }
+        setAuthNotice(`Detected ${authModeLabel(detected.authMode)} auth from the collection — enter the secret below.`);
+      } else {
+        setAuthNotice("No auth detected in the collection — set it manually if needed.");
+      }
+    } catch {
+      // best-effort only — detection failures never block manual setup
+      setAuthNotice(null);
+    } finally {
+      setDetectingAuth(false);
+    }
+  };
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -336,13 +391,24 @@ function ConnectionForm({
             {specSource === "url" ? (
               <label className="form-field">
                 <span>Spec URL</span>
-                <input
-                  className="form-input"
-                  value={specUrl}
-                  onChange={(e) => setSpecUrl(e.target.value)}
-                  placeholder="https://api.example.com/swagger-ui/index.html"
-                  required
-                />
+                <div className="spec-url-row">
+                  <input
+                    className="form-input"
+                    value={specUrl}
+                    onChange={(e) => setSpecUrl(e.target.value)}
+                    placeholder="https://api.example.com/swagger-ui/index.html"
+                    required
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => runDetectAuth({ specUrl })}
+                    disabled={!specUrl.trim() || detectingAuth}
+                    title="Fetch the spec and suggest an auth mode from it"
+                  >
+                    {detectingAuth ? "Detecting…" : "Detect auth"}
+                  </button>
+                </div>
               </label>
             ) : (
               <label className="form-field">
@@ -352,7 +418,11 @@ function ConnectionForm({
                   type="file"
                   className="file-input-hidden"
                   accept=".json,.yaml,.yml,application/json"
-                  onChange={(e) => setSpecFile(e.target.files?.[0] ?? null)}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] ?? null;
+                    setSpecFile(file);
+                    if (file) runDetectAuth({ file });
+                  }}
                 />
                 <button
                   type="button"
@@ -360,11 +430,16 @@ function ConnectionForm({
                   onClick={() => fileInputRef.current?.click()}
                 >
                   <UploadIcon size={14} />
-                  {specFile ? specFile.name : "Choose Postman collection / OpenAPI spec"}
+                  {detectingAuth
+                    ? "Detecting auth…"
+                    : specFile
+                      ? specFile.name
+                      : "Choose Postman collection / OpenAPI spec"}
                 </button>
               </label>
             )}
           </div>
+          {authNotice && <p className="connection-auth-notice">{authNotice}</p>}
           <label className="form-field">
             <span>API base URL (optional — derived from the spec when blank)</span>
             <input
@@ -588,6 +663,7 @@ function ConnectionRow({
   onBackfill,
   onToggle,
   onDelete,
+  onUpdateAuth,
 }: {
   connection: ConnectionInfo;
   busy: boolean;
@@ -595,72 +671,168 @@ function ConnectionRow({
   onBackfill: () => void;
   onToggle: (enabled: boolean) => void;
   onDelete: () => void;
+  onUpdateAuth?: (input: UpdateConnectionInput) => Promise<void>;
 }) {
   const isApi = connection.type === "API_COLLECTION";
+  const [editingAuth, setEditingAuth] = useState(false);
   return (
-    <div className="plugin-row">
-      <div className="plugin-info">
-        <div className="plugin-name-row">
-          <span className="plugin-name">{connection.name}</span>
-          <span className="plugin-category mono optional">{typeLabel(connection.type)}</span>
-          {isApi && connection.specFormat && (
-            <span className="plugin-category mono optional">{connection.specFormat}</span>
-          )}
-          {!isApi && connection.deploymentType !== "UNKNOWN" && (
-            <span className="plugin-category mono optional">
-              {connection.deploymentType === "CLOUD" ? "Cloud" : "Server/DC"}
-            </span>
-          )}
-        </div>
-        <p className="plugin-description">{connection.baseUrl || connection.specSourceUrl}</p>
-        <div className="plugin-health mono">
-          {connection.status === "ERROR" && connection.lastError
-            ? connection.lastError
-            : connection.lastSyncedAt
-              ? `Last synced ${new Date(connection.lastSyncedAt).toLocaleString()}`
-              : isApi
-                ? "Knowledge sources not refreshed yet"
-                : "Not synced yet"}
-          {backfillProgress && backfillProgress.total > 0
-            ? ` — ${isApi ? "refreshing" : "backfilling"} ${backfillProgress.done}/${backfillProgress.total}`
-            : busy && !backfillProgress
-              ? " — verifying…"
-              : ""}
-        </div>
-      </div>
-
-      <div className="plugin-status">
-        <span className={`status-pill ${statusClass(connection.status)}`}>
-          {statusIcon(connection.status)}
-          {statusLabel(connection.status, busy)}
-        </span>
-      </div>
-
-      <div className="plugin-actions">
-        {busy ? (
-          <div className="install-progress">
-            <div className="install-progress-bar" />
+    <>
+      <div className="plugin-row">
+        <div className="plugin-info">
+          <div className="plugin-name-row">
+            <span className="plugin-name">{connection.name}</span>
+            <span className="plugin-category mono optional">{typeLabel(connection.type)}</span>
+            {isApi && connection.specFormat && (
+              <span className="plugin-category mono optional">{connection.specFormat}</span>
+            )}
+            {!isApi && connection.deploymentType !== "UNKNOWN" && (
+              <span className="plugin-category mono optional">
+                {connection.deploymentType === "CLOUD" ? "Cloud" : "Server/DC"}
+              </span>
+            )}
           </div>
-        ) : (
-          <button
-            className="btn btn-ghost"
-            onClick={onBackfill}
-            disabled={connection.status !== "CONNECTED"}
-            title={isApi ? "Invoke every knowledge-source tool now and refresh the index" : undefined}
-          >
-            {isApi ? "Refresh knowledge" : "Backfill"}
+          <p className="plugin-description">{connection.baseUrl || connection.specSourceUrl}</p>
+          <div className="plugin-health mono">
+            {connection.status === "ERROR" && connection.lastError
+              ? connection.lastError
+              : connection.lastSyncedAt
+                ? `Last synced ${new Date(connection.lastSyncedAt).toLocaleString()}`
+                : isApi
+                  ? "Knowledge sources not refreshed yet"
+                  : "Not synced yet"}
+            {backfillProgress && backfillProgress.total > 0
+              ? ` — ${isApi ? "refreshing" : "backfilling"} ${backfillProgress.done}/${backfillProgress.total}`
+              : busy && !backfillProgress
+                ? " — verifying…"
+                : ""}
+          </div>
+        </div>
+
+        <div className="plugin-status">
+          <span className={`status-pill ${statusClass(connection.status)}`}>
+            {statusIcon(connection.status)}
+            {statusLabel(connection.status, busy)}
+          </span>
+        </div>
+
+        <div className="plugin-actions">
+          {busy ? (
+            <div className="install-progress">
+              <div className="install-progress-bar" />
+            </div>
+          ) : (
+            <button
+              className="btn btn-ghost"
+              onClick={onBackfill}
+              disabled={connection.status !== "CONNECTED"}
+              title={isApi ? "Invoke every knowledge-source tool now and refresh the index" : undefined}
+            >
+              {isApi ? "Refresh knowledge" : "Backfill"}
+            </button>
+          )}
+          {onUpdateAuth && (
+            <button
+              className={`btn btn-ghost ${editingAuth ? "is-active" : ""}`}
+              onClick={() => setEditingAuth((v) => !v)}
+            >
+              Edit auth
+            </button>
+          )}
+          <Toggle
+            checked={connection.status !== "DISABLED"}
+            onChange={onToggle}
+            label={connection.status === "DISABLED" ? "Disabled" : "Enabled"}
+          />
+          <button className="btn btn-ghost" onClick={onDelete} aria-label={`Delete ${connection.name}`}>
+            <TrashIcon size={14} />
           </button>
-        )}
-        <Toggle
-          checked={connection.status !== "DISABLED"}
-          onChange={onToggle}
-          label={connection.status === "DISABLED" ? "Disabled" : "Enabled"}
+        </div>
+      </div>
+
+      {editingAuth && onUpdateAuth && (
+        <ConnectionAuthForm
+          connection={connection}
+          onCancel={() => setEditingAuth(false)}
+          onSave={async (input) => {
+            await onUpdateAuth(input);
+            setEditingAuth(false);
+          }}
         />
-        <button className="btn btn-ghost" onClick={onDelete} aria-label={`Delete ${connection.name}`}>
-          <TrashIcon size={14} />
+      )}
+    </>
+  );
+}
+
+/** Edits an API_COLLECTION connection's stored/default auth — the app-common tier (vs. a
+ * per-request override in the request builder's Auth tab). Blank secret keeps the existing one. */
+function ConnectionAuthForm({
+  connection,
+  onCancel,
+  onSave,
+}: {
+  connection: ConnectionInfo;
+  onCancel: () => void;
+  onSave: (input: UpdateConnectionInput) => Promise<void>;
+}) {
+  const [authMode, setAuthMode] = useState<AuthMode>(connection.authMode);
+  const [username, setUsername] = useState(connection.authUsername ?? "");
+  const [secret, setSecret] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    await onSave({
+      authMode,
+      username: authMode === "NONE" ? undefined : username || undefined,
+      password: secret || undefined,
+    });
+    setSaving(false);
+  };
+
+  return (
+    <form className="connection-form" onSubmit={submit}>
+      <div className="form-row">
+        <label className="form-field">
+          <span>Authentication</span>
+          <select className="form-input" value={authMode} onChange={(e) => setAuthMode(e.target.value as AuthMode)}>
+            <option value="NONE">None</option>
+            <option value="BASIC">Basic (username + password)</option>
+            <option value="BEARER">Bearer token</option>
+            <option value="API_KEY_HEADER">API key header</option>
+          </select>
+        </label>
+        {authMode === "BASIC" && (
+          <label className="form-field">
+            <span>Username</span>
+            <input className="form-input" value={username} onChange={(e) => setUsername(e.target.value)} required />
+          </label>
+        )}
+        {authMode === "API_KEY_HEADER" && (
+          <label className="form-field">
+            <span>Header name</span>
+            <input className="form-input" value={username} onChange={(e) => setUsername(e.target.value)} required />
+          </label>
+        )}
+      </div>
+      {authMode !== "NONE" && (
+        <label className="form-field">
+          <span>
+            {authMode === "BASIC" ? "Password" : authMode === "BEARER" ? "Token" : "API key"} (leave
+            blank to keep the existing one)
+          </span>
+          <input className="form-input" type="password" value={secret} onChange={(e) => setSecret(e.target.value)} />
+        </label>
+      )}
+      <div className="form-actions">
+        <button type="button" className="btn btn-ghost" onClick={onCancel} disabled={saving}>
+          Cancel
+        </button>
+        <button type="submit" className="btn btn-primary" disabled={saving}>
+          {saving ? "Saving…" : "Save auth"}
         </button>
       </div>
-    </div>
+    </form>
   );
 }
 

@@ -1,5 +1,6 @@
 package com.mcpserver.tools;
 
+import com.mcpserver.connectors.AuthMode;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
@@ -38,6 +39,9 @@ public class ApiToolRepository {
             rs.getInt("knowledge_source") != 0,
             rs.getString("extraction_template"),
             rs.getString("origin"),
+            rs.getString("auth_mode") == null ? null : AuthMode.valueOf(rs.getString("auth_mode")),
+            rs.getString("auth_username"),
+            rs.getString("auth_secret_encrypted"),
             Instant.parse(rs.getString("created_at")),
             Instant.parse(rs.getString("updated_at"))
     );
@@ -48,14 +52,16 @@ public class ApiToolRepository {
                     (id, connection_id, app_slug, name, request_slug, display_name, description,
                      category, http_method, url_template, params_schema, param_locations, headers,
                      body_template, primary_param, enabled, pending, knowledge_source, extraction_template,
-                     origin, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     origin, auth_mode, auth_username, auth_secret_encrypted, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 t.id(), t.connectionId(), t.appSlug(), t.name(), t.requestSlug(), t.displayName(),
                 t.description(), t.category(), t.httpMethod(), t.urlTemplate(), t.paramsSchema(),
                 t.paramLocations(), t.headers(), t.bodyTemplate(), t.primaryParam(),
                 t.enabled() ? 1 : 0, t.pending() ? 1 : 0, t.knowledgeSource() ? 1 : 0,
-                t.extractionTemplate(), t.origin(), t.createdAt().toString(), t.updatedAt().toString()
+                t.extractionTemplate(), t.origin(),
+                t.authMode() == null ? null : t.authMode().name(), t.authUsername(), t.authSecretEncrypted(),
+                t.createdAt().toString(), t.updatedAt().toString()
         );
     }
 
