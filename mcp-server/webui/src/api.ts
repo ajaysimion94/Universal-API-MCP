@@ -179,12 +179,37 @@ export interface ToolExecution {
   body: string;
   truncated: boolean;
   request: string;
+  headers?: Record<string, string>;
 }
 
 export interface ToolPreview {
   method: string;
   url: string;
   body?: string;
+  headers?: Record<string, string>;
+  contentType?: string;
+}
+
+/** Same four modes a connection itself supports — see DECISIONS.md. Read (GET) tools only. */
+export interface AuthOverride {
+  mode: "NONE" | "BASIC" | "BEARER" | "API_KEY_HEADER";
+  username?: string;
+  secret?: string;
+  headerName?: string;
+}
+
+/**
+ * Per-invocation request customization layered on top of a tool's schema-derived shape — the
+ * request builder's "override anything before sending" seam. Never persisted for write tools
+ * (see ApiToolExecutor.InvokeOverrides on the backend); auth override is read-tools-only.
+ */
+export interface RequestOverrides {
+  extraHeaders?: Record<string, string>;
+  extraQueryParams?: Record<string, string>;
+  bodyMode?: "SCHEMA" | "NONE" | "RAW";
+  rawBody?: string;
+  rawContentType?: string;
+  auth?: AuthOverride;
 }
 
 export interface SearchResponse {
@@ -219,6 +244,10 @@ export interface SearchResponse {
   result?: ToolExecution;
   preview?: ToolPreview;
   args?: Record<string, unknown>;
+  // Phase 3: confirmation token fields for write tools
+  confirmationToken?: string;
+  tokenExpiresAt?: string;
+  workflowId?: string;
 }
 
 export async function search(query: string, topK = 20, web = false): Promise<SearchResponse> {
@@ -289,7 +318,7 @@ export async function getPluginJob(jobId: string): Promise<PluginJob> {
 
 /* ── Connections (Confluence/Jira/API-collection ingestion connectors) ── */
 
-export type ConnectionType = "CONFLUENCE" | "JIRA" | "SHAREPOINT" | "API_COLLECTION";
+export type ConnectionType = "CONFLUENCE" | "JIRA" | "SHAREPOINT" | "API_COLLECTION" | "GITHUB";
 export type DeploymentType = "CLOUD" | "SERVER_DC" | "UNKNOWN";
 export type ConnectionStatus = "PENDING" | "CONNECTED" | "ERROR" | "DISABLED";
 export type AuthMode = "BASIC" | "OAUTH2" | "NONE" | "BEARER" | "API_KEY_HEADER";
@@ -424,6 +453,7 @@ export interface ApiToolInfo {
   knowledgeSource: boolean;
   primaryParam: string | null;
   paramsSchema: JsonSchema;
+  origin: "IMPORTED" | "MANUAL";
 }
 
 export interface ToolInvokeResult {
@@ -464,15 +494,23 @@ export async function setToolKnowledgeSource(id: string, enabled: boolean): Prom
   );
 }
 
-/** Throws with the violation messages joined when the server answers 422. */
+/**
+ * Invokes a tool. Read tools execute directly and resolve a {@link ToolInvokeResult}. Write
+ * tools never execute here — the server returns a {@link WorkflowPreview} (confirmation token)
+ * instead; the caller must render a confirm step and call {@link confirmTool} to actually run it.
+ * Throws with the violation messages joined when the server answers 422. `overrides` layers
+ * ad-hoc headers/query params/raw body/auth (read tools only) on top of the schema-derived
+ * request — never persisted for write tools.
+ */
 export async function invokeTool(
   id: string,
   args: Record<string, unknown>,
-): Promise<ToolInvokeResult> {
+  overrides?: RequestOverrides,
+): Promise<ToolInvokeResult | WorkflowPreview> {
   const res = await fetch(`${TOOLS_API}/${id}/invoke`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ args }),
+    body: JSON.stringify({ args, ...overrides }),
   });
   if (res.status === 422) {
     const body = await res.json().catch(() => ({ violations: [] }));
@@ -481,5 +519,274 @@ export async function invokeTool(
       .join("; ");
     throw new Error(messages || "Arguments violate the tool's schema");
   }
-  return json<ToolInvokeResult>(res);
+  return json<ToolInvokeResult | WorkflowPreview>(res);
+}
+
+/** True when `invokeTool` returned a write-tool workflow preview rather than an executed result. */
+export function isWorkflowPreview(
+  res: ToolInvokeResult | WorkflowPreview,
+): res is WorkflowPreview {
+  return "confirmationToken" in res;
+}
+
+/**
+ * Renders the request a tool would send — method, resolved URL, headers, body — without
+ * executing it. Backs the request builder's live "resolved request" readout and code-snippet
+ * generation; works for both read and write tools.
+ */
+export async function previewTool(
+  id: string,
+  args: Record<string, unknown>,
+  overrides?: RequestOverrides,
+): Promise<ToolPreview> {
+  return json<ToolPreview>(
+    await fetch(`${TOOLS_API}/${id}/preview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ args, ...overrides }),
+    }),
+  );
+}
+
+/** One query or header field on a manually-built request (see `ManualToolInput`). */
+export interface ManualParam {
+  name: string;
+  in: "query" | "header";
+  required: boolean;
+  defaultValue?: string;
+  description?: string;
+}
+
+export interface ManualToolInput {
+  connectionId: string;
+  displayName: string;
+  method: string;
+  path: string;
+  category?: string;
+  description?: string;
+  params?: ManualParam[];
+  bodyTemplate?: string;
+}
+
+/** Creates a from-scratch request ("New request" / Save) against a connection. Never touched by re-import. */
+export async function createManualTool(input: ManualToolInput): Promise<ApiToolInfo> {
+  return json<ApiToolInfo>(
+    await fetch(TOOLS_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+/** Updates a manual tool's shape. 409s if the tool is spec-imported. */
+export async function updateManualTool(
+  id: string,
+  input: Omit<ManualToolInput, "connectionId">,
+): Promise<ApiToolInfo> {
+  return json<ApiToolInfo>(
+    await fetch(`${TOOLS_API}/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+/** Deletes a manual tool. 409s if the tool is spec-imported. */
+export async function deleteManualTool(id: string): Promise<void> {
+  const res = await fetch(`${TOOLS_API}/${id}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 204) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(body.error ?? `Delete failed (${res.status})`);
+  }
+}
+
+/* ── Tool groups (custom groups of apps and/or individual endpoints) ── */
+
+export interface ToolGroupInfo {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string;
+  appCount: number;
+  toolCount: number;
+  enabledToolCount: number;
+}
+
+export interface ToolGroupMemberInput {
+  memberType: "APP" | "TOOL";
+  memberId: string;
+}
+
+/** Group with resolved members, as returned by GET /api/groups/{id}. */
+export interface ToolGroupDetail {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string;
+  apps: ConnectionInfo[];
+  tools: ApiToolInfo[];
+}
+
+const GROUPS_API = "/api/groups";
+
+export async function listGroups(): Promise<ToolGroupInfo[]> {
+  return json<ToolGroupInfo[]>(await fetch(GROUPS_API));
+}
+
+export async function createGroup(name: string, description?: string): Promise<ToolGroupInfo> {
+  return json<ToolGroupInfo>(
+    await fetch(GROUPS_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, description }),
+    }),
+  );
+}
+
+export async function getGroup(id: string): Promise<ToolGroupDetail> {
+  return json<ToolGroupDetail>(await fetch(`${GROUPS_API}/${id}`));
+}
+
+export async function updateGroup(
+  id: string,
+  input: { name?: string; description?: string },
+): Promise<ToolGroupInfo> {
+  return json<ToolGroupInfo>(
+    await fetch(`${GROUPS_API}/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function deleteGroup(id: string): Promise<void> {
+  const res = await fetch(`${GROUPS_API}/${id}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 204) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(body.error ?? `Delete failed (${res.status})`);
+  }
+}
+
+export async function setGroupMembers(
+  id: string,
+  members: ToolGroupMemberInput[],
+): Promise<void> {
+  const res = await fetch(`${GROUPS_API}/${id}/members`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ members }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(body.error ?? `Request failed (${res.status})`);
+  }
+}
+
+export async function enableGroup(id: string): Promise<{ updated: number }> {
+  return json<{ updated: number }>(await fetch(`${GROUPS_API}/${id}/enable`, { method: "POST" }));
+}
+
+export async function disableGroup(id: string): Promise<{ updated: number }> {
+  return json<{ updated: number }>(await fetch(`${GROUPS_API}/${id}/disable`, { method: "POST" }));
+}
+
+/* ── Phase 3: Workflow confirmation + audit + metrics ── */
+
+/** Preview + confirmation token returned for write-tool invocations. */
+export interface WorkflowPreview {
+  workflowId: string;
+  toolId: string;
+  toolName: string;
+  state: string;
+  confirmationToken: string;
+  tokenExpiresAt: string;
+  preview: ToolPreview;
+  args: Record<string, unknown>;
+}
+
+/** Result after confirming or rejecting a workflow. */
+export interface WorkflowResult {
+  workflowId: string;
+  toolName: string;
+  state: string;
+  result?: ToolExecution;
+  error?: string;
+}
+
+/**
+ * Confirm a write-tool execution using its single-use confirmation token.
+ * Returns the execution result on success.
+ */
+export async function confirmTool(token: string): Promise<WorkflowResult> {
+  return json<WorkflowResult>(
+    await fetch(`${TOOLS_API}/confirm/${encodeURIComponent(token)}`, { method: "POST" }),
+  );
+}
+
+/**
+ * Reject a write-tool execution using its confirmation token.
+ * No side effects occur; the rejection is audited.
+ */
+export async function rejectTool(token: string): Promise<WorkflowResult> {
+  return json<WorkflowResult>(
+    await fetch(`${TOOLS_API}/reject/${encodeURIComponent(token)}`, { method: "POST" }),
+  );
+}
+
+/** A single audit log entry as returned by the API. */
+export interface AuditEntry {
+  id: number;
+  eventType: string;
+  toolId: string | null;
+  toolName: string | null;
+  workflowId: string | null;
+  actor: string | null;
+  arguments: string | null;
+  resultSummary: string | null;
+  error: string | null;
+  createdAt: string;
+}
+
+export interface AuditResponse {
+  items: AuditEntry[];
+  total: number;
+  page: number;
+  size: number;
+}
+
+/**
+ * Query the audit log with optional filters. All parameters are optional;
+ * omitted filters return all events.
+ */
+export async function fetchAuditLog(opts?: {
+  actor?: string;
+  toolName?: string;
+  eventType?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  size?: number;
+}): Promise<AuditResponse> {
+  const params = new URLSearchParams();
+  if (opts?.actor) params.set("actor", opts.actor);
+  if (opts?.toolName) params.set("toolName", opts.toolName);
+  if (opts?.eventType) params.set("eventType", opts.eventType);
+  if (opts?.from) params.set("from", opts.from);
+  if (opts?.to) params.set("to", opts.to);
+  if (opts?.page !== undefined) params.set("page", String(opts.page));
+  if (opts?.size !== undefined) params.set("size", String(opts.size));
+  const qs = params.toString();
+  return json<AuditResponse>(await fetch(qs ? `/api/audit?${qs}` : "/api/audit"));
+}
+
+/** Summary metrics from the backend. */
+export interface MetricsSummary {
+  [key: string]: unknown;
+}
+
+export async function fetchMetricsSummary(): Promise<MetricsSummary> {
+  return json<MetricsSummary>(await fetch("/api/metrics/summary"));
 }

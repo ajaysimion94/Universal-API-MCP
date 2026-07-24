@@ -5,17 +5,23 @@ import com.mcpserver.connectors.ConnectionService;
 import com.mcpserver.plugins.PluginRegistry;
 import com.mcpserver.rag.retrieval.SearchPipeline;
 import com.mcpserver.services.SearchService;
+import com.mcpserver.audit.AuditService;
 import com.mcpserver.tools.ApiTool;
 import com.mcpserver.tools.ApiToolExecutor;
 import com.mcpserver.tools.ApiToolService;
+import com.mcpserver.tools.ToolGroup;
+import com.mcpserver.tools.ToolGroupService;
 import com.mcpserver.tools.ToolInvocationResult;
 import com.mcpserver.tools.ToolQueryParser;
 import com.mcpserver.tools.ToolValidationException;
+import com.mcpserver.workflow.WorkflowEngine;
+import com.mcpserver.workflow.WorkflowExecution;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
@@ -29,17 +35,25 @@ public class SearchController {
     private final ApiToolService apiToolService;
     private final ApiToolExecutor apiToolExecutor;
     private final ConnectionService connectionService;
+    private final ToolGroupService toolGroupService;
+    private final WorkflowEngine workflowEngine;
+    private final AuditService auditService;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public SearchController(SearchPipeline searchPipeline, SearchService searchService,
                             PluginRegistry pluginRegistry, ApiToolService apiToolService,
-                            ApiToolExecutor apiToolExecutor, ConnectionService connectionService) {
+                            ApiToolExecutor apiToolExecutor, ConnectionService connectionService,
+                            ToolGroupService toolGroupService, WorkflowEngine workflowEngine,
+                            AuditService auditService) {
         this.searchPipeline = searchPipeline;
         this.searchService = searchService;
         this.pluginRegistry = pluginRegistry;
         this.apiToolService = apiToolService;
         this.apiToolExecutor = apiToolExecutor;
         this.connectionService = connectionService;
+        this.toolGroupService = toolGroupService;
+        this.workflowEngine = workflowEngine;
+        this.auditService = auditService;
     }
 
     @GetMapping
@@ -130,16 +144,25 @@ public class SearchController {
         response.put("query", query);
         response.put("results", List.of());
 
-        List<ApiTool> matches = apiToolService.resolveKeyword(parsed.appSlug(), parsed.toolKeyword());
+        // A slug with no app behind it may name a custom group. Apps keep priority on collision:
+        // an app that actually has tools always wins its slug, so existing apps never regress.
+        ToolGroup group = null;
+        if (parsed.appSlug() != null) {
+            boolean appHasTools = apiToolService.search(null, null).stream()
+                    .anyMatch(t -> t.appSlug().equals(parsed.appSlug()));
+            if (!appHasTools) {
+                group = toolGroupService.findBySlug(parsed.appSlug()).orElse(null);
+            }
+        }
+
+        List<ApiTool> matches = group != null
+                ? toolGroupService.resolveInGroup(group.slug(), parsed.toolKeyword())
+                : apiToolService.resolveKeyword(parsed.appSlug(), parsed.toolKeyword());
         if (matches.isEmpty()) {
             response.put("mode", "tool");
             response.put("tool", parsed.toolKeyword());
-            response.put("message", parsed.toolKeyword().isBlank()
-                    ? (parsed.appSlug() != null
-                        ? "No tools found for app '" + parsed.appSlug() + "'. Import a Postman collection or OpenAPI spec on the Connections page."
-                        : "Type a tool keyword after #, e.g. #app_create_item")
-                    : "No tool matches '" + parsed.toolKeyword() + "'. Import an API spec on the Connections page, or check the keyword.");
-            response.put("suggestions", suggestions(parsed.appSlug(), parsed.toolKeyword()));
+            response.put("message", noMatchMessage(parsed, group));
+            response.put("suggestions", suggestions(parsed.appSlug(), parsed.toolKeyword(), group));
             return response;
         }
         if (matches.size() > 1) {
@@ -180,7 +203,10 @@ public class SearchController {
         Connection connection = connectionService.findById(tool.connectionId());
         try {
             if (tool.isRead()) {
+                auditService.logToolInvoked(tool.id(), tool.name(), null, "web-user", built.args());
                 ToolInvocationResult result = apiToolExecutor.execute(tool, connection, built.args());
+                auditService.logToolExecuted(tool.id(), tool.name(), null, "web-user",
+                        "HTTP " + result.status());
                 response.put("mode", "tool-result");
                 response.put("result", Map.of(
                         "status", result.status(),
@@ -190,10 +216,20 @@ public class SearchController {
                         "truncated", result.truncated(),
                         "request", result.requestSummary()));
             } else {
-                // state-changing tools never execute from a query — preview → approve (§7.2)
+                // State-changing tools → workflow engine → preview + confirmation token (§7.2)
+                auditService.logToolInvoked(tool.id(), tool.name(), null, "web-user", built.args());
+                WorkflowExecution execution = workflowEngine.initiateWriteTool(
+                        tool, connection, built.args(), "web-user");
                 response.put("mode", "tool-confirm");
-                response.put("preview", apiToolExecutor.renderPreview(tool, connection, built.args()));
+                try {
+                    response.put("preview", mapper.readValue(execution.previewPayload(), Map.class));
+                } catch (Exception e) {
+                    response.put("preview", Map.of());
+                }
                 response.put("args", built.args());
+                response.put("confirmationToken", execution.confirmationToken());
+                response.put("tokenExpiresAt", execution.tokenExpiresAt().toString());
+                response.put("workflowId", execution.id());
             }
         } catch (ToolValidationException e) {
             response.put("mode", "tool-form");
@@ -209,7 +245,41 @@ public class SearchController {
         return response;
     }
 
-    private List<Map<String, Object>> suggestions(String appSlug, String keyword) {
+    private String noMatchMessage(ToolQueryParser.ParsedToolQuery parsed, ToolGroup group) {
+        if (parsed.toolKeyword().isBlank()) {
+            if (group != null) {
+                return "No tools in group '" + group.slug() + "' yet — add apps or endpoints to it on the Apps page.";
+            }
+            return parsed.appSlug() != null
+                    ? "No tools found for app '" + parsed.appSlug() + "'. Import a Postman collection or OpenAPI spec on the Connections page."
+                    : "Type a tool keyword after #, e.g. #app_create_item";
+        }
+        return group != null
+                ? "No tool matches '" + parsed.toolKeyword() + "' in group '" + group.slug() + "' — check the keyword."
+                : "No tool matches '" + parsed.toolKeyword() + "'. Import an API spec on the Connections page, or check the keyword.";
+    }
+
+    private List<Map<String, Object>> suggestions(String appSlug, String keyword, ToolGroup group) {
+        if (group != null) {
+            // group scope: suggest from the group's pool instead of the global one
+            List<ApiTool> groupPool = toolGroupService.toolsInGroup(group.id());
+            String kw = keyword == null ? "" : keyword.toLowerCase(Locale.ROOT);
+            List<Map<String, Object>> matched = groupPool.stream()
+                    .filter(t -> kw.isBlank()
+                            || t.name().contains(kw)
+                            || t.displayName().toLowerCase(Locale.ROOT).contains(kw))
+                    .filter(ApiTool::enabled)
+                    .limit(8)
+                    .map(this::toolSummary)
+                    .toList();
+            if (!matched.isEmpty()) return matched;
+            // nothing matched the keyword — show what IS available in the group
+            return groupPool.stream()
+                    .filter(ApiTool::enabled)
+                    .limit(8)
+                    .map(this::toolSummary)
+                    .toList();
+        }
         List<ApiTool> pool = keyword == null || keyword.isBlank()
                 ? apiToolService.search(null, null)
                 : apiToolService.search(keyword, null);

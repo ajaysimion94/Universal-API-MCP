@@ -2,6 +2,10 @@ package com.mcpserver.connectors;
 
 import com.mcpserver.repositories.ChunkRepository;
 import com.mcpserver.tools.ApiToolService;
+import com.mcpserver.tools.ToolGroupRepository;
+import com.mcpserver.tools.JiraToolProvider;
+import com.mcpserver.tools.ConfluenceToolProvider;
+import com.mcpserver.tools.GitHubToolProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -32,6 +36,10 @@ public class ConnectionService {
     private final IngestionEventRepository eventRepository;
     private final CredentialCipher credentialCipher;
     private final ApiToolService apiToolService;
+    private final ToolGroupRepository toolGroupRepository;
+    private final JiraToolProvider jiraToolProvider;
+    private final ConfluenceToolProvider confluenceToolProvider;
+    private final GitHubToolProvider githubToolProvider;
     private final Map<ConnectionType, SourceConnector> connectorsByType;
 
     private final ExecutorService jobExecutor = Executors.newSingleThreadExecutor(r -> {
@@ -47,12 +55,20 @@ public class ConnectionService {
                               IngestionEventRepository eventRepository,
                               CredentialCipher credentialCipher,
                               ApiToolService apiToolService,
+                              ToolGroupRepository toolGroupRepository,
+                              JiraToolProvider jiraToolProvider,
+                              ConfluenceToolProvider confluenceToolProvider,
+                              GitHubToolProvider githubToolProvider,
                               List<SourceConnector> connectors) {
         this.connectionRepository = connectionRepository;
         this.chunkRepository = chunkRepository;
         this.eventRepository = eventRepository;
         this.credentialCipher = credentialCipher;
         this.apiToolService = apiToolService;
+        this.toolGroupRepository = toolGroupRepository;
+        this.jiraToolProvider = jiraToolProvider;
+        this.confluenceToolProvider = confluenceToolProvider;
+        this.githubToolProvider = githubToolProvider;
         this.connectorsByType = connectors.stream()
                 .collect(Collectors.toMap(SourceConnector::type, Function.identity()));
     }
@@ -162,14 +178,16 @@ public class ConnectionService {
 
     /**
      * Deletes the connection, purges every chunk it produced (source_file_id prefix "{id}:"),
-     * and removes its imported tools (no-op for connection types without tools).
+     * and removes its imported tools (no-op for connection types without tools) plus any tool
+     * group memberships referencing it or its tools.
      */
     public void delete(String connectionId) {
         findById(connectionId); // 404s if missing
         chunkRepository.deleteBySourceFileIdPrefix(connectionId + ":");
-        apiToolService.deleteByConnectionId(connectionId);
+        apiToolService.deleteByConnectionId(connectionId); // also removes TOOL memberships
+        toolGroupRepository.deleteMembersForConnection(connectionId);
         connectionRepository.deleteById(connectionId);
-        log.info("Deleted connection {} and purged its chunks and tools", connectionId);
+        log.info("Deleted connection {} and purged its chunks, tools, and group memberships", connectionId);
     }
 
     /**
@@ -197,6 +215,11 @@ public class ConnectionService {
                 log.info("Webhook registration skipped for {} ({}): falling back to polling only",
                         connectionId, e.getMessage());
             }
+
+            // Register built-in tools for active connection
+            Connection activeConnection = findById(connectionId);
+            registerBuiltInToolsIfApplicable(activeConnection);
+
             connectionRepository.save(findById(connectionId).withStatus(ConnectionStatus.CONNECTED, null));
             job.status = "completed";
             log.info("Connection {} verified ({})", connectionId, deployment);
@@ -223,6 +246,17 @@ public class ConnectionService {
             job.status = "failed";
             job.error = e.getMessage();
             log.warn("Backfill failed for connection {}: {}", connectionId, e.getMessage());
+        }
+    }
+
+    private void registerBuiltInToolsIfApplicable(Connection connection) {
+        log.info("Registering built-in tools for connection {} of type {}", connection.id(), connection.type());
+        if (connection.type() == ConnectionType.JIRA) {
+            apiToolService.importTools(connection, jiraToolProvider.getDefinitions());
+        } else if (connection.type() == ConnectionType.CONFLUENCE) {
+            apiToolService.importTools(connection, confluenceToolProvider.getDefinitions());
+        } else if (connection.type() == ConnectionType.GITHUB) {
+            apiToolService.importTools(connection, githubToolProvider.getDefinitions());
         }
     }
 

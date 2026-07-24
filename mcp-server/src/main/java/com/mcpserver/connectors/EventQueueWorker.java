@@ -47,10 +47,14 @@ public class EventQueueWorker {
 
     @PostConstruct
     void start() {
-        int requeued = eventRepository.findPendingOrProcessing().size();
-        eventRepository.resetProcessingToPending();
-        if (requeued > 0) {
-            log.info("EventQueueWorker: {} event(s) pending/in-flight at startup, requeued", requeued);
+        try {
+            int requeued = eventRepository.findPendingOrProcessing().size();
+            eventRepository.resetProcessingToPending();
+            if (requeued > 0) {
+                log.info("EventQueueWorker: {} event(s) pending/in-flight at startup, requeued", requeued);
+            }
+        } catch (Exception e) {
+            log.warn("EventQueueWorker: schema not yet ready — {} (will retry in loop)", e.getMessage());
         }
         workerThread = new Thread(this::loop, "ingestion-event-worker");
         workerThread.setDaemon(true);

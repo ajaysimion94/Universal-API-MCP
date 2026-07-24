@@ -5,5 +5,6 @@ public enum ConnectionType {
     CONFLUENCE,
     JIRA,
     SHAREPOINT,
-    API_COLLECTION
+    API_COLLECTION,
+    GITHUB
 }

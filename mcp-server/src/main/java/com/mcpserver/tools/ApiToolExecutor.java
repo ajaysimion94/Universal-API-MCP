@@ -2,6 +2,7 @@ package com.mcpserver.tools;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.mcpserver.connectors.Connection;
 import com.mcpserver.connectors.CredentialCipher;
@@ -55,24 +56,61 @@ public class ApiToolExecutor {
         this.rateLimitPerMinute = rateLimitPerMinute;
     }
 
-    public ToolInvocationResult execute(ApiTool tool, Connection connection, Map<String, Object> args)
-            throws Exception {
+    /**
+     * Per-invocation request customization layered on top of a tool's spec-derived shape —
+     * the Postman-style "override anything before sending" seam. Never persisted with a
+     * secret in it for write tools; see {@link #executeRaw} guard on {@code auth}.
+     */
+    public record InvokeOverrides(
+            Map<String, String> extraHeaders,
+            Map<String, String> extraQueryParams,
+            String bodyMode,
+            String rawBody,
+            String rawContentType,
+            AuthOverride auth
+    ) {
+        private static final InvokeOverrides EMPTY = new InvokeOverrides(Map.of(), Map.of(), null, null, null, null);
+
+        public static InvokeOverrides empty() {
+            return EMPTY;
+        }
+
+        public InvokeOverrides {
+            if (extraHeaders == null) extraHeaders = Map.of();
+            if (extraQueryParams == null) extraQueryParams = Map.of();
+        }
+    }
+
+    /** Same four modes the connection itself supports (see DECISIONS.md) — never OAuth2/Digest/etc. */
+    public record AuthOverride(String mode, String username, String secret, String headerName) {
+    }
+
+    private record RawResult(HttpResponse<byte[]> response, long latencyMs, URI target) {}
+
+    private RawResult executeRaw(ApiTool tool, Connection connection, Map<String, Object> args,
+                                 InvokeOverrides overrides) throws Exception {
         if (!tool.enabled()) {
             throw new IllegalStateException(tool.pending()
                     ? "Tool " + tool.name() + " is pending approval — enable it on the Connections page"
                     : "Tool " + tool.name() + " is disabled");
         }
+        if (overrides.auth() != null && !tool.isRead()) {
+            throw new IllegalArgumentException(
+                    "Auth override is only available for read (GET) tools — write tools always use "
+                            + "the connection's stored credentials");
+        }
         checkRateLimit(tool);
 
         JsonNode schema = mapper.readTree(tool.paramsSchema());
+        Map<String, String> locations = readStringMap(tool.paramLocations());
         Map<String, Object> merged = mergeDefaults(schema, args);
-        List<SchemaValidator.Violation> violations = SchemaValidator.validate(schema, merged);
+        List<SchemaValidator.Violation> violations =
+                SchemaValidator.validate(effectiveSchemaForValidation(schema, locations, overrides), merged);
         if (!violations.isEmpty()) {
             throw new ToolValidationException(violations);
         }
 
-        Map<String, String> locations = readStringMap(tool.paramLocations());
-        URI target = renderUri(tool, connection, merged, locations);
+        URI target = renderUri(tool, connection, merged, locations, overrides.extraQueryParams());
         assertSameHost(target, connection);
 
         HttpRequest.Builder request = HttpRequest.newBuilder()
@@ -85,29 +123,63 @@ public class ApiToolExecutor {
                 request.header(e.getKey(), String.valueOf(e.getValue()));
             }
         }
-        applyAuth(request, connection);
+        overrides.extraHeaders().forEach(request::setHeader);
+        if (overrides.auth() != null) {
+            applyAuthOverride(request, overrides.auth());
+        } else {
+            applyAuth(request, connection);
+        }
 
-        String body = renderBody(tool, merged, locations);
-        if (body != null && !tool.isRead()) {
+        String body = renderBody(tool, merged, locations, overrides);
+        if ("RAW".equals(overrides.bodyMode()) && overrides.rawContentType() != null
+                && !overrides.rawContentType().isBlank()) {
+            request.setHeader("Content-Type", overrides.rawContentType());
+        }
+        if (body != null) {
             request.method(tool.httpMethod(), HttpRequest.BodyPublishers.ofString(body));
         } else {
             request.method(tool.httpMethod(), HttpRequest.BodyPublishers.noBody());
         }
 
         long start = System.currentTimeMillis();
-        HttpResponse<byte[]> response = httpClient.send(request.build(),
-                HttpResponse.BodyHandlers.ofByteArray());
+        HttpResponse<byte[]> response;
+        try {
+            response = httpClient.send(request.build(), HttpResponse.BodyHandlers.ofByteArray());
+        } catch (java.net.http.HttpTimeoutException e) {
+            throw new ToolExecutionException("Request to " + target + " timed out — the service "
+                    + "didn't respond in time", e);
+        } catch (java.net.UnknownHostException e) {
+            throw new ToolExecutionException("Could not resolve host \"" + target.getHost()
+                    + "\" — check the connection's base URL", e);
+        } catch (java.net.ConnectException e) {
+            throw new ToolExecutionException("Could not connect to " + originOf(target)
+                    + " — is the service running?", e);
+        } catch (java.io.IOException e) {
+            throw new ToolExecutionException("Network error calling " + target + ": "
+                    + e.getMessage(), e);
+        }
         long latency = System.currentTimeMillis() - start;
 
-        String summary = tool.httpMethod() + " " + target;
         log.info("Tool {} → {} in {}ms", tool.name(), response.statusCode(), latency);
-        return toResult(response, latency, summary);
+        return new RawResult(response, latency, target);
+    }
+
+    public ToolInvocationResult execute(ApiTool tool, Connection connection, Map<String, Object> args)
+            throws Exception {
+        return execute(tool, connection, args, InvokeOverrides.empty());
+    }
+
+    public ToolInvocationResult execute(ApiTool tool, Connection connection, Map<String, Object> args,
+                                        InvokeOverrides overrides) throws Exception {
+        RawResult raw = executeRaw(tool, connection, args, overrides);
+        String summary = tool.httpMethod() + " " + raw.target();
+        return toResult(raw.response(), raw.latencyMs(), summary);
     }
 
     // --- rendering ---------------------------------------------------------
 
     private URI renderUri(ApiTool tool, Connection connection, Map<String, Object> args,
-                          Map<String, String> locations) {
+                          Map<String, String> locations, Map<String, String> extraQueryParams) {
         String path = tool.urlTemplate();
         for (var e : args.entrySet()) {
             if ("path".equals(locations.get(e.getKey())) && e.getValue() != null) {
@@ -126,6 +198,13 @@ public class ApiToolExecutor {
                         .append(URLEncoder.encode(String.valueOf(e.getValue()), StandardCharsets.UTF_8));
             }
         }
+        for (var e : extraQueryParams.entrySet()) {
+            if (e.getValue() == null || e.getValue().isBlank()) continue;
+            query.append(query.isEmpty() ? "?" : "&")
+                    .append(URLEncoder.encode(e.getKey(), StandardCharsets.UTF_8))
+                    .append('=')
+                    .append(URLEncoder.encode(e.getValue(), StandardCharsets.UTF_8));
+        }
 
         String base = connection.baseUrl().replaceAll("/+$", "");
         return URI.create(base + path + query);
@@ -134,10 +213,14 @@ public class ApiToolExecutor {
     /**
      * Body args merge into the spec's example body (so fields the caller didn't mention keep
      * their skeleton values only when required by the endpoint — we send just the caller's args
-     * plus template values for fields present in the template).
+     * plus template values for fields present in the template). A "RAW" override bypasses this
+     * entirely and sends the caller's text verbatim; "NONE" forces no body.
      */
-    private String renderBody(ApiTool tool, Map<String, Object> args, Map<String, String> locations)
-            throws Exception {
+    private String renderBody(ApiTool tool, Map<String, Object> args, Map<String, String> locations,
+                              InvokeOverrides overrides) throws Exception {
+        if ("NONE".equals(overrides.bodyMode())) return null;
+        if ("RAW".equals(overrides.bodyMode())) return overrides.rawBody();
+
         boolean hasBodyArg = args.keySet().stream().anyMatch(k -> "body".equals(locations.get(k)));
         if (!hasBodyArg && tool.bodyTemplate() == null) return null;
 
@@ -149,6 +232,34 @@ public class ApiToolExecutor {
             body.set(e.getKey(), mapper.valueToTree(coerce(e.getValue())));
         }
         return body.toString();
+    }
+
+    /**
+     * A "RAW"/"NONE" body override bypasses the schema-driven body entirely, so required
+     * properties located in the body would otherwise block a legitimate override with a
+     * spurious "missing parameter" violation — strip them from the validated {@code required}
+     * set in that case. Path/query/header requirements are untouched.
+     */
+    private JsonNode effectiveSchemaForValidation(JsonNode schema, Map<String, String> locations,
+                                                   InvokeOverrides overrides) {
+        if (!"RAW".equals(overrides.bodyMode()) && !"NONE".equals(overrides.bodyMode())) return schema;
+        JsonNode requiredNode = schema.path("required");
+        if (!requiredNode.isArray()) return schema;
+        boolean hasBodyRequired = false;
+        for (JsonNode n : requiredNode) {
+            if ("body".equals(locations.get(n.asText()))) {
+                hasBodyRequired = true;
+                break;
+            }
+        }
+        if (!hasBodyRequired) return schema;
+        ObjectNode copy = (ObjectNode) schema.deepCopy();
+        ArrayNode filtered = mapper.createArrayNode();
+        for (JsonNode n : requiredNode) {
+            if (!"body".equals(locations.get(n.asText()))) filtered.add(n);
+        }
+        copy.set("required", filtered);
+        return copy;
     }
 
     /** Free-text args arrive as strings; send "123" as 123 and "true" as true where unambiguous. */
@@ -181,6 +292,10 @@ public class ApiToolExecutor {
             }
         });
         return merged;
+    }
+
+    private static String originOf(URI uri) {
+        return uri.getScheme() + "://" + uri.getHost() + (uri.getPort() > 0 ? ":" + uri.getPort() : "");
     }
 
     // --- guardrails ---------------------------------------------------------
@@ -234,11 +349,37 @@ public class ApiToolExecutor {
         }
     }
 
+    /** Per-invocation auth override — read tools only, see {@link #executeRaw} guard. Never persisted. */
+    private void applyAuthOverride(HttpRequest.Builder request, AuthOverride auth) {
+        switch (auth.mode() == null ? "NONE" : auth.mode()) {
+            case "BASIC" -> {
+                if (auth.secret() != null) {
+                    String token = Base64.getEncoder().encodeToString(
+                            (auth.username() + ":" + auth.secret()).getBytes(StandardCharsets.UTF_8));
+                    request.setHeader("Authorization", "Basic " + token);
+                }
+            }
+            case "BEARER" -> {
+                if (auth.secret() != null) request.setHeader("Authorization", "Bearer " + auth.secret());
+            }
+            case "API_KEY_HEADER" -> {
+                if (auth.secret() != null && auth.headerName() != null) {
+                    request.setHeader(auth.headerName(), auth.secret());
+                }
+            }
+            default -> {
+                // NONE — send nothing, not even the connection's stored auth
+            }
+        }
+    }
+
     private ToolInvocationResult toResult(HttpResponse<byte[]> response, long latency, String summary) {
         byte[] raw = response.body();
         boolean truncated = raw.length > MAX_RESPONSE_BYTES;
         String text = new String(raw, 0, Math.min(raw.length, MAX_RESPONSE_BYTES), StandardCharsets.UTF_8);
         String contentType = response.headers().firstValue("Content-Type").orElse("");
+        Map<String, String> headers = new HashMap<>();
+        response.headers().map().forEach((name, values) -> headers.put(name, String.join(", ", values)));
 
         if (!truncated && (contentType.contains("json") || text.trim().startsWith("{") || text.trim().startsWith("["))) {
             try {
@@ -251,37 +392,84 @@ public class ApiToolExecutor {
             text = text.substring(0, MAX_DISPLAY_CHARS);
             truncated = true;
         }
-        return new ToolInvocationResult(response.statusCode(), latency, contentType, text, truncated, summary);
+        return new ToolInvocationResult(response.statusCode(), latency, contentType, text, truncated, summary, headers);
     }
 
     /**
-     * Validates and renders the request a write tool <em>would</em> send — method, resolved URL,
-     * body — without sending it. Backs the preview→approve step (§5.8/§7.2) for state-changing
-     * tools invoked from search. Auth headers are never part of the preview.
+     * Validates and renders the request a tool <em>would</em> send — method, resolved URL,
+     * headers, body — without sending it. Backs the preview→approve step (§5.8/§7.2) for
+     * state-changing tools, the live "resolved request" readout, and code-snippet generation.
+     * The real Authorization value is never included — masked when the connection (or an
+     * override) would add one.
      */
     public Map<String, Object> renderPreview(ApiTool tool, Connection connection, Map<String, Object> args)
             throws Exception {
+        return renderPreview(tool, connection, args, InvokeOverrides.empty());
+    }
+
+    public Map<String, Object> renderPreview(ApiTool tool, Connection connection, Map<String, Object> args,
+                                             InvokeOverrides overrides) throws Exception {
+        if (overrides.auth() != null && !tool.isRead()) {
+            throw new IllegalArgumentException(
+                    "Auth override is only available for read (GET) tools");
+        }
         JsonNode schema = mapper.readTree(tool.paramsSchema());
+        Map<String, String> locations = readStringMap(tool.paramLocations());
         Map<String, Object> merged = mergeDefaults(schema, args);
-        List<SchemaValidator.Violation> violations = SchemaValidator.validate(schema, merged);
+        List<SchemaValidator.Violation> violations =
+                SchemaValidator.validate(effectiveSchemaForValidation(schema, locations, overrides), merged);
         if (!violations.isEmpty()) {
             throw new ToolValidationException(violations);
         }
-        Map<String, String> locations = readStringMap(tool.paramLocations());
         Map<String, Object> preview = new HashMap<>();
         preview.put("method", tool.httpMethod());
-        preview.put("url", renderUri(tool, connection, merged, locations).toString());
-        String body = renderBody(tool, merged, locations);
+        preview.put("url", renderUri(tool, connection, merged, locations, overrides.extraQueryParams()).toString());
+
+        Map<String, String> headers = new HashMap<>(readStringMap(tool.headers()));
+        for (var e : merged.entrySet()) {
+            if ("header".equals(locations.get(e.getKey())) && e.getValue() != null) {
+                headers.put(e.getKey(), String.valueOf(e.getValue()));
+            }
+        }
+        headers.putAll(overrides.extraHeaders());
+        if ("RAW".equals(overrides.bodyMode()) && overrides.rawContentType() != null
+                && !overrides.rawContentType().isBlank()) {
+            headers.put("Content-Type", overrides.rawContentType());
+        }
+        if (overrides.auth() != null) {
+            String mode = overrides.auth().mode();
+            if ("BASIC".equals(mode) || "BEARER".equals(mode)) {
+                headers.put("Authorization", "<will be sent — not shown here>");
+            } else if ("API_KEY_HEADER".equals(mode) && overrides.auth().headerName() != null) {
+                headers.put(overrides.auth().headerName(), "<will be sent — not shown here>");
+            }
+        } else {
+            switch (connection.authMode()) {
+                case BASIC, BEARER -> headers.put("Authorization", "<will be sent — not shown here>");
+                case API_KEY_HEADER -> {
+                    if (connection.authUsername() != null) {
+                        headers.put(connection.authUsername(), "<will be sent — not shown here>");
+                    }
+                }
+                default -> { /* NONE, OAUTH2 — nothing to mask */ }
+            }
+        }
+        preview.put("headers", headers);
+
+        String body = renderBody(tool, merged, locations, overrides);
         if (body != null) preview.put("body", body);
+        if ("RAW".equals(overrides.bodyMode()) && overrides.rawContentType() != null) {
+            preview.put("contentType", overrides.rawContentType());
+        }
         return preview;
     }
 
     /** Raw response bytes for knowledge-source ingestion (no pretty-print/display cap). */
     public byte[] executeForIngestion(ApiTool tool, Connection connection) throws Exception {
-        ToolInvocationResult result = execute(tool, connection, Map.of());
-        if (result.status() >= 400) {
-            throw new IllegalStateException("Tool " + tool.name() + " returned HTTP " + result.status());
+        RawResult raw = executeRaw(tool, connection, Map.of(), InvokeOverrides.empty());
+        if (raw.response().statusCode() >= 400) {
+            throw new IllegalStateException("Tool " + tool.name() + " returned HTTP " + raw.response().statusCode());
         }
-        return result.body().getBytes(StandardCharsets.UTF_8);
+        return raw.response().body();
     }
 }

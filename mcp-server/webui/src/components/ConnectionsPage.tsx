@@ -31,7 +31,7 @@ import {
 } from "../icons";
 import { Toggle } from "./Toggle";
 
-const CONNECTABLE_TYPES: ConnectionType[] = ["CONFLUENCE", "JIRA", "API_COLLECTION"];
+const CONNECTABLE_TYPES: ConnectionType[] = ["CONFLUENCE", "JIRA", "API_COLLECTION", "GITHUB"];
 
 function typeLabel(type: ConnectionType): string {
   switch (type) {
@@ -41,6 +41,8 @@ function typeLabel(type: ConnectionType): string {
       return "Jira";
     case "API_COLLECTION":
       return "API (Postman/OpenAPI)";
+    case "GITHUB":
+      return "GitHub";
     default:
       return "SharePoint";
   }

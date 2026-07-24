@@ -99,8 +99,11 @@ public class StructureAwareChunker implements Chunker {
             int end = Math.min(start + targetChars, text.length());
             out.add(toChunk(text.substring(start, end)));
             if (end >= text.length()) break;
-            start = end - overlapChars;
-            if (start < 0) start = 0;
+            int nextStart = end - overlapChars;
+            if (nextStart <= start) {
+                nextStart = start + Math.max(1, targetChars / 2);
+            }
+            start = nextStart;
         }
     }
 

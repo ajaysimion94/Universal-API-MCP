@@ -102,16 +102,34 @@ public class OnnxEmbeddingClient implements EmbeddingClient {
             long[] attentionMask = encoding.getAttentionMask();
             long[] typeIds = encoding.getTypeIds();
 
-            try (ai.onnxruntime.OnnxTensor idsTensor = ai.onnxruntime.OnnxTensor.createTensor(env, new long[][]{inputIds});
-                 ai.onnxruntime.OnnxTensor maskTensor = ai.onnxruntime.OnnxTensor.createTensor(env, new long[][]{attentionMask});
-                 ai.onnxruntime.OnnxTensor typeTensor = ai.onnxruntime.OnnxTensor.createTensor(env, new long[][]{typeIds});
-                 ai.onnxruntime.OrtSession.Result result = session.run(
-                         java.util.Map.of("input_ids", idsTensor,
-                                 "attention_mask", maskTensor,
-                                 "token_type_ids", typeTensor))) {
+            java.util.Set<String> inputNames = session.getInputNames();
+            java.util.Map<String, ai.onnxruntime.OnnxTensor> inputs = new java.util.HashMap<>();
+            ai.onnxruntime.OnnxTensor idsTensor = null;
+            ai.onnxruntime.OnnxTensor maskTensor = null;
+            ai.onnxruntime.OnnxTensor typeTensor = null;
 
-                float[][][] hidden = (float[][][]) result.get(0).getValue();
-                return meanPoolNormalize(hidden[0], attentionMask);
+            try {
+                if (inputNames.contains("input_ids")) {
+                    idsTensor = ai.onnxruntime.OnnxTensor.createTensor(env, new long[][]{inputIds});
+                    inputs.put("input_ids", idsTensor);
+                }
+                if (inputNames.contains("attention_mask")) {
+                    maskTensor = ai.onnxruntime.OnnxTensor.createTensor(env, new long[][]{attentionMask});
+                    inputs.put("attention_mask", maskTensor);
+                }
+                if (inputNames.contains("token_type_ids")) {
+                    typeTensor = ai.onnxruntime.OnnxTensor.createTensor(env, new long[][]{typeIds});
+                    inputs.put("token_type_ids", typeTensor);
+                }
+
+                try (ai.onnxruntime.OrtSession.Result result = session.run(inputs)) {
+                    float[][][] hidden = (float[][][]) result.get(0).getValue();
+                    return meanPoolNormalize(hidden[0], attentionMask);
+                }
+            } finally {
+                if (idsTensor != null) idsTensor.close();
+                if (maskTensor != null) maskTensor.close();
+                if (typeTensor != null) typeTensor.close();
             }
         } catch (Exception e) {
             throw new RuntimeException("Embedding inference failed", e);

@@ -5,7 +5,6 @@ import com.mcpserver.tools.ApiTool;
 import com.mcpserver.tools.ApiToolDefinition;
 import com.mcpserver.tools.ApiToolExecutor;
 import com.mcpserver.tools.ApiToolService;
-import com.mcpserver.tools.OpenApiParser;
 import com.mcpserver.tools.SpecFetcher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -85,9 +84,10 @@ public class ApiCollectionConnector implements SourceConnector {
                 spec.resolvedUrl() != null ? spec.resolvedUrl() : connection.specSourceUrl(),
                 spec.parser().format(), spec.content());
 
-        // No base URL supplied → derive from the spec (OpenAPI servers[0].url)
+        // No base URL supplied → derive from the spec (OpenAPI servers[0].url, or a Postman
+        // baseUrl-style variable / the first request's absolute origin)
         if (current.baseUrl() == null || current.baseUrl().isBlank()) {
-            String serverUrl = OpenApiParser.extractServerUrl(spec.parsed());
+            String serverUrl = spec.parser().extractBaseUrl(spec.parsed());
             if (serverUrl != null && spec.resolvedUrl() != null && !serverUrl.matches("^https?://.*")) {
                 serverUrl = URI.create(spec.resolvedUrl()).resolve(serverUrl).toString();
             }

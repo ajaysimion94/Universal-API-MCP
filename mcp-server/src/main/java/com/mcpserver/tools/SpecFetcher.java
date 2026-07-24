@@ -65,10 +65,14 @@ public class SpecFetcher {
         for (String candidate : new ArrayList<>(candidates)) {
             fetches++;
             tried.add(candidate);
-            String body = get(candidate);
-            FetchedSpec spec = tryParse(body, candidate);
-            if (spec != null) return spec;
-            pageBody = body;
+            try {
+                String body = get(candidate);
+                FetchedSpec spec = tryParse(body, candidate);
+                if (spec != null) return spec;
+                pageBody = body;
+            } catch (Exception e) {
+                log.debug("Spec candidate {} failed on initial fetch: {}", candidate, e.getMessage());
+            }
         }
 
         // The URL served something that isn't a spec — scan it for spec-URL hints (Swagger UI page)

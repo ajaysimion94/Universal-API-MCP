@@ -9,6 +9,9 @@ import com.mcpserver.tools.ApiToolService;
 import com.mcpserver.tools.ToolInvocationResult;
 import com.mcpserver.tools.ToolValidationException;
 import com.mcpserver.tools.ToolsChangedEvent;
+import com.mcpserver.workflow.WorkflowEngine;
+import com.mcpserver.workflow.WorkflowExecution;
+import com.mcpserver.workflow.WorkflowState;
 import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpSyncServer;
@@ -29,7 +32,8 @@ import java.util.Set;
  * an MCP tool named {@code {app}_{request-name}} (§5.3), registered at startup and mutated at
  * runtime via addTool/removeTool + notifyToolsListChanged whenever an import/enable/disable
  * happens — no restarts (§8 step 5). Also registers the built-in {@code search-knowledge-base}
- * tool wrapping the RAG pipeline (the Phase-1 catalogue stub, finally real).
+ * tool wrapping the RAG pipeline (the Phase-1 catalogue stub, finally real), and the
+ * {@code confirm-action} tool for Phase-3 governance approvals.
  *
  * <p>Pure event listener: nothing else depends on this class, so an SDK break degrades MCP
  * exposure only — REST and search invocation keep working.
@@ -45,12 +49,19 @@ public class McpToolBridge {
               "topK":{"type":"integer","description":"Maximum results","default":10}},
              "required":["query"]}""";
 
+    private static final String CONFIRM_TOOL = "confirm-action";
+    private static final String CONFIRM_SCHEMA = """
+            {"type":"object","properties":{
+              "token":{"type":"string","description":"The confirmation token to approve and execute the action"}},
+             "required":["token"]}""";
+
     private final McpSyncServer mcpServer;
     private final McpJsonMapper jsonMapper;
     private final ApiToolService apiToolService;
     private final ApiToolExecutor apiToolExecutor;
     private final ConnectionService connectionService;
     private final SearchPipeline searchPipeline;
+    private final WorkflowEngine workflowEngine;
 
     /** Names currently registered on the MCP server (imported tools only, not built-ins). */
     private final Set<String> registered = new HashSet<>();
@@ -60,23 +71,26 @@ public class McpToolBridge {
                          ApiToolService apiToolService,
                          ApiToolExecutor apiToolExecutor,
                          ConnectionService connectionService,
-                         SearchPipeline searchPipeline) {
+                         SearchPipeline searchPipeline,
+                         WorkflowEngine workflowEngine) {
         this.mcpServer = mcpServer;
         this.jsonMapper = jsonMapper;
         this.apiToolService = apiToolService;
         this.apiToolExecutor = apiToolExecutor;
         this.connectionService = connectionService;
         this.searchPipeline = searchPipeline;
+        this.workflowEngine = workflowEngine;
     }
 
     @EventListener(ApplicationReadyEvent.class)
     public synchronized void registerAllOnStartup() {
         mcpServer.addTool(searchKnowledgeBaseSpec());
+        mcpServer.addTool(confirmActionSpec());
         for (ApiTool tool : apiToolService.findAllEnabled()) {
             addTool(tool);
         }
-        log.info("MCP server ready at {} — {} imported tools + {}",
-                McpServerConfig.MCP_ENDPOINT, registered.size(), SEARCH_TOOL);
+        log.info("MCP server ready at {} — {} imported tools + {}, {}",
+                McpServerConfig.MCP_ENDPOINT, registered.size(), SEARCH_TOOL, CONFIRM_TOOL);
     }
 
     /** Import/enable/disable/delete → reconcile the MCP tool list and notify clients. */
@@ -137,13 +151,29 @@ public class McpToolBridge {
             ApiTool tool = apiToolService.findById(toolId);
             Connection connection = connectionService.findById(tool.connectionId());
             Map<String, Object> args = request.arguments() == null ? Map.of() : request.arguments();
-            ToolInvocationResult result = apiToolExecutor.execute(tool, connection, args);
-            return McpSchema.CallToolResult.builder()
-                    .addTextContent("HTTP " + result.status() + " (" + result.latencyMs() + " ms) — "
-                            + result.requestSummary() + "\n\n" + result.body()
-                            + (result.truncated() ? "\n\n[response truncated]" : ""))
-                    .isError(result.status() >= 400)
-                    .build();
+
+            if (tool.isRead()) {
+                ToolInvocationResult result = apiToolExecutor.execute(tool, connection, args);
+                return McpSchema.CallToolResult.builder()
+                        .addTextContent("HTTP " + result.status() + " (" + result.latencyMs() + " ms) — "
+                                + result.requestSummary() + "\n\n" + result.body()
+                                + (result.truncated() ? "\n\n[response truncated]" : ""))
+                        .isError(result.status() >= 400)
+                        .build();
+            } else {
+                // Write tool: initiate workflow, return confirmation token and preview
+                WorkflowExecution execution = workflowEngine.initiateWriteTool(tool, connection, args, "mcp-client");
+                return McpSchema.CallToolResult.builder()
+                        .addTextContent("State-changing tool requires approval.\n\n"
+                                + "Workflow ID: " + execution.id() + "\n"
+                                + "Confirmation Token: " + execution.confirmationToken() + "\n"
+                                + "Expires At: " + execution.tokenExpiresAt() + "\n\n"
+                                + "Preview:\n" + execution.previewPayload() + "\n\n"
+                                + "To confirm and execute this action, call the 'confirm-action' tool with the confirmation token:\n"
+                                + "confirm-action(token=\"" + execution.confirmationToken() + "\")")
+                        .isError(false)
+                        .build();
+            }
         } catch (ToolValidationException e) {
             // §8 self-correction: schema violation halts execution, returns structured error
             return McpSchema.CallToolResult.builder()
@@ -159,6 +189,41 @@ public class McpToolBridge {
                     .isError(true)
                     .build();
         }
+    }
+
+    private McpServerFeatures.SyncToolSpecification confirmActionSpec() {
+        McpSchema.Tool tool = McpSchema.Tool.builder()
+                .name(CONFIRM_TOOL)
+                .title("Confirm a pending action")
+                .description("Confirm and execute a state-changing action using its single-use confirmation token.")
+                .inputSchema(jsonMapper, CONFIRM_SCHEMA)
+                .build();
+        return McpServerFeatures.SyncToolSpecification.builder()
+                .tool(tool)
+                .callHandler((exchange, request) -> {
+                    try {
+                        Map<String, Object> args = request.arguments() == null ? Map.of() : request.arguments();
+                        String token = String.valueOf(args.get("token"));
+                        WorkflowExecution execution = workflowEngine.confirm(token, "mcp-client");
+                        if (execution.state() == WorkflowState.CONFIRMED) {
+                            return McpSchema.CallToolResult.builder()
+                                    .addTextContent("Action executed successfully.\n\nResult Summary:\n" + execution.result())
+                                    .isError(false)
+                                    .build();
+                        } else {
+                            return McpSchema.CallToolResult.builder()
+                                    .addTextContent("Action execution failed: " + execution.error())
+                                    .isError(true)
+                                    .build();
+                        }
+                    } catch (Exception e) {
+                        return McpSchema.CallToolResult.builder()
+                                .addTextContent("Confirmation failed: " + e.getMessage())
+                                .isError(true)
+                                .build();
+                    }
+                })
+                .build();
     }
 
     private McpServerFeatures.SyncToolSpecification searchKnowledgeBaseSpec() {

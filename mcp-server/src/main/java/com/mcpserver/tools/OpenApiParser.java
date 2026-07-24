@@ -45,6 +45,11 @@ public class OpenApiParser implements SpecParser {
     }
 
     @Override
+    public String extractBaseUrl(JsonNode root) {
+        return extractServerUrl(root);
+    }
+
+    @Override
     public List<ApiToolDefinition> parse(JsonNode root) {
         List<ApiToolDefinition> out = new ArrayList<>();
         JsonNode paths = root.path("paths");

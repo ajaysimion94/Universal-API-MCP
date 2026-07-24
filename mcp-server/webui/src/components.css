@@ -1847,3 +1847,525 @@
   color: var(--text-muted);
   padding: var(--space-2xs) 0;
 }
+
+.empty-link {
+  color: var(--accent);
+}
+.empty-link:hover {
+  text-decoration: underline;
+}
+
+.btn-danger {
+  color: var(--danger);
+}
+.btn-danger:not(:disabled):hover {
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+
+/* ── Apps directory page ── */
+
+.apps-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2xs) 0;
+}
+
+.apps-groups-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2xs) var(--space-sm);
+}
+
+.apps-groups-title {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+
+.apps-new-group-btn {
+  height: 22px;
+  padding: 0 var(--space-3xs) 0 6px;
+  font-size: var(--text-xs);
+}
+
+.group-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  margin: 0 var(--space-sm) var(--space-2xs);
+  padding: var(--space-xs);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.group-form .form-input {
+  font-size: var(--text-xs);
+}
+
+.group-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: var(--space-2xs) var(--space-sm);
+  text-align: left;
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  transition: background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.group-row:hover {
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+.group-row.is-active {
+  background: var(--accent-tint);
+  color: var(--text);
+}
+.group-row.is-active .group-row-name {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.group-row-name {
+  font-size: var(--text-sm);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.group-row-slug {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+.group-row-counts {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+.group-empty {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  line-height: var(--leading-normal);
+  padding: var(--space-2xs) var(--space-sm);
+}
+
+.apps-search {
+  width: 320px;
+}
+
+.apps-directory {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 var(--space-md) var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+}
+
+/* Group banner — selected group summary + actions, below the toolbar */
+
+.group-banner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin: 0 var(--space-md) var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.group-banner-loading {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.group-banner-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+  min-width: 0;
+}
+
+.group-banner-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text);
+}
+.group-banner-title svg {
+  color: var(--accent);
+}
+
+.group-banner-slug {
+  font-size: var(--text-sm);
+  font-weight: 400;
+  color: var(--text-faint);
+}
+
+.group-banner-desc {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.group-banner-counts {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+.group-banner-notice {
+  color: var(--accent);
+}
+
+.group-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  flex-shrink: 0;
+}
+
+/* App section — one expandable app card in the directory */
+
+.app-section {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding-left: var(--space-sm);
+}
+
+.app-header-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-sm) var(--space-md) var(--space-sm) 0;
+  text-align: left;
+}
+
+.app-chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform var(--dur) var(--ease-out);
+}
+.app-chevron.chev-open {
+  transform: rotate(90deg);
+}
+
+.app-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.app-name-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+}
+
+.app-name {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-slug {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+.app-meta {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-tools {
+  padding: var(--space-2xs) var(--space-md) var(--space-sm) calc(var(--space-md) + 22px);
+  border-top: 1px solid oklch(0.30 0.01 75 / 0.25);
+}
+
+.app-tools-empty {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  padding: var(--space-sm) 0;
+}
+
+.member-check {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+}
+
+.tool-row-wrap {
+  display: flex;
+  flex-direction: column;
+}
+
+.tool-run-btn {
+  height: 22px;
+  padding: 0 var(--space-2xs);
+  font-size: var(--text-xs);
+  flex-shrink: 0;
+}
+.tool-run-btn.is-active {
+  color: var(--accent);
+  border-color: var(--accent-tint-strong);
+  background: var(--accent-tint);
+}
+
+.tool-run-panel {
+  margin: var(--space-3xs) 0 var(--space-xs);
+}
+
+/* ── Request builder (Postman-style Apps run panel) ────────────────────────── */
+
+.method-badge.method-danger {
+  color: var(--danger);
+  border-color: var(--danger-tint);
+}
+
+.app-create-panel {
+  margin: 0 0 var(--space-xs);
+}
+
+.tool-panel-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.rb-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.rb-icon-btn:hover {
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+
+/* Tab strip — Params / Headers / Body / Auth / History */
+.rb-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+}
+.rb-tabs-compact {
+  border-bottom: none;
+  gap: var(--space-2xs);
+}
+.rb-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3xs);
+  padding: var(--space-2xs) var(--space-xs);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.rb-tab:hover {
+  color: var(--text-secondary);
+}
+.rb-tab.is-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.rb-tab.is-disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+.rb-tabs-compact .rb-tab {
+  padding: var(--space-3xs) var(--space-2xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+}
+.rb-tabs-compact .rb-tab.is-active {
+  border-color: var(--accent-tint-strong);
+  background: var(--accent-tint);
+}
+
+.rb-tab-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding-top: var(--space-2xs);
+}
+
+/* URL bar — method pill + editable/resolved path */
+.rb-url-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+}
+.rb-method-select {
+  flex-shrink: 0;
+  width: 100px;
+  font-family: var(--font-mono);
+}
+.rb-url-input {
+  flex: 1;
+  font-family: var(--font-mono);
+}
+.rb-url-bar-readout {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2xs) var(--space-xs);
+}
+.rb-url-readout {
+  flex: 1;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+/* Key/value editors — Params/Headers ad-hoc rows, response headers, manual-tool param rows */
+.rb-kv-table {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3xs);
+}
+.rb-kv-row {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: var(--space-2xs);
+  align-items: center;
+}
+.rb-kv-row-editable {
+  grid-template-columns: auto 1fr 1.4fr auto;
+}
+.rb-kv-table-readonly .rb-kv-row {
+  grid-template-columns: auto 1fr;
+  padding: 2px 0;
+}
+.rb-kv-key {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.rb-kv-value {
+  font-size: var(--text-xs);
+  color: var(--text);
+  word-break: break-all;
+}
+
+/* Body mode selector */
+.rb-body-mode {
+  display: flex;
+  gap: var(--space-sm);
+}
+.rb-body-mode-option {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3xs);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+/* Manual/"New request" builder */
+.rb-manual-params {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+}
+.rb-manual-params-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+.rb-manual-param-row {
+  grid-template-columns: 1fr 100px 1fr auto auto;
+}
+.rb-required-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3xs);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* History tab */
+.rb-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.rb-history-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: var(--space-xs);
+  align-items: center;
+  padding: var(--space-2xs) var(--space-xs);
+  border-radius: var(--radius-sm);
+  text-align: left;
+}
+.rb-history-row:hover:not(:disabled) {
+  background: var(--bg-elevated);
+}
+.rb-history-row:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.rb-history-event {
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.rb-history-summary {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rb-history-time {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+/* Code snippet panel */
+.rb-code-panel {
+  margin-top: var(--space-2xs);
+}
+.rb-code-block {
+  max-height: 320px;
+}

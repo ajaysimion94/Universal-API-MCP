@@ -1,5 +1,6 @@
 package com.mcpserver.services;
 
+import com.mcpserver.cache.CacheService;
 import com.mcpserver.models.Chunk;
 import com.mcpserver.plugins.PluginRegistry;
 import com.mcpserver.rag.embedding.EmbeddingClient;
@@ -17,6 +18,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -30,6 +32,7 @@ public class SearchService implements SearchPipeline {
     private final RrfFusion rrf;
     private final WebFetcher webFetcher;
     private final PluginRegistry pluginRegistry;
+    private final CacheService cacheService;
     private final int vectorTopK;
     private final int lexicalTopK;
     private final int rrfK;
@@ -40,6 +43,7 @@ public class SearchService implements SearchPipeline {
                          Reranker reranker,
                          WebFetcher webFetcher,
                          PluginRegistry pluginRegistry,
+                         CacheService cacheService,
                          @Value("${rag.search.vector-top-k}") int vectorTopK,
                          @Value("${rag.search.lexical-top-k}") int lexicalTopK,
                          @Value("${rag.search.rrf-k}") int rrfK,
@@ -50,6 +54,7 @@ public class SearchService implements SearchPipeline {
         this.rrf = new RrfFusion(rrfK);
         this.webFetcher = webFetcher;
         this.pluginRegistry = pluginRegistry;
+        this.cacheService = cacheService;
         this.vectorTopK = vectorTopK;
         this.lexicalTopK = lexicalTopK;
         this.rrfK = rrfK;
@@ -62,8 +67,17 @@ public class SearchService implements SearchPipeline {
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public List<SearchResult> search(String query, int topN, List<String> userAclTags, boolean includeWeb) {
         if (query == null || query.isBlank()) return List.of();
+
+        // 1. In-process cache check (Phase 3 — §9)
+        String cacheKey = CacheService.searchCacheKey(query, topN, includeWeb);
+        Optional<Object> cached = cacheService.getSearchResult(cacheKey);
+        if (cached.isPresent()) {
+            log.debug("Search cache hit for key: {}", cacheKey);
+            return (List<SearchResult>) cached.get();
+        }
 
         // Lexical FTS5 search always works (built into SQLite); the vector leg needs
         // both the embedding model and the sqlite-vec store. Degrade gracefully.
@@ -108,9 +122,20 @@ public class SearchService implements SearchPipeline {
                     break;
                 }
             }
+
+            // Ingested content injection defense (§9): wrap excerpt in clear delimiters
+            // and quotes with explicit provenance labels to isolate it from instructions.
+            String rawExcerpt = excerpt(c.content(), query);
+            String safeExcerpt = String.format(
+                    "--- START RETRIEVED CONTEXT FROM %s (%s) ---\n\"%s\"\n--- END RETRIEVED CONTEXT ---",
+                    c.sourceName(),
+                    c.sourcePath() != null ? c.sourcePath() : "local upload",
+                    rawExcerpt.replace("\"", "\\\"").replaceAll("(?i)<script.*?>.*?</script>", "")
+            );
+
             results.add(new SearchResult(
                     c, score, c.sourceName(), c.sourcePath(), null, "local",
-                    c.aclTags(), excerpt(c.content(), query)
+                    c.aclTags(), safeExcerpt
             ));
         }
 
@@ -120,6 +145,8 @@ public class SearchService implements SearchPipeline {
             log.info("Web augmentation: +{} web results for '{}'", webResults.size(), query);
         }
 
+        // Cache the search results before returning
+        cacheService.putSearchResult(cacheKey, results);
         return results;
     }
 

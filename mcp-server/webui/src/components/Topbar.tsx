@@ -26,6 +26,9 @@ export function Topbar() {
           <NavLink to="/connections" className={({ isActive }) => "nav-link" + (isActive ? " is-active" : "")}>
             Connections
           </NavLink>
+          <NavLink to="/apps" className={({ isActive }) => "nav-link" + (isActive ? " is-active" : "")}>
+            Apps
+          </NavLink>
         </nav>
       </div>
 

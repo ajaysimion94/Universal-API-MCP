@@ -112,3 +112,84 @@ CREATE TABLE IF NOT EXISTS api_tools (
 
 CREATE INDEX IF NOT EXISTS idx_api_tools_connection_id ON api_tools(connection_id);
 CREATE INDEX IF NOT EXISTS idx_api_tools_name ON api_tools(name);
+
+-- User-defined groups of whole apps (connections) and/or individual endpoints (api_tools).
+-- The slug doubles as the @ handle in the search grammar (@group #action); it stays stable
+-- across renames. No DB-level FKs — membership cleanup happens in the services, consistent
+-- with the rest of the schema.
+CREATE TABLE IF NOT EXISTS tool_groups (
+    id          TEXT PRIMARY KEY,
+    slug        TEXT NOT NULL UNIQUE,
+    name        TEXT NOT NULL,
+    description TEXT,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS tool_group_members (
+    group_id    TEXT NOT NULL,
+    member_type TEXT NOT NULL,           -- 'APP' | 'TOOL'
+    member_id   TEXT NOT NULL,           -- APP → connections.id, TOOL → api_tools.id
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    PRIMARY KEY (group_id, member_type, member_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tool_group_members_member ON tool_group_members(member_type, member_id);
+
+-- ─── Phase 3: Enterprise Actions (§7, §9, §10) ───────────────────────────────
+
+-- Workflow execution state machine (§7.2). Each row tracks one tool invocation
+-- through EXTRACT → VALIDATE → GUARD → PREVIEW → (confirm) → EXECUTE → CONFIRM.
+-- Confirmation tokens are single-use and expiring; idempotency keys prevent
+-- duplicate creates. State persists across backend restarts.
+CREATE TABLE IF NOT EXISTS workflow_executions (
+    id                  TEXT PRIMARY KEY,
+    tool_id             TEXT NOT NULL,
+    tool_name           TEXT NOT NULL,
+    state               TEXT NOT NULL DEFAULT 'EXTRACTING',
+    params              TEXT NOT NULL DEFAULT '{}',
+    resolved_params     TEXT,
+    confirmation_token  TEXT UNIQUE,
+    token_expires_at    TEXT,
+    idempotency_key     TEXT UNIQUE,
+    actor               TEXT,
+    preview_payload     TEXT,
+    result              TEXT,
+    error               TEXT,
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_state ON workflow_executions(state);
+CREATE INDEX IF NOT EXISTS idx_workflow_token ON workflow_executions(confirmation_token);
+
+-- Audit log (§9). Every tool invocation, approval, rejection, execution, and
+-- failure is recorded. Queryable by actor, tool, date range, event type.
+-- Actor is client-declared until Phase 6 binds verified JWT identity.
+CREATE TABLE IF NOT EXISTS audit_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_type      TEXT NOT NULL,
+    tool_id         TEXT,
+    tool_name       TEXT,
+    workflow_id     TEXT,
+    actor           TEXT,
+    arguments       TEXT,
+    result_summary  TEXT,
+    error           TEXT,
+    ip_address      TEXT,
+    user_agent      TEXT,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_tool ON audit_log(tool_name);
+CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(actor);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_log_event_type ON audit_log(event_type);
+
+-- Extraction template stubs: regex/JSONPath patterns per tool, auto-generated
+-- from the params schema and admin-editable (§7.1).
+ALTER TABLE api_tools ADD COLUMN extraction_template TEXT;
+
+-- 'IMPORTED' (spec-derived, refreshed/pruned on re-import) vs 'MANUAL' (built from scratch in
+-- the request builder — re-import must never touch these). See ApiToolService.importTools().
+ALTER TABLE api_tools ADD COLUMN origin TEXT NOT NULL DEFAULT 'IMPORTED';

@@ -1,91 +1,238 @@
 # AGENTS.md
 
-High-signal notes for OpenCode sessions. Read this before working in this repo.
+High-signal notes for AI coding sessions in this repo. Read this before modifying code.
 
 ## Source of truth
 
-- `docs/product-idea.md` — architecture blueprint (**what** and **why**). All `§` references across the repo point into it.
-- `docs/plan.md` — execution tracker (**in what order**, E2E checklists per phase). Check which phase is current before adding features; deliver per the phase's build + E2E checklist.
-- `.impeccable.md` — **read this before any UI/design work**. It holds the design context (users, brand, aesthetic direction, anti-references) that the `impeccable` skill requires. Do not start frontend work without it.
-- `DECISIONS.md` — append-only log of significant choices made (stack, scope, sequencing, conventions). **Read it for context, and add an entry whenever you make a non-trivial decision** — don't let decisions live only in chat.
-- `DEVELOPMENT.md` — dev workflow, project layout, testing, build internals. `DEPLOYMENT.md` — setup, build, run, config, API reference. `README.md` is the navigation hub.
+- `docs/product-idea.md` — architecture blueprint (**what** and **why**). All `§` references in code/comments point into it.
+- `docs/plan.md` — execution tracker (**in what order**, E2E checklists per phase). Check the current phase before adding features.
+- `.impeccable.md` — **read this before any UI/design work**. It holds the design context (users, brand, aesthetic direction, anti-references).
+- `DECISIONS.md` — append-only log of significant architecture/scope/sequencing choices. Read it for context; add an entry when you make a non-trivial decision.
+- `DEVELOPMENT.md` — dev workflow, layout, testing, build internals.
+- `DEPLOYMENT.md` — setup, build, run, config, API reference.
+- `README.md` — navigation hub.
 
-## Layout
+## Project overview
 
-- `mcp-server/` — the only buildable module. Java 21 + Spring Boot 3.3.4 backend, React 18 + TypeScript + Vite SPA in `mcp-server/webui/`.
-- `docs/` — pre-implementation docs; the repo was docs-first and `mcp-server/` landed in Phase 1.
-- No monorepo tooling; it's a single Maven module that also builds the frontend.
+An enterprise MCP (Model Context Protocol) server with a first-party React/TypeScript Web UI.
+It exposes:
 
-## Commands (frequently used)
+- A **files & folders manager** (SharePoint-like upload + folder tree).
+- A **RAG search** pipeline over ingested documents (hybrid sqlite-vec + FTS5, RRF fusion, reranker seam).
+- **Connectors** for Confluence, Jira, and zero-code API onboarding via Postman/OpenAPI import.
+- Imported API tools that can be invoked from the Web UI `#`/`@` grammar or over MCP.
+- A real **MCP Streamable HTTP endpoint** at `/mcp` for AI clients.
+
+The project is currently in **Phase 1** per `README.md`, with Phase 2 knowledge/search features partially complete (see `docs/plan.md` checkboxes for exact state). Authentication and ACL enforcement are deliberately deferred to **Phase 6**; until then the server binds only to `127.0.0.1` and must not be exposed publicly.
+
+## Technology stack
+
+- **Backend:** Java 21, Spring Boot 3.3.4, Maven 3.9+
+- **Frontend:** React 18, TypeScript 5.6, Vite 5.4, Node 20+ (built on Node 24 / npm 11)
+- **Database:** embedded SQLite via `org.xerial:sqlite-jdbc:3.46.1.3`, WAL mode, `SingleConnectionDataSource`
+- **Vector search:** sqlite-vec 0.1.9 (loadable extension)
+- **Lexical search:** SQLite FTS5 (built in)
+- **Embeddings:** nomic-embed-text-v1.5 (768-dim) via ONNX Runtime 1.22 + DJL tokenizers 0.30
+- **Document text extraction:** Apache Tika 2.9.4 (`tika-core` + `tika-parsers-standard-package`)
+- **MCP protocol:** Java MCP SDK 2.0.0 (`mcp-core` + `mcp-json-jackson2`)
+- **HTTP tests:** WireMock standalone 3.9.1
+- **Testing:** JUnit 5, Spring Boot Test, AssertJ
+
+No external database, Docker, or Kubernetes is required for the current phase.
+
+## Build and run commands
+
+From `mcp-server/`:
 
 ```sh
-# build + run
-cd mcp-server && mvn package && java -jar target/mcp-server.jar
-# dev mode (two terminals, open http://localhost:5173)
-cd mcp-server && mvn spring-boot:run -Dskip.frontend=true
-cd mcp-server/webui && npm run dev
-# tests + fast loops
-cd mcp-server && mvn test
-cd mcp-server && mvn test -Dtest=FileServiceTests#canUploadFileAndItAppearsAsAChild   # single test
-cd mcp-server && mvn package -Dskip.frontend=true      # JAR only, skip SPA rebuild
-cd mcp-server/webui && npm run typecheck                # tsc --noEmit (script is "typecheck", not "tsc")
+# Full build: backend + SPA + bundled model/native libs/searxng source (~390MB JAR)
+mvn package
+
+# Run the single runnable JAR (serves SPA + API on http://127.0.0.1:8080)
+java -jar target/mcp-server.jar
+
+# Fast backend-only loop (skip frontend build; UI 404s unless static/ was built once)
+mvn package -Dskip.frontend=true
+mvn spring-boot:run -Dskip.frontend=true
+
+# Skip downloading/bundling model + sqlite-vec + searxng source (uses already-extracted files)
+mvn package -Dskip.bundle=true
+
+# Compile check only
+mvn -Dskip.frontend=true -q compile
+
+# Backend tests
+mvn test
+mvn test -Dtest=FileServiceTests#canUploadFileAndItAppearsAsAChild
 ```
 
-Full command reference + project layout: [`DEVELOPMENT.md`](DEVELOPMENT.md). Setup + API + config: [`DEPLOYMENT.md`](DEPLOYMENT.md).
+From `mcp-server/webui/`:
 
-## Dev mode wiring (non-obvious)
+```sh
+npm install
+npm run dev        # Vite dev server on http://localhost:5173, proxies /api → 127.0.0.1:8080
+npm run build      # tsc -b && vite build → dist/
+npm run typecheck  # tsc -b --noEmit
+npm run preview    # preview the production build
+```
 
-Two-process dev mode is the norm, not a single process:
+Dev mode uses **two terminals:**
 
-- Terminal 1: `mvn spring-boot:run -Dskip.frontend=true` → backend on `127.0.0.1:8080`
-- Terminal 2: `cd webui && npm run dev` → Vite on `:5173`
-- Open **http://localhost:5173** (not 8080). `vite.config.ts` proxies `/api/*` → `127.0.0.1:8080`. If the UI hangs on "connecting…", the backend isn't up on 8080.
+1. `cd mcp-server && mvn spring-boot:run -Dskip.frontend=true`
+2. `cd mcp-server/webui && npm run dev`
 
-## How the SPA ships inside the JAR
+Open **http://localhost:5173** (not 8080) in dev mode.
 
-`mvn package` runs `frontend-maven-plugin` (installs Node/npm into `target/`, runs `npm ci` + `npm run build` in `webui/`), then `maven-resources-plugin` copies `webui/dist/` into `src/main/resources/static/` so it lands at `BOOT-INF/classes/static/` in the JAR. Spring Boot serves `index.html` as the welcome page; `WebMvcConfig` forwards unknown non-API paths to `index.html` for client-side routing. **If you skip the frontend build, there is no `static/index.html` and the UI 404s** — either run `mvn package` once, or use the Vite dev server.
+## Project layout
 
-## Hard constraints from the plan (don't violate)
+```
+├── docs/                         # Pre-implementation docs (product-idea.md, plan.md, etc.)
+├── mcp-server/                   # Sole buildable Maven module
+│   ├── pom.xml
+│   ├── data/                     # SQLite DB (gitignored)
+│   ├── models/                   # ONNX model + tokenizer extracted at runtime (gitignored)
+│   ├── lib/                      # sqlite-vec extension extracted at runtime (gitignored)
+│   ├── src/main/java/com/mcpserver/
+│   │   ├── McpServerApplication.java
+│   │   ├── config/               # DatasourceConfig, WebMvcConfig
+│   │   ├── controllers/          # REST controllers (FileController, SearchController)
+│   │   ├── services/             # Business logic (FileService, IngestionService, SearchService)
+│   │   ├── repositories/         # InMemoryFileRepository, ChunkRepository
+│   │   ├── models/               # FileNode, Chunk, BulkUploadResult
+│   │   ├── plugins/              # Plugin system + SqliteVecStore/Nomic/SearXng plugins
+│   │   ├── rag/                  # RAG pipeline seams
+│   │   │   ├── chunking/         # Chunker, StructureAwareChunker
+│   │   │   ├── embedding/        # EmbeddingClient, OnnxEmbeddingClient
+│   │   │   ├── retrieval/        # SearchPipeline, RrfFusion
+│   │   │   ├── reranker/         # Reranker, PassThroughReranker
+│   │   │   └── web/              # WebFetcher, SearXngWebFetcher
+│   │   ├── connectors/           # Confluence/Jira/API_COLLECTION connectors, event queue
+│   │   ├── tools/                # Postman/OpenAPI parsers, ApiToolService/Executor/Controller
+│   │   └── mcp/                  # McpServerConfig, McpToolBridge (only SDK touch points)
+│   ├── src/main/resources/
+│   │   ├── application.yml
+│   │   ├── schema.sql            # chunks, connections, ingestion_events, api_tools
+│   │   └── static/               # SPA build output (populated by Maven)
+│   ├── src/test/java/com/mcpserver/
+│   └── webui/                    # React + TypeScript SPA
+│       ├── package.json
+│       ├── vite.config.ts
+│       ├── tsconfig.json
+│       └── src/
+│           ├── main.tsx          # imports styles.css + components.css
+│           ├── api.ts            # all fetch logic
+│           ├── icons.tsx         # inline SVG icons
+│           ├── App.tsx           # routes
+│           ├── styles.css        # design tokens
+│           ├── components.css    # component styles
+│           └── components/       # SearchPage, FilesPage, PluginsPage, ConnectionsPage, etc.
+```
 
-- **`server.address=127.0.0.1` is a deliberate guardrail**, not a bug. No auth until Phase 6; the server runs on trusted internal networks only. Do not change the bind or add public exposure without implementing Phase 6.
-- **No Docker / Kubernetes / virtualization.** Single runnable JAR, in-process ML inference, natively installed backing services. Revisited only in Phase 5+ if the constraint lifts.
-- **Open-source-first.** Proprietary services (Microsoft Graph/Entra for Teams) are deferred to Phase 4.
-- **ACL tags are captured on every chunk from Phase 2; enforcement lands in Phase 6.** Never defer capture. When adding an intake path, tag chunks before first merge.
-- **Auth & access control land last (Phase 6).** Don't add Spring Security / OAuth2 / JWT / Keycloak before that phase.
-- **E2E or it didn't ship.** A phase exits only when its E2E test checklist in `docs/plan.md` passes end to end.
+## Main modules and responsibilities
+
+- **`config/`** — Spring configuration. `DatasourceConfig` creates an embedded SQLite `SingleConnectionDataSource` with extensions enabled and WAL mode; `WebMvcConfig` forwards SPA routes and allows the Vite dev origin.
+- **`controllers/`** — REST adapters only; no business logic. `FileController` (`/api/files`), `SearchController` (`/api/search`).
+- **`services/`** — Reusable business logic: `FileService`, `IngestionService`, `SearchService`, `IngestionProgressTracker`.
+- **`repositories/`** — `InMemoryFileRepository` (file tree, resets on restart), `ChunkRepository` (SQLite JDBC for chunks/FTS/vector).
+- **`models/`** — POJOs/DTOs: `FileNode`, `Chunk`, `BulkUploadResult`.
+- **`plugins/`** — `Plugin` interface, `PluginRegistry`, `PluginStateStore` (JSON file), `PluginController`. Plugins: `SqliteVecStorePlugin`, `NomicEmbeddingPlugin`, `SearXngPlugin`.
+- **`rag/`** — Swappable RAG seams: chunking, embedding, retrieval, reranker, web fetcher.
+- **`connectors/`** — `Connection` model, `ConnectionService`, `ConnectionController` (`/api/connections`), `ConfluenceConnector`, `JiraConnector`, `ApiCollectionConnector`, durable event queue (`IngestionEventRepository`, `EventQueueWorker`), `CredentialCipher`.
+- **`tools/`** — Postman/OpenAPI parsers (`PostmanCollectionParser`, `OpenApiParser`, `SpecFetcher`), `ApiToolService`, `ApiToolExecutor`, `ApiToolController` (`/api/tools`), `ToolQueryParser` for the `#`/`@` grammar, custom tool groups (`ToolGroup`, `ToolGroupRepository`, `ToolGroupService`, `ToolGroupController` at `/api/groups`).
+- **`mcp/`** — The only code touching the MCP SDK: `McpServerConfig` bootstraps a Streamable HTTP servlet at `/mcp`; `McpToolBridge` registers/unregisters tools at runtime.
 
 ## Backend conventions
 
-- Package root: `com.mcpserver`. Module subpackages per `docs/product-idea.md` §4: `config`, `controllers`, `services`, `repositories`, `models`, plus `rag/{chunking,embedding,retrieval,reranker}` and `plugins/`.
-- **Separate business logic from MCP protocol handling** — `services/`/`repositories/` reusable outside MCP; `mcp/` only adapts to the protocol; the Web UI is a REST channel over the same services, never a second implementation.
-- The chunk store uses **embedded SQLite + sqlite-vec + FTS5** (via `org.xerial:sqlite-jdbc`, bundled native SQLite per-platform in the JAR). The sqlite-vec extension is downloaded on demand by the `SqliteVecStorePlugin` and loaded via `SELECT load_extension(...)`. FTS5 is built into SQLite. The base `chunks` table + `chunks_fts` (FTS5) are created by `schema.sql` on startup; the `chunks_vec` (vec0) virtual table is created by the plugin after extension load. `DatasourceConfig` provides a `SQLiteDataSource` with `enableLoadExtension=true` and WAL mode.
-- The RAG pipeline lives in `rag/{chunking,embedding,retrieval,reranker,web}` with swappable seams (`EmbeddingClient`, `SearchPipeline`, `Reranker`, `WebFetcher`). The default embedding impl runs **nomic-embed-text-v1.5 ONNX in-process** via ONNX Runtime + DJL tokenizer — the model files live in `mcp-server/models/` (gitignored, ~131MB; downloaded via the Plugins page). Web augmentation uses a local **SearXNG** instance (native Python process on `127.0.0.1:8888`) — also managed via the Plugins page.
-- **Plugins system** (`plugins/` package): `Plugin` interface, `PluginRegistry`, `PluginStateStore` (JSON file), `PluginController` (`/api/plugins`). Three plugins: `SqliteVecStorePlugin` (vector store), `NomicEmbeddingPlugin` (embedding model), `SearXngPlugin` (web search). The app boots in degraded mode when plugins aren't installed — file management works, search/ingestion return a "not ready" state.
-- File nodes are still **in-memory** (`InMemoryFileRepository`) — resets on restart. Chunks persist in SQLite. On restart, orphaned chunks from deleted/re-uploaded files may remain because the file IDs reset; delete the `data/mcpserver.db` file if needed.
-- Errors: `IllegalArgumentException` → 400, `IllegalStateException` → 409, handled in controller `@ExceptionHandler` methods. Follow that pattern for new controllers.
+- **Separate business logic from protocol handling.** `services/` and `repositories/` are reusable outside MCP; `controllers/` and `mcp/` only adapt them to REST/MCP.
+- **Error status mapping:** `IllegalArgumentException` → 400, `IllegalStateException` → 409. Replicate this pattern in new controllers.
+- **Tool naming:** imported tools are `{app-name}_{request-name}` in lowercase snake case; this id doubles as the Web UI `#` keyword.
+- **ACL tags are captured on every chunk from Phase 2 onward.** Never defer capture when adding an intake path.
+- **Direct JDBC for chunk store.** Use `JdbcTemplate` and explicit SQL; no JPA for vector/FTS tables.
+- **SQLite connection semantics.** `SingleConnectionDataSource` keeps sqlite-vec loaded across the app lifecycle; do not switch to a pooling datasource for SQLite without handling extension-per-connection behavior.
 
 ## Frontend conventions
 
-- **TypeScript is strict** (`noUnusedLocals`, `noUnusedParameters`, `noFallthroughCasesInSwitch`). Unused imports/vars **fail the build**. The `tsc -b` in `npm run build` is a real gate.
-- CSS is split into two files imported in `src/main.tsx`: `styles.css` (design tokens — OKLCH, dark theme, amber accent) and `components.css` (component styles). Use the tokens; don't hardcode colors.
-- Design direction is **refined utilitarian, dark, amber accent, anti-AI-slop** (no side-stripe borders, no gradient text, no glassmorphism, no glow). See `.impeccable.md`.
-- Fonts: Hanken Grotesk (UI sans) + JetBrains Mono (paths, IDs, metadata). Already loaded in `index.html`.
-- Icons live in `src/icons.tsx` — inline SVG, 16px default, `currentColor`. Add new ones there rather than pulling an icon library.
-- API calls go through `src/api.ts` — keep fetch logic there, not in components.
+- **TypeScript is strict.** `noUnusedLocals`, `noUnusedParameters`, `noFallthroughCasesInSwitch`, and `noUncheckedSideEffectImports` are enabled. Unused imports/vars **fail the build**.
+- **API calls live in `src/api.ts`.** Components import functions; do not call `fetch` directly from components.
+- **Icons live in `src/icons.tsx`.** Inline SVG, 16px default, `currentColor`. Do not add an icon library.
+- **CSS is split:** `styles.css` holds OKLCH design tokens + base reset; `components.css` holds component styles. Use the tokens; do not hardcode colors.
+- **Design direction:** refined utilitarian, dark theme, amber accent. Fonts: Hanken Grotesk (UI) and JetBrains Mono (paths/IDs/metadata). See `.impeccable.md` for the full anti-reference list (no gradient text, glassmorphism, glow, side-stripe borders).
+- **Routes (`App.tsx`):** `/` search, `/files` files & folders, `/plugins` plugins, `/connections` connectors console, `/apps` app directory + custom groups. Deep routes are forwarded to `index.html` by `WebMvcConfig`.
 
 ## Testing
 
-- Backend: JUnit 5 + Spring Boot Test + AssertJ. `@SpringBootTest` in `FileServiceTests` boots the full context (including ONNX model load + SQLite) — tests take ~7s. Run a single test: `mvn test -Dtest=FileServiceTests#canUploadFileAndItAppearsAsAChild`.
-- **Tests write to the SQLite DB** (`data/mcpserver.db`). Delete the file for a clean run: `rm -f mcp-server/data/mcpserver.db`.
-- Frontend: no test runner configured yet. `npm run typecheck` is the only gate.
-- Phase 1 adds a golden-set eval harness (`eval-harness/golden-set/`) + CI regression gate — not yet present.
-
-## Setup prerequisites
-
-Java 21+, Maven 3.9+, Node 20+ (built on 24), npm 10+. **No external database or services required** — the app uses embedded SQLite (bundled in the JAR via `org.xerial:sqlite-jdbc`) and downloads the sqlite-vec extension + nomic embedding model on demand via the Plugins page. SearXNG (optional, for web search) is also managed from the Plugins page.
-
 ```sh
-# build + run
-cd mcp-server && mvn package && java -jar target/mcp-server.jar
-# open http://127.0.0.1:8080 → go to /plugins → install what you need
+cd mcp-server && mvn test
+cd mcp-server && mvn test -Dtest=FileServiceTests#canUploadFileAndItAppearsAsAChild
+cd mcp-server/webui && npm run typecheck
 ```
+
+- Backend: JUnit 5 + Spring Boot Test + AssertJ. `@SpringBootTest` boots the full context (ONNX + SQLite) and takes ~7s per test class.
+- Tests write to `mcp-server/data/mcpserver.db`. Delete the file for a clean run: `rm -f mcp-server/data/mcpserver.db`.
+- Frontend: no test runner is configured yet; `npm run typecheck` is the only gate.
+
+Key backend test classes:
+
+- `FileServiceTests`
+- `ConfluenceConnectorTests`, `JiraConnectorTests`, `ApiCollectionConnectorTests`
+- `IngestionEventRepositoryTests`, `AtlassianAuthTests`
+- `PostmanCollectionParserTests`, `OpenApiParserTests`, `SpecFetcherTests`
+- `ApiToolExecutorTests`, `ToolQueryParserTests`
+
+## Runtime architecture and deployment
+
+- **Single runnable JAR.** `mvn package` bundles the React SPA into `BOOT-INF/classes/static/` and downloads/extracts the ONNX model, per-platform sqlite-vec libs, and SearXNG source snapshot into the JAR (sha256-verified, cached under `~/.m2/.cache/mcp-server-bundle`).
+- **Embedded SQLite** at `./data/mcpserver.db`; no external database is required.
+- **Plugins page (`/plugins`)** installs/enables local infrastructure: vector store, embedding model, and optional SearXNG. The app boots in degraded mode (file management works, search/ingestion report "not ready") when plugins are missing.
+- **Default bind:** `server.address=127.0.0.1`, `server.port=8080` — trusted internal network only until Phase 6.
+- **SearXNG** is optional; it runs as a native Python process on `127.0.0.1:8888` managed from the Plugins page. Web-augmented search degrades gracefully if it is not running.
+- **Configuration:** see `mcp-server/src/main/resources/application.yml`. Notable keys:
+  - `spring.datasource.url` — SQLite path
+  - `rag.embedding.model-dir` — ONNX model location
+  - `rag.search.*` — top-k, RRF constant
+  - `rag.web.searxng-url` — SearXNG endpoint
+  - `connectors.poll-interval-ms` — connector delta-poll cadence
+  - `connectors.webhook-base-url` — public base URL for Confluence/Jira webhooks; blank by default because the server is `127.0.0.1`
+
+## REST / MCP surface summary
+
+- **`/api/files`** — files & folders (root, children, path, create folder, upload, upload-folder, delete, ingestion progress)
+- **`/api/search?q=...&topK=20&web=false`** — RAG search or `#`/`@` tool invocation
+- **`/api/plugins`** — list/install/enable/disable/start/stop plugins, poll install jobs
+- **`/api/connections`** — Confluence/Jira/API_COLLECTION connectors (CRUD, backfill, enable/disable, webhook intake at `/{id}/webhook`)
+- **`/api/tools`** — imported API tools (list, enable/disable, knowledge-source flag, invoke)
+- **`/api/groups`** — custom tool groups (CRUD, member management, batch enable/disable); group slugs work in the `@` position of the search grammar
+- **`/mcp`** — MCP Streamable HTTP endpoint (Java MCP SDK)
+
+See `DEPLOYMENT.md` for full endpoint documentation.
+
+## Security considerations and hard constraints
+
+Do not violate these without an explicit project decision recorded in `DECISIONS.md`:
+
+- **`server.address=127.0.0.1` is a deliberate guardrail.** No auth until Phase 6; the server runs on trusted internal networks only. Do not change the bind or expose it publicly without implementing Phase 6.
+- **No Docker / Kubernetes / virtualization.** Single runnable JAR, in-process ML inference, natively installed backing services. Revisit only in Phase 5+ if the constraint lifts.
+- **Open-source-first.** Proprietary services (Microsoft Graph/Entra for Teams) are deferred to Phase 4.
+- **ACL tags are captured on every chunk from Phase 2; enforcement lands in Phase 6.** Never defer capture. When adding an intake path, tag chunks before first merge.
+- **Auth & access control land last (Phase 6).** Do not add Spring Security / OAuth2 / JWT / Keycloak before that phase.
+- **E2E or it didn't ship.** A phase exits only when its E2E test checklist in `docs/plan.md` passes end to end.
+
+## Common gotchas
+
+- If the dev UI hangs on "connecting…", the backend is not running on `127.0.0.1:8080`.
+- A 404 on a deep UI route means the SPA was not bundled (you likely ran with `-Dskip.frontend=true` and `static/index.html` does not exist). Run `mvn package` once or use the Vite dev server.
+- TypeScript build failures on unused imports are intentional — remove the symbol; do not disable the rule.
+- Tests leave chunks in the SQLite DB; delete `mcp-server/data/mcpserver.db` for a clean run.
+- Orphaned chunks may remain across restarts because `InMemoryFileRepository` resets while SQLite persists; delete the DB if needed.
+
+## Glossary
+
+- **MCP** — Model Context Protocol; the AI-client-facing protocol surface.
+- **RAG** — Retrieval-Augmented Generation pipeline (this server returns cited context, not generated answers).
+- **RRF** — Reciprocal Rank Fusion, used to merge vector and lexical search results.
+- **sqlite-vec** — SQLite loadable extension providing vector search (`vec0`).
+- **FTS5** — SQLite built-in full-text search used for the lexical leg.
+- **SearXNG** — Self-hosted meta-search engine used for the optional web-augmentation toggle.
+- **ACL tags** — String tags captured on every chunk; used for permission filtering in Phase 6.
+- **`#keyword` grammar** — Deterministic tool invocation syntax in the Web UI search bar (e.g. `#app_create_item`).
+- **`API_COLLECTION`** — Connector type for zero-code Postman/OpenAPI import.

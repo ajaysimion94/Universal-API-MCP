@@ -429,6 +429,8 @@ export function SearchPage() {
             tool={response.toolInfo}
             preview={response.preview}
             args={response.args ?? {}}
+            confirmationToken={response.confirmationToken}
+            tokenExpiresAt={response.tokenExpiresAt}
             onCancel={() => setResponse(null)}
           />
         )}

@@ -4,10 +4,13 @@ import {
   ToolExecution,
   ToolSummary,
   ToolViolation,
+  WorkflowPreview,
   invokeTool,
+  isWorkflowPreview,
 } from "../api";
 import { HashIcon, PlayIcon } from "../icons";
 import { Toggle } from "./Toggle";
+import { ToolConfirmPanel } from "./ToolConfirmPanel";
 import { ToolResultPanel } from "./ToolResultPanel";
 
 /**
@@ -47,6 +50,7 @@ export function ToolFormPanel({
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(parseError ?? null);
   const [result, setResult] = useState<ToolExecution | null>(null);
+  const [preview, setPreview] = useState<WorkflowPreview | null>(null);
 
   const violationFor = (name: string) =>
     violations?.find((v) => v.param === name)?.message;
@@ -62,13 +66,30 @@ export function ToolFormPanel({
         args[name] = coerce(raw, properties[name]);
       }
       const res = await invokeTool(tool.id, args);
-      setResult(res);
+      if (isWorkflowPreview(res)) {
+        setPreview(res);
+      } else {
+        setResult(res);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Tool execution failed");
     } finally {
       setRunning(false);
     }
   };
+
+  if (preview) {
+    return (
+      <ToolConfirmPanel
+        tool={tool}
+        preview={preview.preview}
+        args={preview.args}
+        confirmationToken={preview.confirmationToken}
+        tokenExpiresAt={preview.tokenExpiresAt}
+        onCancel={() => setPreview(null)}
+      />
+    );
+  }
 
   if (result) {
     return <ToolResultPanel toolName={tool.name} result={result} />;

@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.stereotype.Component;
 
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -48,6 +49,51 @@ public class PostmanCollectionParser implements SpecParser {
         List<ApiToolDefinition> out = new ArrayList<>();
         walk(root.path("item"), "", out);
         return out;
+    }
+
+    /**
+     * Postman collections have no {@code servers} block. Prefer a collection-level
+     * {@code variable} named baseUrl/base_url/host/url/server (the {@code {{var}}} convention
+     * every request in the collection would reference); otherwise fall back to the origin of the
+     * first request that hardcodes an absolute URL — common for collections exported against a
+     * single fixed host instead of a templated one.
+     */
+    @Override
+    public String extractBaseUrl(JsonNode root) {
+        for (JsonNode variable : root.path("variable")) {
+            String key = variable.path("key").asText("");
+            String value = variable.path("value").asText("");
+            if (!value.isBlank() && BASE_URL_VAR.matcher("{{" + key + "}}").find()
+                    && value.matches("^https?://.*")) {
+                return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
+            }
+        }
+        return firstAbsoluteOrigin(root.path("item"));
+    }
+
+    private String firstAbsoluteOrigin(JsonNode items) {
+        if (!items.isArray()) return null;
+        for (JsonNode item : items) {
+            if (item.has("item")) {
+                String found = firstAbsoluteOrigin(item.path("item"));
+                if (found != null) return found;
+            } else if (item.has("request")) {
+                JsonNode url = item.path("request").path("url");
+                String raw = url.isTextual() ? url.asText() : url.path("raw").asText("");
+                if (raw.matches("^https?://.*")) {
+                    try {
+                        URI uri = URI.create(raw);
+                        if (uri.getHost() != null) {
+                            return uri.getScheme() + "://" + uri.getHost()
+                                    + (uri.getPort() > 0 ? ":" + uri.getPort() : "");
+                        }
+                    } catch (IllegalArgumentException ignored) {
+                        // malformed URL in this request — keep looking
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     private void walk(JsonNode items, String folderPath, List<ApiToolDefinition> out) {

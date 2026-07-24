@@ -2,7 +2,10 @@ package com.mcpserver.tools;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.mcpserver.connectors.Connection;
+import com.mcpserver.workflow.ParameterExtractor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
@@ -25,12 +28,17 @@ public class ApiToolService {
     private static final Logger log = LoggerFactory.getLogger(ApiToolService.class);
 
     private final ApiToolRepository repository;
+    private final ToolGroupRepository toolGroupRepository;
     private final ApplicationEventPublisher eventPublisher;
+    private final ParameterExtractor parameterExtractor;
     private final ObjectMapper mapper = new ObjectMapper();
 
-    public ApiToolService(ApiToolRepository repository, ApplicationEventPublisher eventPublisher) {
+    public ApiToolService(ApiToolRepository repository, ToolGroupRepository toolGroupRepository,
+                          ApplicationEventPublisher eventPublisher, ParameterExtractor parameterExtractor) {
         this.repository = repository;
+        this.toolGroupRepository = toolGroupRepository;
         this.eventPublisher = eventPublisher;
+        this.parameterExtractor = parameterExtractor;
     }
 
     /**
@@ -40,9 +48,11 @@ public class ApiToolService {
      */
     public int importTools(Connection connection, List<ApiToolDefinition> definitions) {
         String appSlug = Slugifier.slug(connection.name());
+        // Manual (from-scratch) tools are never spec-derived — re-import must never refresh or
+        // delete them, so they're excluded from the reconciliation set entirely.
         Map<String, ApiTool> existingByName = new HashMap<>();
         for (ApiTool tool : repository.findByConnectionId(connection.id())) {
-            existingByName.put(tool.name(), tool);
+            if (!tool.isManual()) existingByName.put(tool.name(), tool);
         }
 
         int imported = 0;
@@ -56,6 +66,7 @@ public class ApiToolService {
         }
         for (ApiTool vanished : existingByName.values()) {
             repository.deleteById(vanished.id());
+            toolGroupRepository.deleteMembersForTool(vanished.id());
         }
         log.info("Imported {} tools for connection {} ({} removed)",
                 imported, connection.id(), existingByName.size());
@@ -191,6 +202,9 @@ public class ApiToolService {
     }
 
     public void deleteByConnectionId(String connectionId) {
+        for (ApiTool tool : repository.findByConnectionId(connectionId)) {
+            toolGroupRepository.deleteMembersForTool(tool.id());
+        }
         repository.deleteByConnectionId(connectionId);
         eventPublisher.publishEvent(new ToolsChangedEvent(connectionId));
     }
@@ -199,77 +213,147 @@ public class ApiToolService {
     }
 
     /**
-     * Turns the free text after a {@code #keyword} into an argument map: an inline JSON object is
-     * the full payload, inline XML flattens one level (child element → arg), anything else lands
-     * in the tool's primary parameter. {@code missingRequired} lists what the inline form still
-     * has to collect (required, no arg, no schema default).
+     * Turns the free text after a {@code #keyword} into an argument map: delegates to
+     * ParameterExtractor to parse using templates or standard JSON/XML fallbacks.
      */
     public BuiltArgs buildArgs(ApiTool tool, String remainder) {
-        Map<String, Object> args = new HashMap<>();
-        String text = remainder == null ? "" : remainder.trim();
-
-        if (text.startsWith("{")) {
-            try {
-                JsonNode node = mapper.readTree(text);
-                if (!node.isObject()) {
-                    return new BuiltArgs(args, List.of(), "Inline JSON must be an object of arguments");
-                }
-                node.properties().forEach(e -> args.put(e.getKey(),
-                        mapper.convertValue(e.getValue(), Object.class)));
-            } catch (Exception e) {
-                return new BuiltArgs(args, List.of(), "Inline JSON didn't parse: " + e.getMessage());
-            }
-        } else if (text.startsWith("<")) {
-            try {
-                var factory = javax.xml.parsers.DocumentBuilderFactory.newInstance();
-                factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-                var doc = factory.newDocumentBuilder()
-                        .parse(new java.io.ByteArrayInputStream(text.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-                var children = doc.getDocumentElement().getChildNodes();
-                for (int i = 0; i < children.getLength(); i++) {
-                    var child = children.item(i);
-                    if (child.getNodeType() == org.w3c.dom.Node.ELEMENT_NODE) {
-                        args.put(child.getNodeName(), child.getTextContent().trim());
-                    }
-                }
-            } catch (Exception e) {
-                return new BuiltArgs(args, List.of(), "Inline XML didn't parse: " + e.getMessage());
-            }
-        } else if (!text.isBlank()) {
-            if (tool.primaryParam() != null) {
-                args.put(tool.primaryParam(), stripQuotes(text));
-            } else {
-                return new BuiltArgs(args, List.of(),
-                        "Tool " + tool.name() + " has no primary argument — pass inline JSON like {\"param\": \"value\"}");
-            }
-        }
-        return new BuiltArgs(args, missingRequired(tool, args), null);
+        ParameterExtractor.ExtractedArgs ext = parameterExtractor.extract(tool, remainder);
+        return new BuiltArgs(ext.args(), ext.missingRequired(), ext.parseError());
     }
 
-    private List<String> missingRequired(ApiTool tool, Map<String, Object> args) {
-        List<String> missing = new ArrayList<>();
-        try {
-            JsonNode schema = mapper.readTree(tool.paramsSchema());
-            JsonNode required = schema.path("required");
-            if (!required.isArray()) return missing;
-            for (JsonNode name : required) {
-                String param = name.asText();
-                boolean hasDefault = schema.path("properties").path(param).has("default");
-                Object value = args.get(param);
-                if ((value == null || String.valueOf(value).isBlank()) && !hasDefault) {
-                    missing.add(param);
-                }
-            }
-        } catch (Exception ignored) {
-            // unparseable schema — treat as nothing missing; the executor will validate again
-        }
-        return missing;
+    // --- Manual (from-scratch) tools — the request-builder's "New request" / "Save" -----------
+
+    /** One query or header field on a manually-built request. */
+    public record ManualParam(String name, String in, boolean required, String defaultValue, String description) {
     }
 
-    private static String stripQuotes(String s) {
-        if (s.length() >= 2 && (s.startsWith("\"") && s.endsWith("\"") || s.startsWith("'") && s.endsWith("'"))) {
-            return s.substring(1, s.length() - 1);
+    public record ManualToolInput(
+            String displayName,
+            String method,
+            String path,
+            String category,
+            String description,
+            List<ManualParam> params,
+            String bodyTemplate
+    ) {
+    }
+
+    /** Creates a new manual tool under {@code connectionId}. GET is enabled immediately; writes start pending. */
+    public ApiTool createManual(String connectionId, Connection connection, ManualToolInput input) {
+        String appSlug = Slugifier.slug(connection.name());
+        ApiToolDefinition def = buildManualDefinition(input, dedupeManualSlug(connectionId, Slugifier.slug(input.displayName())));
+        ApiTool tool = ApiTool.manual(connectionId, appSlug, def);
+        repository.save(tool);
+        eventPublisher.publishEvent(new ToolsChangedEvent(connectionId));
+        return tool;
+    }
+
+    /** Updates an existing manual tool's shape. Rejects imported tools — they're spec-managed. */
+    public ApiTool updateManual(String id, ManualToolInput input) {
+        ApiTool existing = findById(id);
+        if (!existing.isManual()) {
+            throw new IllegalStateException("Tool " + existing.name()
+                    + " is managed by its connection's spec — re-import or delete the connection instead");
         }
-        return s;
+        ApiToolDefinition def = buildManualDefinition(input, existing.requestSlug());
+        ApiTool updated = existing.withManualDefinition(def);
+        repository.save(updated);
+        eventPublisher.publishEvent(new ToolsChangedEvent(existing.connectionId()));
+        return updated;
+    }
+
+    /** Deletes a manual tool. Rejects imported tools — they're spec-managed. */
+    public void deleteManual(String id) {
+        ApiTool existing = findById(id);
+        if (!existing.isManual()) {
+            throw new IllegalStateException("Tool " + existing.name()
+                    + " is managed by its connection's spec — re-import or delete the connection instead");
+        }
+        toolGroupRepository.deleteMembersForTool(id);
+        repository.deleteById(id);
+        eventPublisher.publishEvent(new ToolsChangedEvent(existing.connectionId()));
+    }
+
+    private String dedupeManualSlug(String connectionId, String baseSlug) {
+        var existingSlugs = repository.findByConnectionId(connectionId).stream()
+                .map(ApiTool::requestSlug).collect(java.util.stream.Collectors.toSet());
+        if (!existingSlugs.contains(baseSlug)) return baseSlug;
+        int n = 2;
+        while (existingSlugs.contains(baseSlug + "_" + n)) n++;
+        return baseSlug + "_" + n;
+    }
+
+    /** Builds the same {@link ApiToolDefinition} shape the Postman/OpenAPI parsers produce, by hand. */
+    private ApiToolDefinition buildManualDefinition(ManualToolInput input, String requestSlug) {
+        String method = input.method() == null ? "GET" : input.method().toUpperCase(Locale.ROOT);
+        String path = input.path() == null || input.path().isBlank() ? "/" : input.path();
+        if (!path.startsWith("/")) path = "/" + path;
+
+        ObjectNode schema = mapper.createObjectNode();
+        schema.put("type", "object");
+        ObjectNode properties = schema.putObject("properties");
+        ArrayNode required = schema.putArray("required");
+        Map<String, String> locations = new HashMap<>();
+
+        // Path params are inferred from {placeholders} in the path, same convention as imports.
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\{(\\w+)}").matcher(path);
+        while (m.find()) {
+            String name = m.group(1);
+            ObjectNode prop = properties.putObject(name);
+            prop.put("type", "string");
+            required.add(name);
+            locations.put(name, "path");
+        }
+
+        List<ManualParam> params = input.params() == null ? List.of() : input.params();
+        for (ManualParam p : params) {
+            if (p.name() == null || p.name().isBlank()) continue;
+            // A name colliding with a {path} placeholder would silently overwrite its "path"
+            // location below — the placeholder already declared this param, so skip the duplicate.
+            if (locations.containsKey(p.name())) continue;
+            String in = "header".equals(p.in()) ? "header" : "query";
+            ObjectNode prop = properties.putObject(p.name());
+            prop.put("type", "string");
+            if (p.description() != null && !p.description().isBlank()) prop.put("description", p.description());
+            if (p.defaultValue() != null && !p.defaultValue().isBlank()) prop.put("default", p.defaultValue());
+            if (p.required()) required.add(p.name());
+            locations.put(p.name(), in);
+        }
+
+        String bodyTemplate = input.bodyTemplate() == null || input.bodyTemplate().isBlank()
+                ? null : input.bodyTemplate();
+        if (bodyTemplate != null) {
+            try {
+                JsonNode parsed = mapper.readTree(bodyTemplate);
+                if (parsed.isObject()) {
+                    parsed.properties().forEach(e -> {
+                        if (!properties.has(e.getKey())) {
+                            ObjectNode prop = properties.putObject(e.getKey());
+                            prop.put("type", jsonType(e.getValue()));
+                        }
+                        locations.put(e.getKey(), "body");
+                    });
+                }
+            } catch (Exception ignored) {
+                // not JSON — sent as-is via the body template, no body fields exposed as params
+            }
+        }
+
+        String displayName = input.displayName() == null || input.displayName().isBlank()
+                ? method + " " + path : input.displayName();
+        String category = input.category() == null || input.category().isBlank() ? "Manual" : input.category();
+
+        return new ApiToolDefinition(displayName, requestSlug, input.description(), category, method, path,
+                schema, locations, Map.of(), bodyTemplate, null);
+    }
+
+    private static String jsonType(JsonNode node) {
+        if (node.isTextual()) return "string";
+        if (node.isBoolean()) return "boolean";
+        if (node.isIntegralNumber()) return "integer";
+        if (node.isNumber()) return "number";
+        if (node.isArray()) return "array";
+        if (node.isObject()) return "object";
+        return "string";
     }
 }

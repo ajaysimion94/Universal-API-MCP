@@ -4,6 +4,7 @@
 interface IconProps {
   size?: number;
   className?: string;
+  style?: React.CSSProperties;
 }
 
 const base = (size: number): React.SVGProps<SVGSVGElement> => ({
@@ -211,6 +212,49 @@ export function CodeIcon({ size = 16, className }: IconProps) {
     <svg {...base(size)} className={className}>
       <path d="M16 18l6-6-6-6" />
       <path d="M8 6l-6 6 6 6" />
+    </svg>
+  );
+}
+
+export function GroupIcon({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <rect x="3" y="3" width="12" height="12" rx="2" />
+      <path d="M9 19v-3a1 1 0 0 1 1-1h3" />
+      <rect x="13" y="9" width="8" height="8" rx="2" />
+    </svg>
+  );
+}
+
+export function ShieldIcon({ size = 16, className, style }: IconProps) {
+  return (
+    <svg {...base(size)} className={className} style={style}>
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
+    </svg>
+  );
+}
+
+export function ClockIcon({ size = 16, className, style }: IconProps) {
+  return (
+    <svg {...base(size)} className={className} style={style}>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 6v6l4 2" />
+    </svg>
+  );
+}
+
+export function CheckIcon({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M20 6L9 17l-5-5" />
+    </svg>
+  );
+}
+
+export function XIcon({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M18 6L6 18M6 6l12 12" />
     </svg>
   );
 }

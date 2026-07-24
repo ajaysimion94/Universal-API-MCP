@@ -19,4 +19,12 @@ public interface SpecParser {
     String format();
 
     List<ApiToolDefinition> parse(JsonNode root);
+
+    /**
+     * Best-effort base URL suggestion when the connection didn't supply one explicitly.
+     * Null when the format gives no usable signal — the caller then requires an explicit baseUrl.
+     */
+    default String extractBaseUrl(JsonNode root) {
+        return null;
+    }
 }

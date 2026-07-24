@@ -36,6 +36,8 @@ public class ApiToolRepository {
             rs.getInt("enabled") != 0,
             rs.getInt("pending") != 0,
             rs.getInt("knowledge_source") != 0,
+            rs.getString("extraction_template"),
+            rs.getString("origin"),
             Instant.parse(rs.getString("created_at")),
             Instant.parse(rs.getString("updated_at"))
     );
@@ -45,15 +47,15 @@ public class ApiToolRepository {
                 INSERT OR REPLACE INTO api_tools
                     (id, connection_id, app_slug, name, request_slug, display_name, description,
                      category, http_method, url_template, params_schema, param_locations, headers,
-                     body_template, primary_param, enabled, pending, knowledge_source,
-                     created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     body_template, primary_param, enabled, pending, knowledge_source, extraction_template,
+                     origin, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 t.id(), t.connectionId(), t.appSlug(), t.name(), t.requestSlug(), t.displayName(),
                 t.description(), t.category(), t.httpMethod(), t.urlTemplate(), t.paramsSchema(),
                 t.paramLocations(), t.headers(), t.bodyTemplate(), t.primaryParam(),
                 t.enabled() ? 1 : 0, t.pending() ? 1 : 0, t.knowledgeSource() ? 1 : 0,
-                t.createdAt().toString(), t.updatedAt().toString()
+                t.extractionTemplate(), t.origin(), t.createdAt().toString(), t.updatedAt().toString()
         );
     }
 

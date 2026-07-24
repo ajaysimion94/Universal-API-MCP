@@ -186,11 +186,7 @@ public class IngestionService {
         if (mimeType == null) mimeType = "text/plain";
 
         if (isTextMime(mimeType)) {
-            String text = new String(bytes, StandardCharsets.UTF_8);
-            if (mimeType.contains("html")) {
-                text = text.replaceAll("(?is)<[^>]+>", " ").replaceAll("\\s+", " ").strip();
-            }
-            return text;
+            return new String(bytes, StandardCharsets.UTF_8);
         }
 
         try {
@@ -203,7 +199,7 @@ public class IngestionService {
     }
 
     private boolean isTextMime(String mimeType) {
-        return mimeType.startsWith("text/")
+        return (mimeType.startsWith("text/") && !mimeType.contains("html"))
                 || mimeType.equals("application/json")
                 || mimeType.equals("application/xml")
                 || mimeType.equals("application/x-yaml");

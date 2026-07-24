@@ -136,10 +136,23 @@ public class SearXngPlugin implements Plugin {
     @Override
     public void stop() {
         if (process != null && process.isAlive()) {
+            process.descendants().forEach(ph -> {
+                try {
+                    ph.destroy();
+                } catch (Exception ignored) {}
+            });
             process.destroy();
             try {
                 process.waitFor();
             } catch (InterruptedException ignored) {}
+            if (process != null && process.isAlive()) {
+                process.descendants().forEach(ph -> {
+                    try {
+                        ph.destroyForcibly();
+                    } catch (Exception ignored) {}
+                });
+                process.destroyForcibly();
+            }
             process = null;
             log.info("SearXNG process stopped");
         }
