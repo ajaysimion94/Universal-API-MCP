@@ -613,28 +613,6 @@
 
 /* Search page */
 
-.search-page {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  overflow-y: auto;
-  background: var(--bg-surface);
-}
-
-.search-hero {
-  padding: var(--space-2xl) var(--space-md) var(--space-lg);
-  border-bottom: 1px solid var(--border);
-}
-.search-hero-inner {
-  max-width: 720px;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-sm);
-}
-
 .search-title {
   font-size: var(--text-xl);
   font-weight: 600;
@@ -700,15 +678,148 @@
   flex-shrink: 0;
 }
 
-/* Search results — grouped by file (expandable/collapsible) */
+/* Chat page — single-column transcript, not chat bubbles (see .impeccable.md anti-references) */
 
-.search-results-area {
+.chat-page {
   flex: 1;
-  padding: var(--space-md) var(--space-md) var(--space-xl);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-surface);
+}
+
+.chat-thread {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-lg) var(--space-md);
   max-width: 820px;
   width: 100%;
   margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
 }
+
+.chat-empty-state {
+  padding: var(--space-xl) 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  align-items: flex-start;
+}
+
+/* Running, deterministic summary of everything retrieved this session (dedup'd, grouped by
+   source) — sits outside the scrolling thread so it stays visible as ambient context. */
+.chat-summary-bar {
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  flex-shrink: 0;
+}
+.chat-summary-inner {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: var(--space-2xs) var(--space-md);
+}
+.chat-summary-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  padding: 4px 0;
+}
+.chat-summary-toggle:hover {
+  color: var(--accent);
+}
+.chat-summary-body {
+  margin-top: var(--space-2xs);
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.chat-composer-bar {
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+  padding: var(--space-sm) var(--space-md);
+  flex-shrink: 0;
+}
+.chat-composer {
+  max-width: 820px;
+  margin: 0 auto;
+}
+
+.chat-turn {
+  border-radius: var(--radius-md);
+  padding: var(--space-2xs) var(--space-sm);
+}
+.chat-turn-user {
+  background: var(--bg-elevated);
+}
+.chat-turn-assistant {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+}
+.chat-turn-meta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2xs);
+  margin-bottom: 4px;
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.chat-turn-role {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.chat-turn-body {
+  font-size: var(--text-base);
+  color: var(--text);
+  line-height: var(--leading-normal);
+  white-space: pre-wrap;
+}
+
+.chat-generating {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+.chat-generating-dots {
+  display: inline-flex;
+  gap: 3px;
+}
+.chat-generating-dots span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  animation: chat-pulse 1.2s ease-in-out infinite;
+}
+.chat-generating-dots span:nth-child(2) { animation-delay: 0.15s; }
+.chat-generating-dots span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes chat-pulse {
+  0%, 80%, 100% { opacity: 0.25; }
+  40% { opacity: 1; }
+}
+
+.chat-clear-btn {
+  height: 34px;
+  width: 34px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Search results — grouped by file (expandable/collapsible) */
 
 .results-meta {
   display: flex;
@@ -722,10 +833,6 @@
 .results-sep {
   color: var(--text-faint);
 }
-.results-query {
-  color: var(--text-secondary);
-}
-
 /* File group card (expandable) */
 
 .file-list {
@@ -1051,13 +1158,6 @@
   gap: 6px;
 }
 
-.search-landing-hint {
-  padding: var(--space-xl) 0;
-  text-align: center;
-  color: var(--text-faint);
-  font-size: var(--text-sm);
-}
-
 /* Tool result */
 
 .tool-result {
@@ -1086,38 +1186,6 @@
   font-size: var(--text-sm);
   color: var(--text-secondary);
 }
-
-/* Search skeleton */
-
-.search-skeleton {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-}
-.search-result-skeleton {
-  padding: var(--space-sm);
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
-.skel-line {
-  height: 12px;
-  background: oklch(0.26 0.011 75 / 0.5);
-  border-radius: var(--radius-sm);
-  margin-bottom: 8px;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    oklch(0.26 0.011 75 / 0.5) 50%,
-    transparent 100%
-  );
-  background-size: 200% 100%;
-  animation: shimmer 1.4s infinite linear;
-}
-.skel-title { width: 30%; }
-.skel-excerpt { width: 100%; }
-.skel-excerpt:last-of-type { width: 80%; }
-.skel-meta { width: 40%; }
 
 /* Files page (router child) */
 

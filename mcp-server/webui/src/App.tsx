@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Topbar } from "./components/Topbar";
-import { SearchPage } from "./components/SearchPage";
+import { ChatPage } from "./components/ChatPage";
 import { FilesPage } from "./components/FilesPage";
 import { PluginsPage } from "./components/PluginsPage";
 import { ConnectionsPage } from "./components/ConnectionsPage";
@@ -13,7 +13,7 @@ export default function App() {
         <Topbar />
         <div className="app-body">
           <Routes>
-            <Route path="/" element={<SearchPage />} />
+            <Route path="/" element={<ChatPage />} />
             <Route path="/files" element={<FilesPage />} />
             <Route path="/files/*" element={<FilesPage />} />
             <Route path="/plugins" element={<PluginsPage />} />

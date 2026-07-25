@@ -258,3 +258,12 @@ export function XIcon({ size = 16, className }: IconProps) {
     </svg>
   );
 }
+
+export function SendIcon({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M4 11l16-7-6 16-2.5-6.5L4 11Z" />
+      <path d="M13.5 13.5L20 4" />
+    </svg>
+  );
+}

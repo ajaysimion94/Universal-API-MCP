@@ -15,7 +15,7 @@ export function Topbar() {
         </div>
         <nav className="topbar-nav">
           <NavLink to="/" end className={({ isActive }) => "nav-link" + (isActive ? " is-active" : "")}>
-            Search
+            Chat
           </NavLink>
           <NavLink to="/files" className={({ isActive }) => "nav-link" + (isActive ? " is-active" : "")}>
             Files
