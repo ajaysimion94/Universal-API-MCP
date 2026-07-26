@@ -44,33 +44,6 @@ public class ChatController {
 
     public record ChatRequest(String message, String conversationId, Boolean web) {}
 
-    /** Body for {@code POST /api/chat/credentials}; any of token/cookies may carry the secret. */
-    public record CredentialsRequest(String accessToken, String identityType, String cookies) {}
-
-    /**
-     * Credential status for the chat answer path — shape only, never the secrets.
-     * Drives the UI's "Connect Copilot" affordance.
-     */
-    @GetMapping("/credentials")
-    public Map<String, Object> credentials() {
-        return chatService.credentialStatus(true);
-    }
-
-    /**
-     * Sets credentials pasted in the UI and validates them live against the Copilot chat
-     * socket. In-memory only: nothing is persisted; env config is the durable alternative.
-     */
-    @PostMapping("/credentials")
-    public Map<String, Object> setCredentials(@RequestBody CredentialsRequest request) {
-        return chatService.updateAndValidate(request.accessToken(), request.identityType(), request.cookies());
-    }
-
-    /** Clears runtime credentials (back to the anonymous, generation-blocked state). */
-    @DeleteMapping("/credentials")
-    public Map<String, Object> clearCredentials() {
-        return chatService.clearCredentials();
-    }
-
     @PostMapping(produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter chat(@RequestBody ChatRequest request) {
         if (request.message() == null || request.message().isBlank()) {

@@ -24,8 +24,16 @@ public class PluginStateStore {
     }
 
     public synchronized boolean isEnabled(String pluginId) {
+        return isEnabled(pluginId, true);
+    }
+
+    /**
+     * Reads a plugin's enabled state while allowing opt-in plugins to default to disabled
+     * until a user enables them explicitly.
+     */
+    public synchronized boolean isEnabled(String pluginId, boolean defaultEnabled) {
         PluginState state = states.get(pluginId);
-        return state == null || state.enabled;
+        return state == null ? defaultEnabled : state.enabled;
     }
 
     public synchronized boolean isInstalled(String pluginId) {

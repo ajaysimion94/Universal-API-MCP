@@ -378,6 +378,26 @@ export async function clearChatCredentials(): Promise<ChatCredentialStatus> {
   );
 }
 
+/* ── Copilot popup auth flow ── */
+
+export interface AuthStatus {
+  configured: boolean;
+  hasCookies: boolean;
+  hasAccessToken: boolean;
+  message: string;
+}
+
+export async function getCopilotAuthStatus(session?: string): Promise<AuthStatus> {
+  const qs = session ? `?session=${encodeURIComponent(session)}` : "";
+  return json<AuthStatus>(await fetch(`/api/copilot/auth/status${qs}`));
+}
+
+/** Pulls credentials from the auth collection store and validates them. */
+export async function applyCopilotAuth(session?: string): Promise<ChatCredentialStatus> {
+  const qs = session ? `?session=${encodeURIComponent(session)}` : "";
+  return json<ChatCredentialStatus>(await fetch(`/api/chat/credentials/from-auth${qs}`));
+}
+
 /* ── Plugins ── */
 
 export type PluginStatus =

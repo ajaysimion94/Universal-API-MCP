@@ -162,7 +162,7 @@ function PluginRow({
   onStartStop: () => void;
 }) {
   const isSearxng = plugin.id === "searxng";
-  const canToggle = isSearxng || plugin.id === "nomic-embedding";
+  const canToggle = isSearxng || plugin.id === "nomic-embedding" || plugin.id === "copilot-chat";
   const statusIcon = getStatusIcon(plugin.status);
   const statusLabel = getStatusLabel(plugin.status, installing);
 

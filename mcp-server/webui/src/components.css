@@ -2954,3 +2954,118 @@
   font-size: var(--text-xs);
   color: var(--text-faint);
 }
+
+/* ── Popup auth tab styles ── */
+
+.modal-tabs {
+  display: flex;
+  gap: var(--space-3xs);
+  margin-bottom: var(--space-sm);
+  border-bottom: 1px solid var(--border);
+}
+
+.modal-tab {
+  padding: var(--space-2xs) var(--space-xs);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  margin-bottom: -1px;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.modal-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.modal-tab:hover:not(.active) {
+  color: var(--text);
+}
+
+.modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.step {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: flex-start;
+}
+
+.step-num {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--bg-surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  line-height: 1;
+}
+
+.step-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.step-content strong {
+  font-size: var(--text-sm);
+  display: block;
+  margin-bottom: var(--space-3xs);
+}
+
+.step-content p {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  margin: 0 0 var(--space-2xs);
+}
+
+.step-content kbd {
+  font-family: var(--font-mono);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 0.9em;
+}
+
+.snippet-wrapper {
+  position: relative;
+}
+
+.snippet-box {
+  width: 100%;
+  font-size: var(--text-xs);
+  line-height: var(--leading-relaxed);
+  background: oklch(0.12 0.005 75) !important;
+  white-space: pre;
+  overflow-x: auto;
+  margin: 0;
+}
+
+.snippet-copy {
+  position: absolute;
+  top: var(--space-2xs);
+  right: var(--space-2xs);
+  font-size: var(--text-xs);
+  opacity: 0.7;
+}
+
+.snippet-copy:hover {
+  opacity: 1;
+}

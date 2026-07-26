@@ -1,6 +1,8 @@
 package com.mcpserver.services;
 
 import com.mcpserver.copilot.CopilotClient;
+import com.mcpserver.plugins.CopilotChatPlugin;
+import com.mcpserver.plugins.PluginRegistry;
 import com.mcpserver.rag.retrieval.SearchPipeline;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,10 +37,7 @@ public class CopilotChatService {
     private final int contextTopK;
     private final int maxContextChars;
 
-    /** Where the active credentials came from: "none", "env", or "runtime" (in-app dialog). */
-    private volatile String credentialSource;
-    private volatile boolean credentialsValidated;
-    private volatile String credentialsMessage;
+    private final PluginRegistry pluginRegistry;
 
     public CopilotChatService(SearchService searchService,
                               @Value("${chat.copilot.timeout-seconds:180}") int timeoutSeconds,
@@ -48,7 +47,8 @@ public class CopilotChatService {
                               @Value("${chat.copilot.max-context-chars:1500}") int maxContextChars,
                               @Value("${chat.copilot.access-token:}") String accessToken,
                               @Value("${chat.copilot.identity-type:}") String identityType,
-                              @Value("${chat.copilot.cookies:}") String cookies) {
+                              @Value("${chat.copilot.cookies:}") String cookies,
+                              PluginRegistry pluginRegistry) {
         this.searchService = searchService;
         this.copilotClient = new CopilotClient(Duration.ofSeconds(connectTimeoutSeconds), timeoutSeconds);
         this.copilotClient.setMode(mode);
@@ -60,62 +60,7 @@ public class CopilotChatService {
         if (!cookies.isBlank()) this.copilotClient.setSessionCookies(parseCookieString(cookies));
         this.contextTopK = contextTopK;
         this.maxContextChars = maxContextChars;
-        this.credentialSource = this.copilotClient.hasCredentials() ? "env" : "none";
-        this.credentialsMessage = "env".equals(this.credentialSource)
-                ? "Configured from environment/config — validated on first chat turn"
-                : "Not configured — anonymous chat is blocked by Copilot, so answers need a signed-in token";
-    }
-
-    /**
-     * Credential status for the UI. Never includes the secrets themselves.
-     * {@code ok} is true only right after a successful live validation.
-     */
-    public synchronized Map<String, Object> credentialStatus(boolean ok) {
-        Map<String, Object> out = new java.util.LinkedHashMap<>();
-        out.put("ok", ok);
-        out.put("configured", copilotClient.hasCredentials());
-        out.put("source", credentialSource);
-        out.put("validated", credentialsValidated);
-        out.put("message", credentialsMessage);
-        return out;
-    }
-
-    /**
-     * Applies credentials pasted in the UI (in-memory only — nothing is written to disk) and
-     * validates them live against the Copilot chat socket. The result reports whether answer
-     * generation will work.
-     */
-    public synchronized Map<String, Object> updateAndValidate(String accessToken, String identityType,
-                                                              String cookies) {
-        boolean hasToken = accessToken != null && !accessToken.isBlank();
-        boolean hasCookies = cookies != null && !cookies.isBlank();
-        if (!hasToken && !hasCookies) {
-            throw new IllegalArgumentException("Provide an accessToken and/or cookies");
-        }
-        if (hasToken) copilotClient.setAccessToken(accessToken.trim());
-        if (identityType != null && !identityType.isBlank()) copilotClient.setIdentityType(identityType.trim());
-        if (hasCookies) copilotClient.setSessionCookies(parseCookieString(cookies));
-        credentialSource = "runtime";
-        try {
-            copilotClient.probe();
-            credentialsValidated = true;
-            credentialsMessage = "Connected — answer generation is active";
-            log.info("Copilot credentials validated successfully (source: runtime)");
-        } catch (Exception e) {
-            credentialsValidated = false;
-            credentialsMessage = "Validation failed — " + e.getMessage();
-            log.warn("Copilot credential validation failed: {}", e.getMessage());
-        }
-        return credentialStatus(credentialsValidated);
-    }
-
-    /** Drops runtime/env credentials back to anonymous (in-memory only; env config returns on restart). */
-    public synchronized Map<String, Object> clearCredentials() {
-        copilotClient.clearCredentials();
-        credentialSource = "none";
-        credentialsValidated = false;
-        credentialsMessage = "Not configured — anonymous chat is blocked by Copilot, so answers need a signed-in token";
-        return credentialStatus(true);
+        this.pluginRegistry = pluginRegistry;
     }
 
     /** Parses a raw Cookie header value ({@code "k1=v1; k2=v2"}) into a cookie map. */
@@ -145,6 +90,12 @@ public class CopilotChatService {
     public void streamChat(String message, String conversationId, boolean includeWeb, ChatHandler handler) {
         List<SearchPipeline.SearchResult> sources = retrieve(message, includeWeb);
         handler.onSources(sources);
+
+        if (!pluginRegistry.isReady(CopilotChatPlugin.ID)) {
+            handler.onError("Generated answers are unavailable — enable the Copilot Chat (legacy) plugin "
+                    + "and configure its environment credentials, or use the retrieved sources below.");
+            return;
+        }
 
         String prompt = ChatPromptBuilder.build(message, sources, maxContextChars);
         AtomicBoolean anyChunk = new AtomicBoolean(false);
