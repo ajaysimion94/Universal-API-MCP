@@ -31,13 +31,14 @@ class CopilotProtocolTests {
     }
 
     @Test
-    void challengeResponseIsValidJsonWithAllFields() throws Exception {
-        JsonNode frame = mapper.readTree(CopilotProtocol.challengeResponse("tok\"en", "hashcash", "id-7"));
+    void challengeResponseMatchesRealClientFrame() throws Exception {
+        JsonNode frame = mapper.readTree(CopilotProtocol.challengeResponse("tok\"en", "hashcash"));
 
         assertThat(frame.path("event").asText()).isEqualTo("challengeResponse");
         assertThat(frame.path("token").asText()).isEqualTo("tok\"en");
         assertThat(frame.path("method").asText()).isEqualTo("hashcash");
-        assertThat(frame.path("id").asText()).isEqualTo("id-7");
+        // The real client sends exactly {event, token, method} — no id field.
+        assertThat(frame.has("id")).isFalse();
     }
 
     @Test

@@ -77,12 +77,12 @@ public class CopilotProtocol {
         return root.toString();
     }
 
-    public static String challengeResponse(String token, String method, String id) {
+    /** Mirrors the real client's frame exactly: {@code {event, token, method}} — no id. */
+    public static String challengeResponse(String token, String method) {
         ObjectNode root = mapper.createObjectNode();
         root.put("event", "challengeResponse");
         root.put("token", token);
         root.put("method", method);
-        root.put("id", id == null ? "" : id);
         return root.toString();
     }
 

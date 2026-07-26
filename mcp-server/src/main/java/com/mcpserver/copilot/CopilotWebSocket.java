@@ -190,9 +190,19 @@ public class CopilotWebSocket {
     }
 
     private void handleChallenge(JsonNode msg) throws Exception {
-        String method = msg.path("method").asText();
+        JsonNode methodNode = msg.path("method");
+        String method = methodNode.isTextual() ? methodNode.asText() : null;
         String parameter = msg.path("parameter").asText();
-        String id = msg.path("id").asText("");
+
+        // A null/absent (or explicitly "cloudflare") method means interactive Cloudflare
+        // Turnstile verification in the real client — unsolvable headless. The server
+        // tolerates clients that don't answer (cf. its "kill-cf-turnstile" flag, under
+        // which the real client also ignores the challenge), and it has already accepted
+        // our send frame, so we simply keep listening for the answer stream.
+        if (method == null || "cloudflare".equals(method)) {
+            log.warn("Copilot sent a Cloudflare-style challenge (method={}); waiting it out", method);
+            return;
+        }
 
         String token = switch (method) {
             case "hashcash" -> CopilotChallenge.solveHashcash(parameter);
@@ -200,8 +210,9 @@ public class CopilotWebSocket {
             default -> throw new RuntimeException("Unknown challenge method: " + method);
         };
 
-        webSocket.sendText(CopilotProtocol.challengeResponse(token, method, id), true);
-        webSocket.sendText(CopilotProtocol.sendFrame(conversationId, prompt, mode), true);
+        // No re-send of the prompt: the real client only re-sends messages that never
+        // reached the server, and ours did (the server streams sources regardless).
+        webSocket.sendText(CopilotProtocol.challengeResponse(token, method), true);
     }
 
     private static String abbreviate(String s) {
