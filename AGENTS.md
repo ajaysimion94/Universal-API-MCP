@@ -107,6 +107,7 @@ Open **http://localhost:5173** (not 8080) in dev mode.
 │   │   │   ├── reranker/         # Reranker, PassThroughReranker
 │   │   │   └── web/              # WebFetcher, SearXngWebFetcher
 │   │   ├── connectors/           # Confluence/Jira/API_COLLECTION connectors, event queue
+│   │   ├── copilot/              # Microsoft Copilot chat client (WS protocol, challenges)
 │   │   ├── tools/                # Postman/OpenAPI parsers, ApiToolService/Executor/Controller
 │   │   └── mcp/                  # McpServerConfig, McpToolBridge (only SDK touch points)
 │   ├── src/main/resources/
@@ -140,6 +141,7 @@ Open **http://localhost:5173** (not 8080) in dev mode.
 - **`connectors/`** — `Connection` model, `ConnectionService`, `ConnectionController` (`/api/connections`), `ConfluenceConnector`, `JiraConnector`, `ApiCollectionConnector`, durable event queue (`IngestionEventRepository`, `EventQueueWorker`), `CredentialCipher`.
 - **`tools/`** — Postman/OpenAPI parsers (`PostmanCollectionParser`, `OpenApiParser`, `SpecFetcher`), `ApiToolService`, `ApiToolExecutor`, `ApiToolController` (`/api/tools`), `ToolQueryParser` for the `#`/`@` grammar, custom tool groups (`ToolGroup`, `ToolGroupRepository`, `ToolGroupService`, `ToolGroupController` at `/api/groups`).
 - **`mcp/`** — The only code touching the MCP SDK: `McpServerConfig` bootstraps a Streamable HTTP servlet at `/mcp`; `McpToolBridge` registers/unregisters tools at runtime.
+- **`copilot/`** — Microsoft Copilot chat client (`CopilotClient`/`CopilotWebSocket`/`CopilotProtocol`/`CopilotChallenge`): reverse-engineered WebSocket protocol with hashcash challenge solving; anonymous conversation creation works, the chat socket needs a signed-in `accessToken` (see `application.yml` `chat.copilot.*`). Wrapped by `services/CopilotChatService` (+ `ChatPromptBuilder`) behind `controllers/ChatController` (`/api/chat` SSE) for the Web UI Chat page. Web UI only — the MCP context path stays retrieval-only (DECISIONS.md 2026-07-25, second entry).
 
 ## Backend conventions
 
@@ -193,11 +195,13 @@ Key backend test classes:
   - `rag.web.searxng-url` — SearXNG endpoint
   - `connectors.poll-interval-ms` — connector delta-poll cadence
   - `connectors.webhook-base-url` — public base URL for Confluence/Jira webhooks; blank by default because the server is `127.0.0.1`
+  - `chat.copilot.*` — Web UI chat answer generation (timeouts, mode, grounding caps, optional `access-token`/`identity-type`/`cookies` for the auth-gated Copilot socket; set via env vars, never commit)
 
 ## REST / MCP surface summary
 
 - **`/api/files`** — files & folders (root, children, path, create folder, upload, upload-folder, delete, ingestion progress)
 - **`/api/search?q=...&topK=20&web=false`** — RAG search or `#`/`@` tool invocation
+- **`/api/chat`** (POST, SSE) — Web UI chat answer: `sources` → `chunk`* → `done`|`error` events; `/api/chat/credentials` (GET/POST/DELETE) manages the signed-in Copilot credentials the answer path needs (in-memory, validated live)
 - **`/api/plugins`** — list/install/enable/disable/start/stop plugins, poll install jobs
 - **`/api/connections`** — Confluence/Jira/API_COLLECTION connectors (CRUD, backfill, enable/disable, webhook intake at `/{id}/webhook`)
 - **`/api/tools`** — imported API tools (list, enable/disable, knowledge-source flag, invoke)
@@ -228,7 +232,7 @@ Do not violate these without an explicit project decision recorded in `DECISIONS
 ## Glossary
 
 - **MCP** — Model Context Protocol; the AI-client-facing protocol surface.
-- **RAG** — Retrieval-Augmented Generation pipeline (this server returns cited context, not generated answers).
+- **RAG** — Retrieval-Augmented Generation pipeline. The MCP/search surface returns cited context, not generated answers; the Web UI Chat page additionally generates answers grounded in that context via an external Copilot backend (DECISIONS.md 2026-07-25).
 - **RRF** — Reciprocal Rank Fusion, used to merge vector and lexical search results.
 - **sqlite-vec** — SQLite loadable extension providing vector search (`vec0`).
 - **FTS5** — SQLite built-in full-text search used for the lexical leg.

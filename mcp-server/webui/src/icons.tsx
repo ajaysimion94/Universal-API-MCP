@@ -267,3 +267,11 @@ export function SendIcon({ size = 16, className }: IconProps) {
     </svg>
   );
 }
+
+export function StopIcon({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}

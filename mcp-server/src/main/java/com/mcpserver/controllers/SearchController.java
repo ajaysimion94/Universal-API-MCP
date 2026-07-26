@@ -113,21 +113,7 @@ public class SearchController {
             response.put("lexicalMessage",
                     "Semantic search is off — showing keyword matches only. Install the embedding model and vector store on the Plugins page for full search.");
         }
-        response.put("results", results.stream().map(r -> {
-            Map<String, Object> m = new HashMap<>();
-            m.put("id", r.chunk().id());
-            m.put("sourceName", r.sourceName());
-            m.put("sourcePath", r.sourcePath() == null ? "" : r.sourcePath());
-            m.put("sourceUrl", r.sourceUrl() == null ? "" : r.sourceUrl());
-            m.put("sourceKind", r.sourceKind());
-            m.put("excerpt", r.excerpt());
-            m.put("description", "web".equals(r.sourceKind()) ? r.excerpt() : "");
-            m.put("content", "web".equals(r.sourceKind()) ? "" : r.chunk().content());
-            m.put("score", r.score());
-            m.put("aclTags", r.aclTags());
-            m.put("position", r.chunk().position());
-            return m;
-        }).toList());
+        response.put("results", results.stream().map(SearchResultMapper::toJson).toList());
         response.put("total", results.size());
         response.put("localCount", localCount);
         response.put("webCount", webCount);

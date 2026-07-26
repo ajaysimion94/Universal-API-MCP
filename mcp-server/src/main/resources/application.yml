@@ -41,6 +41,29 @@ rag:
     page-fetch-timeout-seconds: 10
     max-content-chars: 20000
 
+# Web UI Chat answer generation (com.mcpserver.services.CopilotChatService) — external
+# Copilot backend; answers grounded with RAG retrieval. Web UI only: the MCP context
+# path stays retrieval-only (DECISIONS.md 2026-07-25).
+chat:
+  copilot:
+    timeout-seconds: 180        # overall per-turn budget (session + conversation + full answer)
+    connect-timeout-seconds: 30
+    mode: smart                 # conversation mode sent in the WebSocket send frame
+    context-top-k: 6            # retrieved chunks injected as grounding per turn
+    max-context-chars: 1500     # per-source body cap in the grounding prompt
+    # Anonymous chat is gated server-side by Copilot (observed 2026-07-25: conversation
+    # creation succeeds anonymously, the chat WebSocket handshake 401s). To activate answer
+    # generation, copy credentials from a signed-in browser session on copilot.microsoft.com:
+    #   access-token:  the accessToken query param of the wss://…/c/api/chat request
+    #                  (DevTools → Network → WS → Request URL), or the Bearer token of any API call
+    #   identity-type: the matching X-UserIdentityType query param (e.g. "msa"), if present
+    #   cookies:       alternatively/additionally, the raw Cookie header value
+    # Prefer environment variables over editing this file (never commit real tokens):
+    #   CHAT_COPILOT_ACCESSTOKEN / CHAT_COPILOT_IDENTITYTYPE / CHAT_COPILOT_COOKIES
+    access-token: ""
+    identity-type: ""
+    cookies: ""
+
 # Confluence/Jira connectors (com.mcpserver.connectors)
 connectors:
   poll-interval-ms: 300000   # 5 minutes — delta-poll cadence for every CONNECTED connection

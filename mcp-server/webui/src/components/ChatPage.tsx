@@ -2,9 +2,12 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import {
   search,
+  chatStream,
   listPlugins,
   listTools,
+  getChatCredentialStatus,
   ApiToolInfo,
+  ChatCredentialStatus,
   PluginInfo,
   SearchResult,
   SearchResponse,
@@ -19,13 +22,18 @@ import {
   ExternalLinkIcon,
   AlertIcon,
   SendIcon,
+  StopIcon,
   TrashIcon,
+  LinkIcon,
 } from "../icons";
 import { ToolFormPanel } from "./ToolFormPanel";
 import { ToolConfirmPanel } from "./ToolConfirmPanel";
 import { ToolResultPanel } from "./ToolResultPanel";
+import { MarkdownText } from "./MarkdownText";
+import { ConnectCopilotDialog } from "./ConnectCopilotDialog";
 
 const HISTORY_KEY = "mcp.chat.history.v1";
+const CONVERSATION_KEY = "mcp.chat.conversation.v1";
 const MAX_STORED_TURNS = 50;
 
 /** The @/# token being typed at the end of the input, if any — drives autocomplete. */
@@ -52,7 +60,14 @@ interface FileGroup {
 
 type AssistantPayload =
   | { kind: "loading" }
-  | { kind: "error"; message: string }
+  | { kind: "error"; message: string; sources?: SearchResult[]; retryText?: string }
+  | {
+      kind: "answer";
+      text: string;
+      sources: SearchResult[];
+      streaming: boolean;
+      stopped?: boolean;
+    }
   | { kind: "search"; data: SearchResponse };
 
 interface ChatTurn {
@@ -68,7 +83,17 @@ function loadHistory(): ChatTurn[] {
     const raw = localStorage.getItem(HISTORY_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    // A reload mid-turn leaves stale in-flight states behind — settle them.
+    return parsed.map((t: ChatTurn) => {
+      if (t.payload?.kind === "loading") {
+        return { ...t, payload: { kind: "error", message: "Interrupted before a response arrived." } };
+      }
+      if (t.payload?.kind === "answer" && t.payload.streaming) {
+        return { ...t, payload: { ...t.payload, streaming: false, stopped: true } };
+      }
+      return t;
+    });
   } catch {
     return [];
   }
@@ -79,6 +104,23 @@ function saveHistory(turns: ChatTurn[]) {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(turns.slice(-MAX_STORED_TURNS)));
   } catch {
     // storage full/unavailable — history just won't persist this session
+  }
+}
+
+function loadConversationId(): string | null {
+  try {
+    return localStorage.getItem(CONVERSATION_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function saveConversationId(id: string | null) {
+  try {
+    if (id) localStorage.setItem(CONVERSATION_KEY, id);
+    else localStorage.removeItem(CONVERSATION_KEY);
+  } catch {
+    // non-persistent storage — follow-up turns simply start a fresh conversation
   }
 }
 
@@ -107,17 +149,27 @@ function groupLocalResults(results: SearchResult[]): FileGroup[] {
   return groups;
 }
 
+/** A plain message goes to the chat answer path; the #/@ grammar stays on deterministic tools. */
+function isToolInvocation(text: string): boolean {
+  const t = text.trimStart();
+  return t.startsWith("#") || t.startsWith("@");
+}
+
 export function ChatPage() {
   const [params, setParams] = useSearchParams();
   const [turns, setTurns] = useState<ChatTurn[]>(() => loadHistory());
+  const [conversationId, setConversationId] = useState<string | null>(() => loadConversationId());
   const [input, setInput] = useState("");
   const [webOn, setWebOn] = useState(false);
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [pluginsLoaded, setPluginsLoaded] = useState(false);
   const [initialWebWarning, setInitialWebWarning] = useState(false);
+  const [credStatus, setCredStatus] = useState<ChatCredentialStatus | null>(null);
+  const [connectOpen, setConnectOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
   const lastConsumedQuery = useRef<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   // Tool autocomplete: the full tool list is small — fetch once, filter as you type.
   const [allTools, setAllTools] = useState<ApiToolInfo[]>([]);
@@ -139,6 +191,17 @@ export function ChatPage() {
       .catch(() => {})
       .finally(() => setPluginsLoaded(true));
   }, []);
+
+  useEffect(() => {
+    getChatCredentialStatus().then(setCredStatus).catch(() => {});
+  }, []);
+
+  // New credentials = new identity: drop the stored conversation so the next turn starts fresh.
+  const handleCredStatusChange = (next: ChatCredentialStatus) => {
+    setCredStatus(next);
+    setConversationId(null);
+    saveConversationId(null);
+  };
 
   useEffect(() => {
     saveHistory(turns);
@@ -241,18 +304,76 @@ export function ChatPage() {
     setTurns((prev) => [...prev, userTurn, assistantTurn]);
     setInput("");
 
+    const patchAssistant = (fn: (t: ChatTurn) => ChatTurn) =>
+      setTurns((prev) => prev.map((t) => (t.id === assistantTurn.id ? fn(t) : t)));
+
+    // #/@ — deterministic tool path, unchanged (no answer generation involved).
+    if (isToolInvocation(trimmed)) {
+      try {
+        const data = await search(trimmed, 20, webOn);
+        patchAssistant((t) => ({ ...t, payload: { kind: "search", data } }));
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Request failed";
+        patchAssistant((t) => ({ ...t, payload: { kind: "error", message } }));
+      }
+      return;
+    }
+
+    // Plain message — RAG-grounded answer streamed from /api/chat.
+    const controller = new AbortController();
+    abortRef.current = controller;
+    let sources: SearchResult[] = [];
+    const errorPayload = (message: string): AssistantPayload => ({
+      kind: "error",
+      message,
+      sources,
+      retryText: trimmed,
+    });
     try {
-      const data = await search(trimmed, 20, webOn);
-      setTurns((prev) =>
-        prev.map((t) => (t.id === assistantTurn.id ? { ...t, payload: { kind: "search", data } } : t)),
-      );
+      await chatStream(trimmed, conversationId, webOn, controller.signal, {
+        onSources: (s) => {
+          sources = s;
+          patchAssistant((t) => ({
+            ...t,
+            payload: { kind: "answer", text: "", sources: s, streaming: true },
+          }));
+        },
+        onChunk: (text) =>
+          patchAssistant((t) =>
+            t.payload?.kind === "answer"
+              ? { ...t, payload: { ...t.payload, text: t.payload.text + text } }
+              : { ...t, payload: { kind: "answer", text, sources, streaming: true } },
+          ),
+        onDone: (newConversationId) => {
+          if (newConversationId) {
+            setConversationId(newConversationId);
+            saveConversationId(newConversationId);
+          }
+          patchAssistant((t) =>
+            t.payload?.kind === "answer"
+              ? { ...t, payload: { ...t.payload, streaming: false } }
+              : t,
+          );
+        },
+        onError: (message) => patchAssistant((t) => ({ ...t, payload: errorPayload(message) })),
+      });
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Request failed";
-      setTurns((prev) =>
-        prev.map((t) => (t.id === assistantTurn.id ? { ...t, payload: { kind: "error", message } } : t)),
-      );
+      if (controller.signal.aborted) {
+        patchAssistant((t) =>
+          t.payload?.kind === "answer"
+            ? { ...t, payload: { ...t.payload, streaming: false, stopped: true } }
+            : { ...t, payload: { kind: "error", message: "Stopped before the answer arrived.", retryText: trimmed } },
+        );
+      } else {
+        const message = e instanceof Error ? e.message : "Request failed";
+        patchAssistant((t) => ({ ...t, payload: errorPayload(message) }));
+      }
+    } finally {
+      if (abortRef.current === controller) abortRef.current = null;
     }
   };
+
+  const stopGenerating = () => abortRef.current?.abort();
 
   // Topbar's independent quick-search box (`/?q=...`) — each new value becomes a new turn.
   useEffect(() => {
@@ -274,11 +395,17 @@ export function ChatPage() {
   const clearChat = () => {
     setTurns([]);
     saveHistory([]);
+    setConversationId(null);
+    saveConversationId(null);
     inputRef.current?.focus();
   };
 
-  const isToolQuery = input.trim().startsWith("#") || input.trim().startsWith("@");
-  const isGenerating = turns.length > 0 && turns[turns.length - 1].payload?.kind === "loading";
+  const isToolQuery = isToolInvocation(input);
+  const lastTurn = turns.length > 0 ? turns[turns.length - 1] : null;
+  const isGenerating =
+    !!lastTurn &&
+    (lastTurn.payload?.kind === "loading" ||
+      (lastTurn.payload?.kind === "answer" && lastTurn.payload.streaming));
 
   // Deterministic aggregation of everything retrieved this session — no LLM involved, just
   // dedup-by-chunk-id (the same chunk can resurface across several queries) and the same
@@ -288,14 +415,19 @@ export function ChatPage() {
     const merged: SearchResult[] = [];
     let queryCount = 0;
     for (const t of turns) {
-      if (t.role === "assistant" && t.payload?.kind === "search" && t.payload.data.mode === "rag") {
-        const results = t.payload.data.results;
-        if (results.length > 0) queryCount++;
-        for (const r of results) {
-          if (!seen.has(r.id)) {
-            seen.add(r.id);
-            merged.push(r);
-          }
+      if (t.role !== "assistant") continue;
+      const results =
+        t.payload?.kind === "search" && t.payload.data.mode === "rag"
+          ? t.payload.data.results
+          : t.payload?.kind === "answer"
+            ? t.payload.sources
+            : null;
+      if (!results) continue;
+      if (results.length > 0) queryCount++;
+      for (const r of results) {
+        if (!seen.has(r.id)) {
+          seen.add(r.id);
+          merged.push(r);
         }
       }
     }
@@ -352,11 +484,13 @@ export function ChatPage() {
           <div className="chat-empty-state">
             <h1 className="search-title">Chat with the knowledge base</h1>
             <p className="search-subtitle">
-              Each message returns cited excerpts from retrieval — nothing is fabricated. Type{" "}
+              Answers are generated by Microsoft Copilot, grounded in excerpts retrieved from your
+              knowledge base — sources are cited under every answer. Type{" "}
               <code className="hash-hint">
                 <HashIcon size={12} /> keyword
               </code>{" "}
-              to invoke a tool deterministically. Your conversation stays on this device.
+              to invoke a tool deterministically. Plain messages leave this device for answer
+              generation; your conversation history does not.
             </p>
           </div>
         )}
@@ -373,7 +507,14 @@ export function ChatPage() {
           turn.role === "user" ? (
             <UserTurnBlock key={turn.id} text={turn.text ?? ""} createdAt={turn.createdAt} />
           ) : (
-            <AssistantTurnBlock key={turn.id} payload={turn.payload} setInput={setInput} focusInput={() => inputRef.current?.focus()} />
+            <AssistantTurnBlock
+              key={turn.id}
+              payload={turn.payload}
+              setInput={setInput}
+              focusInput={() => inputRef.current?.focus()}
+              onRetry={submit}
+              onConnect={() => setConnectOpen(true)}
+            />
           ),
         )}
         <div ref={threadEndRef} />
@@ -432,6 +573,21 @@ export function ChatPage() {
               ))}
             </ul>
           )}
+          <button
+            type="button"
+            className="btn btn-sm chat-connect-btn"
+            onClick={() => setConnectOpen(true)}
+            title={credStatus?.message ?? "Connect Copilot for generated answers"}
+            aria-label="Connect Copilot"
+          >
+            <LinkIcon size={14} />
+            <span
+              className={`chat-connect-dot ${
+                credStatus?.validated ? "dot-ok" : credStatus?.configured ? "dot-warn" : "dot-off"
+              }`}
+              aria-hidden
+            />
+          </button>
           <label className="web-toggle" title={!searxngReady ? "Web search requires SearXNG — install on the Plugins page" : "Augment results with live web content"}>
             <input
               type="checkbox"
@@ -452,12 +608,32 @@ export function ChatPage() {
           >
             <TrashIcon size={14} />
           </button>
-          <button type="submit" className="btn btn-primary search-box-submit" disabled={isGenerating}>
-            <SendIcon size={16} />
-            Send
-          </button>
+          {isGenerating ? (
+            <button
+              type="button"
+              className="btn btn-sm chat-stop-btn"
+              onClick={stopGenerating}
+              title="Stop generating"
+            >
+              <StopIcon size={13} />
+              Stop
+            </button>
+          ) : (
+            <button type="submit" className="btn btn-primary search-box-submit" disabled={!input.trim()}>
+              <SendIcon size={16} />
+              Send
+            </button>
+          )}
         </form>
       </div>
+
+      {connectOpen && (
+        <ConnectCopilotDialog
+          status={credStatus}
+          onClose={() => setConnectOpen(false)}
+          onStatusChange={handleCredStatusChange}
+        />
+      )}
     </div>
   );
 }
@@ -478,10 +654,14 @@ function AssistantTurnBlock({
   payload,
   setInput,
   focusInput,
+  onRetry,
+  onConnect,
 }: {
   payload?: AssistantPayload;
   setInput: (v: string) => void;
   focusInput: () => void;
+  onRetry: (text: string) => void;
+  onConnect: () => void;
 }) {
   return (
     <div className="chat-turn chat-turn-assistant">
@@ -492,7 +672,9 @@ function AssistantTurnBlock({
         {!payload || payload.kind === "loading" ? (
           <GeneratingIndicator />
         ) : payload.kind === "error" ? (
-          <div className="error-banner" role="alert">{payload.message}</div>
+          <ErrorView payload={payload} onRetry={onRetry} onConnect={onConnect} />
+        ) : payload.kind === "answer" ? (
+          <AnswerView payload={payload} />
         ) : (
           <SearchResponseView response={payload.data} setInput={setInput} focusInput={focusInput} />
         )}
@@ -510,6 +692,98 @@ function GeneratingIndicator() {
         <span />
       </span>
       generating…
+    </div>
+  );
+}
+
+function ErrorView({
+  payload,
+  onRetry,
+  onConnect,
+}: {
+  payload: Extract<AssistantPayload, { kind: "error" }>;
+  onRetry: (text: string) => void;
+  onConnect: () => void;
+}) {
+  const retryText = payload.retryText;
+  const isAuthError = /access-token|handshake|signed-in|401|403/i.test(payload.message);
+  return (
+    <div className="chat-error">
+      <div className="error-banner" role="alert">{payload.message}</div>
+      <div className="chat-error-actions">
+        {isAuthError && (
+          <button type="button" className="btn btn-sm btn-primary" onClick={onConnect}>
+            Connect Copilot
+          </button>
+        )}
+        {retryText && (
+          <button type="button" className="btn btn-sm chat-retry-btn" onClick={() => onRetry(retryText)}>
+            Retry
+          </button>
+        )}
+      </div>
+      {payload.sources && payload.sources.length > 0 && (
+        <>
+          <p className="chat-error-fallback">The retrieved excerpts are still available:</p>
+          <SourcesDisclosure sources={payload.sources} defaultOpen />
+        </>
+      )}
+    </div>
+  );
+}
+
+function AnswerView({ payload }: { payload: Extract<AssistantPayload, { kind: "answer" }> }) {
+  return (
+    <div className="chat-answer">
+      {payload.text ? (
+        <MarkdownText text={payload.text} />
+      ) : (
+        payload.streaming && <GeneratingIndicator />
+      )}
+      {payload.streaming && payload.text !== "" && <span className="chat-cursor" aria-hidden>▍</span>}
+      {payload.stopped && <div className="chat-note mono">stopped — the answer above is partial</div>}
+      {payload.sources.length > 0 && <SourcesDisclosure sources={payload.sources} />}
+    </div>
+  );
+}
+
+/** Collapsible per-turn source list: local chunks grouped by file, web results as links. */
+function SourcesDisclosure({ sources, defaultOpen = false }: { sources: SearchResult[]; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const localGroups = useMemo(() => groupLocalResults(sources.filter((s) => s.sourceKind !== "web")), [sources]);
+  const webSources = useMemo(() => sources.filter((s) => s.sourceKind === "web"), [sources]);
+
+  return (
+    <div className="chat-sources">
+      <button
+        type="button"
+        className="chat-sources-toggle"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        <ChevronRightIcon size={13} className={`file-group-chevron ${open ? "chev-open" : ""}`} />
+        <span className="mono">
+          Sources ({sources.length})
+        </span>
+      </button>
+      {open && (
+        <div className="chat-sources-body">
+          {localGroups.length > 0 && (
+            <ol className="file-list">
+              {localGroups.map((group, i) => (
+                <FileGroupCard key={"src-" + group.sourceName} group={group} rank={i + 1} query="" />
+              ))}
+            </ol>
+          )}
+          {webSources.length > 0 && (
+            <ol className="web-result-list">
+              {webSources.map((r, i) => (
+                <WebResultCard key={"src-" + r.id} result={r} rank={i + 1} query="" />
+              ))}
+            </ol>
+          )}
+        </div>
+      )}
     </div>
   );
 }
