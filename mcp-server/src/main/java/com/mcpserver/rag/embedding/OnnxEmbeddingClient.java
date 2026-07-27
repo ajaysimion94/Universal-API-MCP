@@ -56,19 +56,46 @@ public class OnnxEmbeddingClient implements EmbeddingClient {
             return;
         }
         try {
-            this.tokenizer = HuggingFaceTokenizer.newInstance(tokenizerPath,
-                    java.util.Map.of("padding", "longest", "truncation", "true", "maxLength", String.valueOf(maxLength)));
-            this.env = ai.onnxruntime.OrtEnvironment.getEnvironment();
-            ai.onnxruntime.OrtSession.SessionOptions opts = new ai.onnxruntime.OrtSession.SessionOptions();
-            opts.setOptimizationLevel(ai.onnxruntime.OrtSession.SessionOptions.OptLevel.ALL_OPT);
-            this.session = env.createSession(modelPath.toString(), opts);
+            loadModel(tokenizerPath, modelPath);
             this.loaded = true;
             this.loadError = null;
             log.info("Embedding model loaded from {}", modelDir);
-        } catch (Exception e) {
-            loadError = "Failed to load model: " + e.getMessage();
-            log.error("Embedding model load failed: {}", e.getMessage());
+        } catch (Exception | LinkageError e) {
+            closeLoadedResources();
+            loadError = "Embedding model unavailable: " + rootCauseMessage(e);
+            log.error("{} — continuing with keyword-only search", loadError);
         }
+    }
+
+    /**
+     * Isolated so native-runtime failures can be regression-tested without loading ONNX.
+     * {@link LinkageError} is intentionally handled by {@link #ensureLoaded()}: ONNX reports
+     * missing or incompatible platform DLLs as errors rather than exceptions, and an optional
+     * semantic-search plugin must not prevent the rest of the application from starting.
+     */
+    protected void loadModel(Path tokenizerPath, Path modelPath) throws Exception {
+        this.tokenizer = HuggingFaceTokenizer.newInstance(tokenizerPath,
+                java.util.Map.of("padding", "longest", "truncation", "true",
+                        "maxLength", String.valueOf(maxLength)));
+        this.env = ai.onnxruntime.OrtEnvironment.getEnvironment();
+        ai.onnxruntime.OrtSession.SessionOptions opts = new ai.onnxruntime.OrtSession.SessionOptions();
+        opts.setOptimizationLevel(ai.onnxruntime.OrtSession.SessionOptions.OptLevel.ALL_OPT);
+        this.session = env.createSession(modelPath.toString(), opts);
+    }
+
+    private static String rootCauseMessage(Throwable failure) {
+        Throwable root = failure;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        String detail = root.getMessage();
+        if (detail == null || detail.isBlank()) {
+            detail = failure.getMessage();
+        }
+        if (detail == null || detail.isBlank()) {
+            detail = root.getClass().getSimpleName();
+        }
+        return root.getClass().getSimpleName() + ": " + detail;
     }
 
     /**
@@ -78,12 +105,17 @@ public class OnnxEmbeddingClient implements EmbeddingClient {
      * finishes before the session closes.
      */
     public synchronized void unload() {
+        closeLoadedResources();
+        loadError = null;
+    }
+
+    private void closeLoadedResources() {
         try { if (session != null) session.close(); } catch (Exception ignored) {}
         try { if (tokenizer != null) tokenizer.close(); } catch (Exception ignored) {}
         session = null;
         tokenizer = null;
+        env = null;
         loaded = false;
-        loadError = null;
     }
 
     @Override

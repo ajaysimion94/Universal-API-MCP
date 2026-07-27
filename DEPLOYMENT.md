@@ -37,6 +37,7 @@ The server binds to `127.0.0.1` only — trusted internal network, no auth yet (
 | Node.js | 20+ (built and tested on 24) | `node -v` |
 | npm | 10+ | `npm -v` |
 | Python | 3.10+ | `python3 --version` (only for SearXNG / web toggle) |
+| Visual C++ x64 Redistributable | Latest v14 (Windows only) | Required by ONNX Runtime for semantic search |
 
 No Docker, PostgreSQL, or other external services are required. The app uses embedded SQLite
 (bundled in the JAR via `org.xerial:sqlite-jdbc`) and downloads the sqlite-vec extension + nomic
@@ -46,8 +47,11 @@ embedding model on demand via the Plugins page.
 
 ## One-time setup
 
-**There is no one-time setup.** Build and run the JAR, then open **http://127.0.0.1:8080** and go to
-the **Plugins** page to install what you need:
+There is no app-specific one-time setup. On Windows, install the latest Microsoft Visual C++ x64
+Redistributable before enabling the Nomic embedding model; ONNX Runtime depends on it. If that native
+runtime is missing or incompatible, the server still starts and automatically falls back to
+keyword-only search. Build and run the JAR, then open **http://127.0.0.1:8080** and go to the
+**Plugins** page to install what you need:
 
 | Plugin | What it does | Install action |
 | --- | --- | --- |
@@ -55,8 +59,8 @@ the **Plugins** page to install what you need:
 | **Nomic embedding model** | nomic-embed-text-v1.5 (768-dim) — in-process ONNX embedding | **Built-in** — model ships inside the jar, loads on first boot; toggle off on low-RAM machines |
 | **SearXNG web search** | Self-hosted meta-search engine for web augmentation (optional) | One click on the Plugins page. Source ships in the jar (no git needed); requires **Python 3.10+** and internet for pip dependencies |
 
-Copy the jar to any machine and `java -jar` — file management **and full search work
-immediately, offline, with zero downloads**. Only the optional SearXNG web toggle needs an
+Copy the jar to any machine with the platform prerequisites and run `java -jar` — file management
+and full search work immediately and offline. Only the optional SearXNG web toggle needs an app-level
 install step. Bundled artifacts are extracted next to the jar (`models/`, `lib/`) on first run.
 
 ### Low-memory machines (< 4GB RAM)
