@@ -1,6 +1,8 @@
 # Dashboards (RQD) — Design
 
-**Status:** proposed, not implemented. Design-only document.
+**Status:** initial live workspace implemented. `.rqd` front matter, fenced RQL, `Stat`,
+`BarChart`, and `DataTable` render in the SPA; filters, saved dashboards, the extended component
+catalog, cross-filtering, and Excel export remain planned.
 **Companion to:** [`report-query-design.md`](./report-query-design.md) — RQL, the query language this
 consumes. Read that first; this document assumes its dataset model.
 **Phase:** same caveat — ahead of the tracker. See RQL design §10.

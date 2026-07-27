@@ -27,6 +27,13 @@ integrations are sequenced into Phase 4. **Authentication and access control lan
 networks** and is never exposed publicly. ACL tags are *captured* on every chunk from Phase 2 so that
 Phase 6 only has to switch enforcement on — no re-ingestion.
 
+### Early delivery — API dashboards and query grammar
+
+- [x] **RQL / `.rqd` vertical slice** — imported, enabled GET API tools can be queried through
+  `POST /api/reports/analyze`, `POST /api/reports/execute`, and `POST /api/dashboards/data`; the
+  `/dashboards` workspace provides live diagnostics plus `Stat`, accessible `BarChart`, and
+  `DataTable` views. It remains intentionally read-only and does not change the phase exit criteria.
+
 ---
 
 ## 1. Phase state diagram

@@ -256,6 +256,121 @@ export async function search(query: string, topK = 20, web = false): Promise<Sea
   );
 }
 
+/* ── Reports and dashboards (.rql / .rqd) ── */
+
+export type QueryDiagnosticSeverity = "ERROR" | "WARNING" | "INFO" | "HINT";
+
+export interface SourceSpan {
+  startOffset: number;
+  endOffset: number;
+  startLine: number;
+  startCol: number;
+  endLine: number;
+  endCol: number;
+}
+
+export interface QueryDiagnostic {
+  span: SourceSpan;
+  severity: QueryDiagnosticSeverity;
+  code: string;
+  message: string;
+}
+
+export interface QueryCompletion {
+  label: string;
+  kind: string;
+  detail: string;
+  insertText: string;
+  replaceSpan: SourceSpan;
+}
+
+export interface QuerySymbol {
+  name: string;
+  kind: string;
+  span: SourceSpan;
+  schema: string[];
+}
+
+export interface RqlAnalysis {
+  diagnostics: QueryDiagnostic[];
+  completions: QueryCompletion[];
+  symbols: QuerySymbol[];
+}
+
+export interface DashboardParam {
+  name: string;
+  type: string;
+  defaultValue: unknown;
+}
+
+export interface DashboardComponent {
+  type: string;
+  props: Record<string, string>;
+  span: SourceSpan;
+}
+
+export interface DashboardAnalysis {
+  diagnostics: QueryDiagnostic[];
+  completions: QueryCompletion[];
+  params: DashboardParam[];
+  outline: DashboardComponent[];
+}
+
+export interface DashboardDataset {
+  columns: string[];
+  rows: Record<string, unknown>[];
+  schema: Record<string, string>;
+}
+
+export interface DashboardData {
+  datasets: Record<string, DashboardDataset>;
+  diagnostics: QueryDiagnostic[];
+  params: DashboardParam[];
+  outline: DashboardComponent[];
+}
+
+export async function analyzeRql(input: {
+  source: string;
+  connectionId?: string;
+  cursorOffset?: number;
+}): Promise<RqlAnalysis> {
+  return json<RqlAnalysis>(
+    await fetch("/api/reports/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function analyzeDashboard(input: {
+  source: string;
+  connectionId?: string;
+  cursorOffset?: number;
+}): Promise<DashboardAnalysis> {
+  return json<DashboardAnalysis>(
+    await fetch("/api/dashboards/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function loadDashboardData(input: {
+  source: string;
+  connectionId?: string;
+  parameters?: Record<string, unknown>;
+}): Promise<DashboardData> {
+  return json<DashboardData>(
+    await fetch("/api/dashboards/data", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
 /* ── Plugins ── */
 
 export type PluginStatus =

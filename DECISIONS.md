@@ -263,3 +263,19 @@ leaves a clean seam for a future supported answer provider.
 
 **Refs:** `webui/src/components/ChatPage.tsx`; `webui/src/components/PluginsPage.tsx`;
 `controllers/SearchController.java`; `DEPLOYMENT.md`
+
+### 2026-07-27 — API dashboard vertical slice: RQL + `.rqd`
+
+**Decision:** Deliver an early, read-only dashboard slice ahead of the Phase 4 report/export track.
+RQL evaluates enabled GET tools only through `ApiToolExecutor`; `.rqd` documents pair front matter
+and fenced RQL with a deliberately constrained component set (`Stat`, `BarChart`, `DataTable`).
+
+**Why:** It makes imported API data explorable now without bypassing the existing credential,
+validation, host-pinning, response-cap, or rate-limit protections. A constrained renderer also makes
+dual axes and author-defined series colors unrepresentable from the outset.
+
+**Status:** active; saved dashboard definitions, joins/lookups, broader chart catalog,
+observed-schema persistence, and Excel jobs remain follow-up work.
+
+**Refs:** `docs/report-query-design.md`; `docs/dashboard-design.md`;
+`mcp-server/src/main/java/com/mcpserver/reports`; `mcp-server/src/main/java/com/mcpserver/dashboards`

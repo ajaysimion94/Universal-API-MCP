@@ -1,6 +1,8 @@
 # Report Query Language (RQL) — Design
 
-**Status:** proposed, not implemented. Design-only document.
+**Status:** core live-dashboard subset implemented. The recovery parser, analysis endpoint,
+read-only execution path, and common pipeline stages are live; asynchronous workbook jobs, saved
+definitions, observed-schema persistence, and join/lookup execution remain planned.
 **Origin:** absorbs the `.filter` DSL from `Postman-excel-report-automation` (a separate Java 17 CLI).
 **Companion:** [`dashboard-design.md`](./dashboard-design.md) — RQD, the interactive dashboard /
 data-visualization layer built on this language. This document is the substrate; that one is the
