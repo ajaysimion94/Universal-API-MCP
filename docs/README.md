@@ -25,6 +25,8 @@ Execution tracker: [`plan.md`](plan.md) (**in what order**, and how we know each
 | `docs/plan.md` | Execution tracker — per-phase build and E2E test checklists (phase-state diagrams embedded as Mermaid) |
 | `docs/plugins-plan.md` | Implementation plan for the Plugins page (embedded SQLite/sqlite-vec, Nomic embedding, SearXNG) |
 | `docs/connectors-manual-verification.md` | How to stand up disposable Confluence/Jira Cloud test sites and verify the connectors against a real instance, closing the gaps automated WireMock-based tests can't |
+| `docs/developer-guide.md` | Maintainer workflow, code locations, query grammar, dashboard slice, and guide-system upkeep |
+| `docs/mcp-client-guide.md` | Streamable HTTP client setup plus resource, prompt, grounding, and confirmation workflow |
 
 The `mcp-server/` module (structure in `product-idea.md` §4) is live — Phase 1 (foundation) and Phase 2
 (knowledge & search, including the Files & Folders and Plugins UI) are implemented; Confluence/Jira

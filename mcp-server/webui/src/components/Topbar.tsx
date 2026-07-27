@@ -32,6 +32,9 @@ export function Topbar() {
           <NavLink to="/dashboards" className={({ isActive }) => "nav-link" + (isActive ? " is-active" : "")}>
             Dashboards
           </NavLink>
+          <NavLink to="/guide" className={({ isActive }) => "nav-link" + (isActive ? " is-active" : "")}>
+            Guide
+          </NavLink>
         </nav>
       </div>
 

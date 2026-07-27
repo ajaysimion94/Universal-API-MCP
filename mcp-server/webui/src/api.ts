@@ -973,3 +973,32 @@ export interface MetricsSummary {
 export async function fetchMetricsSummary(): Promise<MetricsSummary> {
   return json<MetricsSummary>(await fetch("/api/metrics/summary"));
 }
+
+/* ── Guide ── */
+
+export interface GuideSummary {
+  id: string;
+  title: string;
+  summary: string;
+  audience: string;
+}
+
+export interface GuideSection {
+  title: string;
+  body: string;
+  steps: string[];
+  code: string | null;
+  note: string | null;
+}
+
+export interface GuideArticle extends GuideSummary {
+  sections: GuideSection[];
+}
+
+export async function listGuides(): Promise<GuideSummary[]> {
+  return json<GuideSummary[]>(await fetch("/api/guides"));
+}
+
+export async function getGuide(id: string): Promise<GuideArticle> {
+  return json<GuideArticle>(await fetch(`/api/guides/${encodeURIComponent(id)}`));
+}

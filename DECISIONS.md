@@ -279,3 +279,19 @@ observed-schema persistence, and Excel jobs remain follow-up work.
 
 **Refs:** `docs/report-query-design.md`; `docs/dashboard-design.md`;
 `mcp-server/src/main/java/com/mcpserver/reports`; `mcp-server/src/main/java/com/mcpserver/dashboards`
+
+### 2026-07-27 — Shared Guide catalogue for people and MCP clients
+
+**Decision:** Maintain the short operational guide in a server-side catalogue and project it to the
+Web UI through `/api/guides` and to MCP clients as Markdown/JSON resources plus reusable prompts.
+Longer setup and integration detail remains versioned in `docs/developer-guide.md` and
+`docs/mcp-client-guide.md`.
+
+**Why:** The critical grounding and approval rules must not drift between a person using the app and an
+LLM client using the same services. Protocol-native resources and prompts let any compatible client
+discover the workflow without vendor-specific hard-coded instructions.
+
+**Status:** active
+
+**Refs:** `guides/GuideCatalog.java`; `controllers/GuideController.java`;
+`mcp/McpGuideBridge.java`; `docs/developer-guide.md`; `docs/mcp-client-guide.md`

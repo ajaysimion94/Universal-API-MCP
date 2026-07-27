@@ -32,12 +32,22 @@ page; files & folders is at `/files`; plugins is at `/plugins`.
 
 ---
 
+## Guides
+
+The app includes a **Guide** page for setup, knowledge search, API tools, dashboards, MCP clients,
+and development. The durable references are [Developer Guide](docs/developer-guide.md) and
+[MCP Client Guide](docs/mcp-client-guide.md).
+
+---
+
 ## Where to go next
 
 | If you want to… | Read this |
 | --- | --- |
 | **Set up and run the app** (prerequisites, build, run, config) | [`DEPLOYMENT.md`](DEPLOYMENT.md) |
 | **Develop** (hot reload, project layout, testing, build internals) | [`DEVELOPMENT.md`](DEVELOPMENT.md) |
+| **Build or operate the server** (code locations, query grammar, dashboards, guide system) | [`docs/developer-guide.md`](docs/developer-guide.md) |
+| **Connect an MCP client** (resources, prompts, grounding, approvals) | [`docs/mcp-client-guide.md`](docs/mcp-client-guide.md) |
 | **Understand the architecture** (vision, modules, RAG pipeline, roadmap) | [`docs/product-idea.md`](docs/product-idea.md) |
 | **See what phase we're in and what's next** | [`docs/plan.md`](docs/plan.md) |
 | **Work as an AI agent in this repo** (conventions, gotchas, commands) | [`AGENTS.md`](AGENTS.md) |

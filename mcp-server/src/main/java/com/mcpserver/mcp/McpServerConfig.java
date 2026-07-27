@@ -14,9 +14,8 @@ import org.springframework.context.annotation.Configuration;
 /**
  * The real MCP protocol endpoint (docs §3/§5.3): Streamable HTTP transport served by a plain
  * servlet mounted on the app's own Tomcat at {@code /mcp} — no second server, no Spring AI, and
- * it inherits the {@code server.address=127.0.0.1} guardrail automatically. This class and
- * {@link McpToolBridge} are the ONLY code touching the MCP SDK, so SDK version drift stays
- * contained here.
+ * it inherits the {@code server.address=127.0.0.1} guardrail automatically. The {@code mcp}
+ * package is the only code touching the MCP SDK, so SDK version drift stays contained there.
  */
 @Configuration
 public class McpServerConfig {
@@ -50,8 +49,17 @@ public class McpServerConfig {
     public McpSyncServer mcpSyncServer(HttpServletStreamableServerTransportProvider transport) {
         return McpServer.sync(transport)
                 .serverInfo("enterprise-mcp-server", "0.1.0")
+                .instructions("""
+                        Before using tools, call resources/list and read
+                        mcp://enterprise-mcp/guides/operating-guide. Use tools/list as the live
+                        source of enabled tool schemas. Ground answers in search results; never
+                        call confirm-action without explicit current human approval for the exact
+                        previewed write action.
+                        """)
                 .capabilities(McpSchema.ServerCapabilities.builder()
                         .tools(true) // listChanged notifications — tools mutate at runtime (§5.3)
+                        .resources(true, false)
+                        .prompts(true)
                         .build())
                 .build();
     }

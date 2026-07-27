@@ -6,6 +6,7 @@ import { PluginsPage } from "./components/PluginsPage";
 import { ConnectionsPage } from "./components/ConnectionsPage";
 import { AppsPage } from "./components/AppsPage";
 import { DashboardPage } from "./components/DashboardPage";
+import { GuidePage } from "./components/GuidePage";
 
 export default function App() {
   return (
@@ -20,6 +21,7 @@ export default function App() {
             <Route path="/plugins" element={<PluginsPage />} />
             <Route path="/connections" element={<ConnectionsPage />} />
             <Route path="/apps" element={<AppsPage />} />
+            <Route path="/guide" element={<GuidePage />} />
             <Route path="/dashboards" element={<DashboardPage />} />
             <Route path="/reports" element={<Navigate to="/dashboards" replace />} />
             <Route path="*" element={<Navigate to="/" replace />} />

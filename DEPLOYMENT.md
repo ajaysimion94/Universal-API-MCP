@@ -226,6 +226,26 @@ Use `#tool_name` or `@app #tool_name` in the composer to invoke imported tools d
 
 ---
 
+## MCP client setup
+
+Configure a compatible Streamable HTTP client with `http://127.0.0.1:8080/mcp`. After initialize,
+discover the guide resources and prompts before calling dynamic tools:
+
+```text
+resources/list
+resources/read  mcp://enterprise-mcp/guides/operating-guide
+resources/read  mcp://enterprise-mcp/guides/llm-playbook.json
+tools/list
+prompts/list
+```
+
+The operating guide requires evidence-first answers and explicit human approval before using a write
+tool's confirmation token. See [docs/mcp-client-guide.md](docs/mcp-client-guide.md) for the full
+client contract. The endpoint remains local-only until Phase 6; do not expose it to an untrusted
+network.
+
+---
+
 ## Roadmap
 
 This is Phase 1 work. See [`docs/plan.md`](docs/plan.md) for the full six-phase plan — MCP SDK
