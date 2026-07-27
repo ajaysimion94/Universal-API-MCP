@@ -1,6 +1,6 @@
 # MCP Server
 
-An enterprise MCP (Model Context Protocol) server — Java 21 / Spring Boot 3 backend with a first-party
+An enterprise MCP (Model Context Protocol) server — Java 17+ / Spring Boot 3 backend with a first-party
 React + TypeScript Web UI. Files & folders manager, RAG search over uploaded documents (embedded
 SQLite + sqlite-vec + in-process ONNX embeddings), and an optional web-search toggle (SearXNG).
 Currently in **Phase 1** per [`docs/plan.md`](docs/plan.md).
@@ -62,7 +62,7 @@ All dependencies are embedded in the JAR or downloaded on demand via the **Plugi
 
 | Component | How it works |
 | --- | --- |
-| **Java 21 / Maven / Node 20+ / npm** | Install via your preferred method (Homebrew / apt / dnf / winget / SDKMAN / nvm). Binaries and all commands are identical across platforms. |
+| **Java 17+ / Maven / Node 20+ / npm** | Java 17 is the compiled baseline; JDK 17, 20, 21, and newer can build and run the same JAR. Install via your preferred method (Homebrew / apt / dnf / winget / SDKMAN / nvm). |
 | **SQLite + sqlite-vec** | Embedded in the JAR via `org.xerial:sqlite-jdbc`. The sqlite-vec native extension (~1-2MB) is downloaded by the Plugins page per OS/arch. |
 | **nomic-embed-text-v1.5 ONNX model** | Downloaded (~131MB) by the Plugins page from HuggingFace. ONNX Runtime auto-loads the right native lib per platform. |
 | **SearXNG (web toggle)** | Native Python process managed by the Plugins page. Requires Python 3.10+ installed on the system. |

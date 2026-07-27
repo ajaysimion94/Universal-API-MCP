@@ -27,7 +27,7 @@ The project is currently in **Phase 1** per `README.md`, with Phase 2 knowledge/
 
 ## Technology stack
 
-- **Backend:** Java 21, Spring Boot 3.3.4, Maven 3.9+
+- **Backend:** Java 17+ bytecode/API baseline, Spring Boot 3.3.4, Maven 3.9+
 - **Frontend:** React 18, TypeScript 5.6, Vite 5.4, Node 20+ (built on Node 24 / npm 11)
 - **Database:** embedded SQLite via `org.xerial:sqlite-jdbc:3.46.1.3`, WAL mode, `SingleConnectionDataSource`
 - **Vector search:** sqlite-vec 0.1.9 (loadable extension)

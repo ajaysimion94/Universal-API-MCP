@@ -2,7 +2,7 @@
 
 An enterprise MCP (Model Context Protocol) server that turns fragmented enterprise knowledge and
 application APIs into a single, governed context layer for any AI client — GitHub Copilot CLI, VS Code
-Copilot, Microsoft Copilot Studio, ChatGPT, Claude Desktop, or any MCP-compatible client. A Java 21 /
+Copilot, Microsoft Copilot Studio, ChatGPT, Claude Desktop, or any MCP-compatible client. A Java 17+ /
 Spring Boot 3 service exposes **tools** (deterministic, approval-gated actions in connected systems),
 **resources** (ACL-gated enterprise content), **prompts** (versioned enterprise templates), and an
 **ACL-filtered RAG pipeline** that returns grounded, cited context — the AI client synthesizes; the
@@ -48,7 +48,7 @@ Every phase completes a runnable end-to-end flow and exits only when its E2E tes
 
 ## Stack (open-source-first)
 
-Java 21 · Spring Boot 3 · Java MCP SDK (Streamable HTTP, stateless) · embedded SQLite + sqlite-vec (HNSW)
+Java 17+ · Spring Boot 3 · Java MCP SDK (Streamable HTTP, stateless) · embedded SQLite + sqlite-vec (HNSW)
 + FTS5 lexical leg, merged via RRF · in-process ONNX embeddings (nomic-embed-text-v1.5) +
 cross-encoder reranker (ONNX Runtime — no sidecars) · Caffeine cache (Valkey at scale) · SQLite-based
 durable event queue (Kafka at scale) · Keycloak OIDC (Phase 6) · OpenTelemetry + Prometheus + Grafana ·

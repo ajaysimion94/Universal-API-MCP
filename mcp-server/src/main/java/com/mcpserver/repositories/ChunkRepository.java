@@ -11,6 +11,7 @@ import java.sql.Connection;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 
 import org.springframework.jdbc.core.ConnectionCallback;
@@ -185,6 +186,43 @@ public class ChunkRepository {
     public long count() {
         Long n = jdbc.queryForObject("SELECT count(*) FROM chunks", Long.class);
         return n == null ? 0 : n;
+    }
+
+    /**
+     * Returns every indexed chunk for explicitly selected uploaded files and connector
+     * connections. Connector source ids are namespaced as {@code connectionId:externalId}.
+     */
+    public List<Chunk> findForExport(Collection<String> fileIds, Collection<String> connectionIds) {
+        if (fileIds.isEmpty() && connectionIds.isEmpty()) return List.of();
+
+        List<String> clauses = new ArrayList<>();
+        List<Object> args = new ArrayList<>();
+        if (!fileIds.isEmpty()) {
+            clauses.add("source_file_id IN (" + placeholders(fileIds.size()) + ")");
+            args.addAll(fileIds);
+        }
+        if (!connectionIds.isEmpty()) {
+            List<String> connectionClauses = new ArrayList<>();
+            for (String connectionId : connectionIds) {
+                connectionClauses.add("source_file_id LIKE ?");
+                args.add(connectionId + ":%");
+            }
+            clauses.add("(" + String.join(" OR ", connectionClauses) + ")");
+        }
+
+        String sql = """
+                SELECT id, source_file_id, source_name, source_path, content, embedding,
+                       acl_tags, position, token_count, created_at, source_system,
+                       external_id, url, updated_at
+                FROM chunks
+                WHERE %s
+                ORDER BY source_name COLLATE NOCASE, source_file_id, position
+                """.formatted(String.join(" OR ", clauses));
+        return jdbc.query(sql, MAPPER, args.toArray());
+    }
+
+    private static String placeholders(int count) {
+        return String.join(",", java.util.Collections.nCopies(count, "?"));
     }
 
     private static String toJsonFloatArray(float[] vec) {

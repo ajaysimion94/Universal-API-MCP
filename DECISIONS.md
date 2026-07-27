@@ -295,3 +295,36 @@ discover the workflow without vendor-specific hard-coded instructions.
 
 **Refs:** `guides/GuideCatalog.java`; `controllers/GuideController.java`;
 `mcp/McpGuideBridge.java`; `docs/developer-guide.md`; `docs/mcp-client-guide.md`
+
+### 2026-07-27 — Summary preparation exports an explicit local RAG scope
+
+**Decision:** Add a Chat-page source picker that selects uploaded files and connected apps, then
+creates a local TXT export from only their already-indexed RAG chunks. Connector selections resolve
+through the existing `connectionId:externalId` chunk namespace; uploads resolve by exact file id.
+Exports include source/path/system/URL provenance, are capped at 25 MB, and do not contact Copilot or
+another answer provider.
+
+**Why:** A single “export everything” action would make accidental disclosure easy and would obscure
+which source produced each passage. Explicit scope, a local artifact, and a size boundary create an
+auditable preparation step while preserving the decision to remove the unsupported consumer-Copilot
+connector. A supported answer provider or separately approved browser handoff can consume the artifact
+later without coupling export correctness to third-party UI automation.
+
+**Status:** active; automated summarization remains a follow-up.
+
+**Refs:** `summaries/SummaryExportService.java`; `summaries/SummaryExportController.java`;
+`webui/src/components/SummarySourceDialog.tsx`; `webui/src/components/ChatPage.tsx`
+
+### 2026-07-27 — Compile and ship against the Java 17 baseline
+
+**Decision:** Compile the backend with Maven `--release 17` by setting `java.version` to `17`.
+JDK 17 is the minimum supported build and runtime; non-LTS Java 20 and LTS Java 21 or newer can build
+and run the same Java 17-targeted JAR.
+
+**Why:** The implementation uses no APIs or language features newer than Java 17, and Spring Boot
+3.3 supports Java 17. A single lowest-common-denominator artifact avoids maintaining per-JDK builds
+while supporting environments already standardized on Java 17, 20, or 21.
+
+**Status:** active
+
+**Refs:** `mcp-server/pom.xml`; `DEPLOYMENT.md`; `README.md`

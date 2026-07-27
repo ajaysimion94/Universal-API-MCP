@@ -22,11 +22,14 @@ import {
   TrashIcon,
   PlusIcon,
   BookIcon,
+  DownloadIcon,
+  XIcon,
 } from "../icons";
 import { ToolFormPanel } from "./ToolFormPanel";
 import { ToolConfirmPanel } from "./ToolConfirmPanel";
 import { ToolResultPanel } from "./ToolResultPanel";
 import { MarkdownText } from "./MarkdownText";
+import { SummarySourceDialog } from "./SummarySourceDialog";
 
 const STORE_KEY = "mcp.chat.conversations.v2";
 const LEGACY_HISTORY_KEY = "mcp.chat.history.v1";
@@ -214,6 +217,12 @@ export function ChatPage() {
   const [pluginsLoaded, setPluginsLoaded] = useState(false);
   const [initialWebWarning, setInitialWebWarning] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [summaryDialogOpen, setSummaryDialogOpen] = useState(false);
+  const [exportNotice, setExportNotice] = useState<{
+    filename: string;
+    sourceCount: number;
+    chunkCount: number;
+  } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
   const lastConsumedQuery = useRef<string | null>(null);
@@ -518,7 +527,34 @@ export function ChatPage() {
               {activeMessageCount} {activeMessageCount === 1 ? "message" : "messages"}
             </span>
           </div>
+          <button
+            type="button"
+            className="btn btn-ghost summary-open-button"
+            onClick={() => setSummaryDialogOpen(true)}
+          >
+            <DownloadIcon size={14} />
+            Summary export
+          </button>
         </header>
+
+        {exportNotice && (
+          <div className="summary-export-notice" role="status">
+            <DownloadIcon size={14} />
+            <span>
+              <strong>{exportNotice.filename}</strong>
+              <span className="mono">
+                {exportNotice.sourceCount} sources · {exportNotice.chunkCount} chunks
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setExportNotice(null)}
+              aria-label="Dismiss export notice"
+            >
+              <XIcon size={13} />
+            </button>
+          </div>
+        )}
 
         <div className="chat-thread">
           {turns.length === 0 && (
@@ -633,6 +669,11 @@ export function ChatPage() {
           </form>
         </div>
       </div>
+      <SummarySourceDialog
+        open={summaryDialogOpen}
+        onClose={() => setSummaryDialogOpen(false)}
+        onExported={setExportNotice}
+      />
     </div>
   );
 }

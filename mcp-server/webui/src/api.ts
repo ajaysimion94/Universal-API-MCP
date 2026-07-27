@@ -28,6 +28,10 @@ export async function fetchRoot(): Promise<FileNode> {
   return json<FileNode>(await fetch(API));
 }
 
+export async function fetchFileTree(): Promise<FileNode[]> {
+  return json<FileNode[]>(await fetch(`${API}/tree`));
+}
+
 export async function fetchChildren(id: string): Promise<FileNode[]> {
   return json<FileNode[]>(await fetch(`${API}/${id}/children`));
 }
@@ -254,6 +258,42 @@ export async function search(query: string, topK = 20, web = false): Promise<Sea
   return json<SearchResponse>(
     await fetch(`/api/search?q=${encodeURIComponent(query)}&topK=${topK}&web=${web}`),
   );
+}
+
+/* ── Selected-source TXT exports ── */
+
+export interface SummaryExportSelection {
+  fileIds: string[];
+  connectionIds: string[];
+}
+
+export interface SummaryExportDownload {
+  blob: Blob;
+  filename: string;
+  sourceCount: number;
+  chunkCount: number;
+}
+
+export async function createSummaryExport(
+  selection: SummaryExportSelection,
+): Promise<SummaryExportDownload> {
+  const res = await fetch("/api/summary-exports", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(selection),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(body.error ?? `Export failed (${res.status})`);
+  }
+  const disposition = res.headers.get("Content-Disposition") ?? "";
+  const filename = /filename="?([^";]+)"?/i.exec(disposition)?.[1] ?? "mcp-knowledge-export.txt";
+  return {
+    blob: await res.blob(),
+    filename,
+    sourceCount: Number(res.headers.get("X-Export-Source-Count") ?? 0),
+    chunkCount: Number(res.headers.get("X-Export-Chunk-Count") ?? 0),
+  };
 }
 
 /* ── Reports and dashboards (.rql / .rqd) ── */

@@ -6,7 +6,7 @@ An **enterprise MCP (Model Context Protocol) server** that turns fragmented ente
 application APIs into a single, governed context layer for any AI client — GitHub Copilot CLI, VS Code
 Copilot, Microsoft Copilot Studio, ChatGPT, Claude Desktop, or any MCP-compatible client.
 
-The server is a Java 21 / Spring Boot 3 service that speaks the MCP protocol directly. AI clients connect
+The server is a Java 17+ / Spring Boot 3 service that speaks the MCP protocol directly. AI clients connect
 to it and get three kinds of capabilities:
 
 - **Tools** — callable actions in connected systems (look up a customer, run a SQL report, create a Jira
@@ -117,7 +117,7 @@ is revisited in Phase 5 only if the constraint is lifted.
 
 | Layer | Technology | Justification |
 | --- | --- | --- |
-| Language | Java 21 | Modern LTS; virtual threads for async/concurrent tool + ingestion work. |
+| Language | Java 17+ | Java 17 LTS bytecode/API baseline; the same JAR runs on Java 17, 20, 21, and newer runtimes. |
 | Framework | Spring Boot 3 | Portable, proven; direct JDBC to pgvector, explicit workflow state machines. |
 | MCP SDK | Java MCP SDK | First-party SDK for MCP tool/resource/prompt registration and Streamable HTTP transport. |
 | Database | PostgreSQL | Transactional store for chunks, audit log, workflow state, connections. |
@@ -502,7 +502,7 @@ checklist per phase lives in `plan.md`.
 
 | Phase | Objectives and deliverables | Outcome |
 | --- | --- | --- |
-| **Phase 1: Foundation** | Spring Boot 3 + Java 21 setup; MCP server implementation (Java MCP SDK, Streamable HTTP, stateless mode); basic tools; PostgreSQL + pgvector integration (HNSW, ACL-tag columns); OpenTelemetry tracing, CI, and a golden-set evaluation baseline from the start. No auth (Phase 6) — trusted internal network only. | A running MCP server that an AI client can connect to and call a tool on, fully traced. |
+| **Phase 1: Foundation** | Spring Boot 3 + Java 17+ setup; MCP server implementation (Java MCP SDK, Streamable HTTP, stateless mode); basic tools; PostgreSQL + pgvector integration (HNSW, ACL-tag columns); OpenTelemetry tracing, CI, and a golden-set evaluation baseline from the start. No auth (Phase 6) — trusted internal network only. | A running MCP server that an AI client can connect to and call a tool on, fully traced. |
 | **Phase 2: Knowledge & Search** | Document ingestion; structure-aware chunking; embeddings (in-process ONNX, nomic-embed-text-v1.5); lexical full-text leg; RRF hybrid search; cross-encoder reranking (in-process ONNX); Postgres-outbox event queue; ACL tags **captured** on every chunk (enforcement in Phase 6); cited RAG context returned to AI clients; MCP resources exposed; **Web UI slice 1** — Chat page (persistent client-side history + RAG) + files & folders manager. | AI clients and the Web UI get grounded, cited context from enterprise knowledge. |
 | **Phase 3: Enterprise Actions** | Deterministic workflow engine with approval gates (preview → single-use confirmation token) and idempotency; authorization guard seam (activated in Phase 6); audit logs; metrics; rate limiting; Caffeine caching; minimal admin-console slice; **Web UI slice 2** — `#keyword` tool invocation with preview/approve cards and inline clarification. | Governed, auditable, approval-gated actions — from AI clients and the search bar alike. |
 | **Phase 4: Integrations** | GitHub; Jira; Confluence; Kubernetes; Docker; Microsoft 365 (incl. SharePoint); zero-code Postman/OpenAPI onboarding (`{app}_{request-name}` tools); **Web UI slice 3** — connectors console with the import wizard. Microsoft Teams protected-API track filed at the start of this phase. | Any API-backed application onboards in minutes; first-party integrations live. |

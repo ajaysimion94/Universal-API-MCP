@@ -5,7 +5,7 @@ Execution tracker for the blueprint in `product-idea.md`. That document is the s
 order** we build it and **how we know each step is done**. Update checkboxes and the status line as work
 progresses.
 
-The server is a Java 21 / Spring Boot 3 MCP server that exposes tools, resources, prompts, and a
+The server is a Java 17+ / Spring Boot 3 MCP server that exposes tools, resources, prompts, and a
 grounded RAG pipeline to any AI client (GitHub Copilot, VS Code Copilot, Microsoft Copilot Studio,
 ChatGPT, Claude Desktop, any MCP client) over the MCP protocol. AI clients do the synthesis; the server
 keeps retrieval grounded and cited, and actions deterministic, approval-gated, and auditable. A
@@ -109,7 +109,7 @@ Streamable HTTP → calls a basic read tool → gets a structured, schema-valida
 visible as one connected OpenTelemetry trace.
 
 Build checklist:
-- [ ] Spring Boot 3 + Java 21 project skeleton (`mcp-server/` module structure from §4)
+- [ ] Spring Boot 3 + Java 17+ project skeleton (`mcp-server/` module structure from §4)
 - [ ] Java MCP SDK integration; MCP server over **Streamable HTTP** (SSE transport avoided — deprecated);
   stateless mode (or externalized session mapping) from the start so replicas need no session affinity
 - [ ] Server binds to localhost / trusted internal interfaces only (**no auth until Phase 6** — guardrail)

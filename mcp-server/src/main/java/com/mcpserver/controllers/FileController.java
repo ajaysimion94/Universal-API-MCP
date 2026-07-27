@@ -36,6 +36,12 @@ public class FileController {
         return fileService.getRoot();
     }
 
+    /** Flat snapshot used by source pickers; parentId preserves the folder hierarchy. */
+    @GetMapping("/tree")
+    public List<FileNode> tree() {
+        return fileService.listAll();
+    }
+
     @GetMapping("/{id}/children")
     public List<FileNode> children(@PathVariable String id) {
         return fileService.listChildren(id);

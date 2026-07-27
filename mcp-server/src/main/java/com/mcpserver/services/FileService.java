@@ -35,6 +35,10 @@ public class FileService {
         return repository.findChildren(parentId);
     }
 
+    public List<FileNode> listAll() {
+        return repository.findAll();
+    }
+
     public List<FileNode> getPath(String id) {
         return repository.findPath(id);
     }

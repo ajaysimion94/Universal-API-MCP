@@ -32,7 +32,7 @@ The server binds to `127.0.0.1` only — trusted internal network, no auth yet (
 
 | Tool | Version | Check |
 | --- | --- | --- |
-| Java (JDK) | 21+ | `java -version` |
+| Java (JDK) | 17+ (17, 20, and 21 supported) | `java -version` |
 | Maven | 3.9+ | `mvn -version` |
 | Node.js | 20+ (built and tested on 24) | `node -v` |
 | npm | 10+ | `npm -v` |
@@ -130,12 +130,14 @@ java -jar target/mcp-server.jar      # API works; UI 404s unless SPA was built o
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET`  | `/api/files` | Root folder |
+| `GET`  | `/api/files/tree` | Flat file-tree snapshot for source selection |
 | `GET`  | `/api/files/{id}/children` | List a folder's children (folders first, then files) |
 | `GET`  | `/api/files/{id}/path` | Breadcrumb path from root to the node |
 | `POST` | `/api/files/{parentId}/folders` | Create a subfolder (JSON body: `{"name": "..."}`) |
 | `POST` | `/api/files/{parentId}/upload` | Upload a single file (`multipart/form-data`, field `file`) |
 | `POST` | `/api/files/{parentId}/upload-folder` | Bulk upload a folder tree (see below) |
 | `DELETE` | `/api/files/{id}` | Delete a node and its descendants (root is protected) |
+| `POST` | `/api/summary-exports` | Download selected uploaded-file/connection RAG content as TXT |
 
 ### Folder upload (`upload-folder`)
 

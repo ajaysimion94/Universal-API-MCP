@@ -21,6 +21,17 @@ public class InMemoryFileRepository {
         return Optional.ofNullable(nodes.get(id));
     }
 
+    public List<FileNode> findAll() {
+        return nodes.values().stream()
+                .sorted((a, b) -> {
+                    if ("root".equals(a.id())) return -1;
+                    if ("root".equals(b.id())) return 1;
+                    int typeCompare = a.type().compareTo(b.type());
+                    return typeCompare != 0 ? typeCompare : a.name().compareToIgnoreCase(b.name());
+                })
+                .toList();
+    }
+
     public List<FileNode> findChildren(String parentId) {
         List<FileNode> children = new ArrayList<>();
         for (FileNode node : nodes.values()) {
