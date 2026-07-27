@@ -170,3 +170,96 @@ Format:
 **Why:** A chat page that only returns excerpts forces users to read chunks; the declined alternative (in-process LLM) cost too much RAM. External Copilot is free and in-process-nothing. Known costs, accepted by the user: (1) plain chat messages + retrieved excerpts **leave the device** for Microsoft's consumer API — the empty-state copy says so; (2) the API is undocumented and can break or change anytime; (3) **anonymous chat is gated server-side** (verified 2026-07-25: conversation creation works anonymously, the WS handshake 401s) — answer generation needs `chat.copilot.access-token` (+ `identity-type`/`cookies`) copied from a signed-in browser session, set via env vars (`CHAT_COPILOT_ACCESSTOKEN`, …), never committed. Also observed: a cookie session may create only **one** conversation (second create → 401), so the client resets to a pristine cookie session per new conversation.
 **Status:** active
 **Refs:** `copilot/Copilot*.java`; `services/CopilotChatService.java`; `services/ChatPromptBuilder.java`; `controllers/ChatController.java` (`/api/chat` SSE); `webui/src/components/ChatPage.tsx`; `webui/src/components/MarkdownText.tsx`; `application.yml` (`chat.copilot.*`)
+
+### 2026-07-26 — Absorb the `.filter` DSL from Postman-excel-report-automation as RQL; redesign the grammar rather than port it
+**Decision:** The `.filter` report DSL from the separate `Postman-excel-report-automation` CLI (Java 17, ~6,000 lines in `filter/`) will be brought into this server as a new **RQL** (Report Query Language) subsystem under `com.mcpserver.reports`, with a **breaking grammar redesign** rather than a straight port. Design is written up in `docs/report-query-design.md`; **no code has been written** — this entry records the design decision only. Three parts: (1) *Language* — replace the statement-per-verb grammar and its §7 "target matrix" with a uniform **dataset/pipeline** model (`let x = request "…" |> where … |> select …`), where every stage accepts every dataset. (2) *Fault tolerance* — the parser **never throws**; it returns `ParseResult(Program, List<Diagnostic>)` with `Error*` nodes in the tree and two resync levels (`;` for statements, `|>` for stages), and every node carries a `Span`. Diagnostics become structured records with stable codes (`RQL0xx`–`RQL3xx`), severity, and machine-applicable `Fix`es. (3) *IDE* — a `/reports` SPA page with **CodeMirror 6** wired to a pure `POST /api/reports/analyze` endpoint (diagnostics + completions + symbols, no execution), plus observed-response **schema inference** cached per tool to make field-name completion possible. Execution reuses the existing async job pattern and adds a first-class `PARTIAL` terminal state. Only the *language* and the *POI Excel renderer* (2,643 ln) are ported; the old repo's `http/`, `postman/`, `auth/`, and `cli/` packages are **dropped** in favour of `tools.ApiToolExecutor`, `tools.PostmanCollectionParser`, and `connectors.CredentialCipher`, which already exist here and are stronger.
+**Why:** The old query system's blockers are structural, not cosmetic: `FilterQueryParser.error()` throws on the first bad token (one typo blanks all editor feedback — fatal for live editing), diagnostics are formatted strings with no end position or severity, and the arbitrary target matrix is the direct cause of four of the ten rows in the old guide's own "Common Mistakes" table (`FILTER` can't target a union, `COLUMNS` can't target a lookup table, `EXPAND` has no `*`, and `JOIN` doesn't exist despite the runtime supporting it). A uniform dataset model deletes all four by construction. Pipelines over nested SQL were chosen specifically for IDE affordance — after `|>` the legal-token set is small and closed, which is the precondition for good completion — and because `|>` doubles as a free error-recovery resync point. Integration cost is unusually low: same language/build (Java 17→21 is source-compatible), and **`poi-ooxml:5.4.1` is already on the classpath transitively via `tika-parsers-standard-package`** (verified with `mvn dependency:tree`), so Excel output adds zero backend dependencies. CodeMirror 6 (~200KB) would be the SPA's first substantial UI dependency; Monaco was rejected at 2MB+. Accepted costs: (a) existing `.filter` files break — mitigated by hand-translating the 13 files in the old repo's `filters/` into a **workbook-equivalence migration corpus**, which is the only credible proof no semantics were lost; (b) **this is ahead of the tracker** — `docs/plan.md` still has Phases 1–2 open and report generation is Phase 3/4 work (closest to Phase 4's "an unseen API onboards by file"), so the sequencing is a deliberate choice, not an oversight.
+**Status:** proposed (design only — not implemented, not scheduled)
+**Refs:** `docs/report-query-design.md`; source project `/Users/ajaysimion/Documents/Development/Automation/Postman-excel-report-automation` (`docs/FILTER_GUIDE.md` §7/§10/§11, `filter/FilterQueryParser.java:1188`); `tools/ApiToolExecutor.java`; `tools/PostmanCollectionParser.java`
+
+### 2026-07-26 — Dashboards (RQD) are the primary target, not Excel; chart anti-patterns made unrepresentable in the language
+**Decision:** The report subsystem's primary output becomes an **interactive dashboard**, not a workbook. New document type `.rqd` — YAML front matter (title, connection, typed `params`) + markdown prose + fenced ` ```rql ` query blocks + component tags (`<BarChart data={…} x=… y=… />`) + `{{ expr }}` interpolation — i.e. the Evidence.dev/Observable "markdown and SQL mixed" genre, which is what the user's "HTML and SQL mixed" describes. Design in `docs/dashboard-design.md`; **no code written**. RQL (`docs/report-query-design.md`) stays presentation-free as the substrate so two renderers sit on one language, and **Excel is demoted to a projection** of a dashboard (charts → native POI charts where the form allows, otherwise the table twin — never a rasterized image, since a headless renderer would violate the no-Docker constraint). Four sub-decisions: (1) **Guardrails are structural, not documentation** — the grammar has no `y2` prop (dual-axis unrepresentable), no `color="#hex"` prop (color requested by role only: categorical/sequential/diverging/status), `<Filter>` is invalid inside a chart (per-chart filters unrepresentable), every chart auto-emits a non-optional accessible table twin, categorical series auto-fold to "Other" past 8, and scatter/bubble/small-multiples hard-**error** past 3 series; the rest are analyzer lints (`RQD3xx`) such as one-bar-bar-chart → use `<Stat>`. (2) **Client-side React with hand-rolled SVG, no charting library** — Recharts/visx/Plotly would be the largest thing in a bundle with 3 runtime deps and would fight every mark spec; CodeMirror stays the only substantial new frontend dependency. (3) The categorical palette is **computed and validated, not chosen** (see Why). (4) **Raw HTML in `.rqd` is rejected** — markdown + known component tags only; raw HTML buys a literal reading of "HTML mixed" at the cost of an XSS surface and a sanitizer to maintain, which becomes a real vulnerability the moment dashboards are shareable.
+**Why:** A dashboard *builder* lets users make misleading charts and hopes they don't; a dashboard *language* can make the bad chart impossible to express — that asymmetry is the whole argument for doing this as a DSL rather than a drag-and-drop UI. Dual-axis is banned because two arbitrary y-scales invent a correlation absent from the data; slot assignment hashes the **series key** rather than the row index so filtering never repaints survivors ("Acme is blue" stays true). On color, the palette was **validated with `dataviz/scripts/validate_palette.js` against this project's real chart surface** — `--bg-surface` `oklch(0.235 0.01 75)` = `#211d19`, not the reference `#1a1a19` — and the 8 dark steps (`#3987e5,#d95926,#199e70,#c98500,#d55181,#008300,#9085e9,#e66767`) pass all six checks (worst adjacent CVD ΔE 8.4 protan, normal-vision 19.3, all ≥3:1). Two project-specific findings came out of running it rather than reasoning: (a) only the **first three** slots clear the all-pairs test (ΔE 9.4), which is what sets the hard scatter cap at 3 — no reordering fixes it; (b) the brand amber `#f5a33a` is **L 0.78 (above the dark band's 0.67 ceiling) and only ΔE 11.1 from categorical slot 4 — below the hard normal-vision floor of 15**, so amber is *reserved* for `<Emphasis>` (where all other series are gray, making collision impossible), selection, hover, and focus, and is never a series slot. That independently confirms `.impeccable.md` principle 3 ("one accent, used like punctuation") by measurement rather than taste. Slot order is itself the CVD-safety mechanism and must not be changed without re-running the validator.
+**Status:** proposed (design only — not implemented, not scheduled)
+**Refs:** `docs/dashboard-design.md`; `docs/report-query-design.md` §1.4; `.impeccable.md` (principle 3, anti-references); `webui/src/styles.css` (`--bg-surface`, `--accent`; gains `--series-1…8`)
+
+### 2026-07-27 — Consumer Copilot is an opt-in plugin with an isolated browser profile
+**Decision:** The reverse-engineered consumer-Copilot answer path is a built-in optional plugin (`copilot-chat`) that defaults to disabled. Enabling it does not expose a token form. Instead, the plugin launches Chrome/Chromium with a dedicated profile at `./data/copilot-browser-profile`, a random localhost-only DevTools port, and an explicit Copilot tab. The user completes Microsoft's sign-in manually, then explicitly selects **Use signed-in session**; the app reads Copilot cookies/local storage only from that isolated profile and transfers the resulting credentials to `CopilotChatService` in memory. Disabling the plugin closes the controlled browser and clears the in-memory handoff. The user's default browser profile is never attached.
+**Why:** A normal cross-origin popup cannot expose `copilot.microsoft.com` session state, while Microsoft provides no supported consumer-Copilot OAuth/API flow for this non-tenant setup. A dedicated controlled profile makes the requested manual-login flow technically possible without pasting tokens or granting an extension access to the user's everyday browsing profile. The isolation also satisfies Chrome 136+'s requirement that remote debugging use a non-default user-data directory. Accepted risk: the upstream protocol remains undocumented and may break; prompts and retrieved excerpts still leave the device.
+
+### 2026-07-27 — Prefer Microsoft Edge for the dedicated Copilot browser
+
+**Decision:** The Copilot browser bridge auto-detects Microsoft Edge, Google Chrome, and Chromium on macOS, Windows, and Linux. Edge is preferred when more than one supported browser is installed because Copilot is a Microsoft service; `chat.copilot.browser-executable` remains the deterministic override.
+
+**Why:** Edge and Chrome expose the same Chromium DevTools Protocol used by the isolated manual-login bridge. First-class Edge discovery removes platform-specific setup while retaining the same localhost-only debugging endpoint and dedicated-profile isolation.
+**Status:** active (local-only compatibility bridge; replace with the official Microsoft 365 Copilot API if a licensed tenant becomes available)
+**Refs:** `plugins/CopilotChatPlugin.java`; `copilot/CopilotBrowserBridge.java`; `copilot/CopilotBrowserController.java`; `copilot/CopilotCredentialStore.java`; `webui/src/components/PluginsPage.tsx`; `DEPLOYMENT.md`
+
+### 2026-07-27 — Chat uses multi-conversation history and progressive evidence disclosure
+
+**Decision:** The Web UI keeps up to 25 independently selectable conversations in `localStorage`, capped at 50 turns each. Each conversation owns its Copilot continuation id, derives its title from the first user message, and appears in a persistent desktop history rail or compact-screen history panel. RAG and web evidence stays collapsed under every answer—including error fallbacks—with distinct document/result counts; expanding the evidence reveals the source list, and expanding an individual RAG file reveals its matching chunks. Consumed topbar query parameters are removed after submission so refreshing the page never resubmits the last prompt.
+
+**Why:** A flat transcript did not behave like a chat product, and expanded retrieval cards made the evidence visually louder than the answer. Client-side conversations add useful continuity without introducing the Phase-6 identity/ACL work needed for server-side history. Progressive disclosure keeps citations accessible while making the conversation the primary reading surface.
+
+**Status:** active
+
+**Refs:** `webui/src/components/ChatPage.tsx`; `webui/src/components.css`; `docs/plan.md`
+
+### 2026-07-27 — Copilot browser handoff separates normal sign-in from local session capture
+
+**Decision:** The isolated Copilot profile now uses two distinct browser launches. **Step 1** opens
+Edge/Chrome normally, with no DevTools or automation flags, so the user can complete Microsoft, Google,
+or federated authentication using the browser's standard security posture. **Step 2**, triggered only by
+the explicit **Connect signed-in session** action, closes that window and briefly relaunches the same
+isolated profile with a random localhost-only DevTools port. The bridge reads only storage and cookies
+applicable to `copilot.microsoft.com`, transfers them to the in-memory credential store, and immediately
+closes the debugging browser. The default browser profile is still never attached.
+
+**Why:** Google blocks account sign-in in remote-debugging browser sessions with “This browser or app
+may not be secure.” Keeping debugging enabled throughout manual sign-in made the original flow unusable
+for Google-backed accounts and unnecessarily extended the sensitive handoff window. Edge's visible
+Copilot can provide basic anonymous chat, but the reverse-engineered WebSocket used by this server has
+been observed to reject anonymous sessions; the plugin therefore still requires an authenticated
+Copilot session even though the standalone Edge experience may not.
+
+**Status:** active
+
+**Refs:** `copilot/CopilotBrowserBridge.java`; `copilot/CopilotBrowserController.java`;
+`webui/src/components/PluginsPage.tsx`; `DEPLOYMENT.md`
+
+### 2026-07-27 — “Connected” requires a completed Copilot protocol turn
+
+**Decision:** Capturing browser storage is no longer enough to mark the Copilot plugin active. The
+Connect action now validates the captured values through a short throwaway Copilot turn—including
+session warm-up, conversation creation, WebSocket handshake, challenge response, streamed answer, and
+the terminal `done` event—before publishing them to the shared chat client. Validation has a 30-second
+budget and reports the upstream failure inline. The WebSocket listener also publishes its opened socket
+from `onOpen` before requesting the first server frame, preventing an immediate challenge from racing
+the `buildAsync(...).get()` assignment and dereferencing a null socket.
+
+**Why:** A browser session could previously show **Connected** because it contained Copilot cookies even
+when the real chat exchange failed. Live diagnosis also exposed a concrete race: Copilot can send its
+challenge as soon as the socket opens, before the JDK completes the builder future on the caller thread.
+That failure produced no answer and left the UI waiting for the 180-second generation timeout.
+
+**Status:** active
+
+**Refs:** `copilot/CopilotWebSocket.java`; `copilot/CopilotClient.java`;
+`services/CopilotChatService.java`; `copilot/CopilotBrowserController.java`
+
+### 2026-07-27 — Remove the consumer Copilot answer connector
+
+**Decision:** Remove the reverse-engineered consumer-Copilot client, browser-profile handoff,
+session credentials, plugin, and `POST /api/chat` endpoint. The Chat page remains a persistent,
+client-side conversation interface, but plain text now uses the existing RAG search endpoint and
+renders cited sources directly. Imported `#`/`@` tool invocations are unchanged.
+
+**Why:** The consumer Copilot browser experience is not a supported automation surface. Browser-session
+handoff could report a captured session while the upstream chat socket rejected it, making the feature
+unreliable. Keeping retrieval local avoids sending prompts or files to that third-party service and
+leaves a clean seam for a future supported answer provider.
+
+**Status:** active; supersedes the consumer-Copilot decisions above.
+
+**Refs:** `webui/src/components/ChatPage.tsx`; `webui/src/components/PluginsPage.tsx`;
+`controllers/SearchController.java`; `DEPLOYMENT.md`

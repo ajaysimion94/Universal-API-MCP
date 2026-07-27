@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import {
   search,
-  chatStream,
   listPlugins,
   listTools,
   ApiToolInfo,
@@ -20,17 +19,19 @@ import {
   ExternalLinkIcon,
   AlertIcon,
   SendIcon,
-  StopIcon,
   TrashIcon,
+  PlusIcon,
+  BookIcon,
 } from "../icons";
 import { ToolFormPanel } from "./ToolFormPanel";
 import { ToolConfirmPanel } from "./ToolConfirmPanel";
 import { ToolResultPanel } from "./ToolResultPanel";
 import { MarkdownText } from "./MarkdownText";
 
-const HISTORY_KEY = "mcp.chat.history.v1";
-const CONVERSATION_KEY = "mcp.chat.conversation.v1";
+const STORE_KEY = "mcp.chat.conversations.v2";
+const LEGACY_HISTORY_KEY = "mcp.chat.history.v1";
 const MAX_STORED_TURNS = 50;
+const MAX_STORED_CONVERSATIONS = 25;
 
 /** The @/# token being typed at the end of the input, if any — drives autocomplete. */
 function activeToken(input: string): { sigil: "@" | "#"; fragment: string; start: number } | null {
@@ -74,56 +75,109 @@ interface ChatTurn {
   payload?: AssistantPayload;
 }
 
-function loadHistory(): ChatTurn[] {
-  try {
-    const raw = localStorage.getItem(HISTORY_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    // A reload mid-turn leaves stale in-flight states behind — settle them.
-    return parsed.map((t: ChatTurn) => {
-      if (t.payload?.kind === "loading") {
-        return { ...t, payload: { kind: "error", message: "Interrupted before a response arrived." } };
-      }
-      if (t.payload?.kind === "answer" && t.payload.streaming) {
-        return { ...t, payload: { ...t.payload, streaming: false, stopped: true } };
-      }
-      return t;
-    });
-  } catch {
-    return [];
-  }
+interface ChatConversation {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  turns: ChatTurn[];
 }
 
-function saveHistory(turns: ChatTurn[]) {
+interface ChatStore {
+  activeId: string;
+  conversations: ChatConversation[];
+}
+
+function freshConversation(): ChatConversation {
+  return {
+    id: crypto.randomUUID(),
+    title: "New chat",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    turns: [],
+  };
+}
+
+/** A reload mid-turn leaves stale in-flight states behind — settle them. */
+function settleTurns(turns: ChatTurn[]): ChatTurn[] {
+  if (!Array.isArray(turns)) return [];
+  return turns.map((t) => {
+    if (t.payload?.kind === "loading") {
+      return { ...t, payload: { kind: "error", message: "Interrupted before a response arrived." } };
+    }
+    if (t.payload?.kind === "answer" && t.payload.streaming) {
+      return { ...t, payload: { ...t.payload, streaming: false, stopped: true } };
+    }
+    return t;
+  });
+}
+
+function titleFromText(text: string): string {
+  return text.length > 48 ? text.slice(0, 48).trimEnd() + "…" : text;
+}
+
+function loadStore(): ChatStore {
   try {
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(turns.slice(-MAX_STORED_TURNS)));
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.conversations) && parsed.conversations.length > 0) {
+        const conversations: ChatConversation[] = parsed.conversations.map((raw: unknown) => {
+          const { id, title, createdAt, updatedAt, turns } = raw as ChatConversation;
+          return { id, title, createdAt, updatedAt, turns: settleTurns(turns) };
+        });
+        const activeId = conversations.some((c) => c.id === parsed.activeId)
+          ? parsed.activeId
+          : conversations[0].id;
+        return { activeId, conversations };
+      }
+    }
+    // One-time migration from the single-thread v1 keys.
+    const legacyRaw = localStorage.getItem(LEGACY_HISTORY_KEY);
+    const legacyTurns = settleTurns(legacyRaw ? JSON.parse(legacyRaw) : []);
+    localStorage.removeItem(LEGACY_HISTORY_KEY);
+    localStorage.removeItem("mcp.chat.conversation.v1");
+    const migrated = freshConversation();
+    migrated.turns = legacyTurns;
+    const firstUser = legacyTurns.find((t) => t.role === "user" && t.text);
+    if (firstUser?.text) migrated.title = titleFromText(firstUser.text);
+    if (legacyTurns.length > 0) {
+      migrated.createdAt = legacyTurns[0].createdAt;
+      migrated.updatedAt = legacyTurns[legacyTurns.length - 1].createdAt;
+    }
+    return { activeId: migrated.id, conversations: [migrated] };
+  } catch {
+    // corrupted storage — start fresh
+  }
+  const conv = freshConversation();
+  return { activeId: conv.id, conversations: [conv] };
+}
+
+function saveStore(store: ChatStore) {
+  try {
+    const conversations = store.conversations
+      .filter((c) => c.turns.length > 0 || c.id === store.activeId)
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, MAX_STORED_CONVERSATIONS)
+      .map((c) => ({ ...c, turns: c.turns.slice(-MAX_STORED_TURNS) }));
+    localStorage.setItem(STORE_KEY, JSON.stringify({ activeId: store.activeId, conversations }));
   } catch {
     // storage full/unavailable — history just won't persist this session
   }
 }
 
-function loadConversationId(): string | null {
-  try {
-    return localStorage.getItem(CONVERSATION_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function saveConversationId(id: string | null) {
-  try {
-    if (id) localStorage.setItem(CONVERSATION_KEY, id);
-    else localStorage.removeItem(CONVERSATION_KEY);
-  } catch {
-    // non-persistent storage — follow-up turns simply start a fresh conversation
-  }
+/** Today → clock time, older → short date. */
+function formatConversationTime(ts: number): string {
+  const d = new Date(ts);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  if (sameDay) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
 function groupLocalResults(results: SearchResult[]): FileGroup[] {
   const map = new Map<string, FileGroup>();
   for (const r of results) {
-    const key = r.sourceName;
+    const key = `${r.sourceKind}:${r.sourceName}:${r.sourcePath}:${r.sourceUrl}`;
     let g = map.get(key);
     if (!g) {
       g = {
@@ -145,7 +199,7 @@ function groupLocalResults(results: SearchResult[]): FileGroup[] {
   return groups;
 }
 
-/** A plain message goes to the chat answer path; the #/@ grammar stays on deterministic tools. */
+/** The #/@ grammar invokes tools; every other message retrieves knowledge-base evidence. */
 function isToolInvocation(text: string): boolean {
   const t = text.trimStart();
   return t.startsWith("#") || t.startsWith("@");
@@ -153,22 +207,29 @@ function isToolInvocation(text: string): boolean {
 
 export function ChatPage() {
   const [params, setParams] = useSearchParams();
-  const [turns, setTurns] = useState<ChatTurn[]>(() => loadHistory());
-  const [conversationId, setConversationId] = useState<string | null>(() => loadConversationId());
+  const [store, setStore] = useState<ChatStore>(() => loadStore());
   const [input, setInput] = useState("");
   const [webOn, setWebOn] = useState(false);
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [pluginsLoaded, setPluginsLoaded] = useState(false);
   const [initialWebWarning, setInitialWebWarning] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const threadEndRef = useRef<HTMLDivElement>(null);
   const lastConsumedQuery = useRef<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
 
   // Tool autocomplete: the full tool list is small — fetch once, filter as you type.
   const [allTools, setAllTools] = useState<ApiToolInfo[]>([]);
   const [acIndex, setAcIndex] = useState(0);
   const [acDismissed, setAcDismissed] = useState(false);
+
+  const active = store.conversations.find((c) => c.id === store.activeId) ?? store.conversations[0];
+  const turns = active.turns;
+
+  const sortedConversations = useMemo(
+    () => [...store.conversations].sort((a, b) => b.updatedAt - a.updatedAt),
+    [store.conversations],
+  );
 
   const searxngReady = useMemo(() => {
     const p = plugins.find((p) => p.id === "searxng");
@@ -187,13 +248,56 @@ export function ChatPage() {
   }, []);
 
   useEffect(() => {
-    saveHistory(turns);
+    saveStore(store);
+  }, [store]);
+
+  useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [turns]);
+  }, [turns, store.activeId]);
 
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
+
+  /** Patch a conversation by id — a submitted turn keeps targeting the chat it started in. */
+  const patchConversation = (id: string, fn: (c: ChatConversation) => ChatConversation) =>
+    setStore((prev) => ({
+      ...prev,
+      conversations: prev.conversations.map((c) => (c.id === id ? fn(c) : c)),
+    }));
+
+  const newChat = () => {
+    setStore((prev) => {
+      const current = prev.conversations.find((c) => c.id === prev.activeId);
+      if (current && current.turns.length === 0) return prev; // already on a fresh chat
+      const conv = freshConversation();
+      return { activeId: conv.id, conversations: [conv, ...prev.conversations] };
+    });
+    setHistoryOpen(false);
+    inputRef.current?.focus();
+  };
+
+  const selectConversation = (id: string) => {
+    if (id === store.activeId) return;
+    setStore((prev) => ({ ...prev, activeId: id }));
+    setHistoryOpen(false);
+    inputRef.current?.focus();
+  };
+
+  const deleteConversation = (id: string) => {
+    setStore((prev) => {
+      const remaining = prev.conversations.filter((c) => c.id !== id);
+      if (remaining.length === 0) {
+        const conv = freshConversation();
+        return { activeId: conv.id, conversations: [conv] };
+      }
+      return {
+        activeId: prev.activeId === id ? remaining[0].id : prev.activeId,
+        conversations: remaining,
+      };
+    });
+    setHistoryOpen(false);
+  };
 
   const token = useMemo(() => activeToken(input), [input]);
 
@@ -264,13 +368,13 @@ export function ChatPage() {
     }
   };
 
-  const submit = async (raw: string) => {
+  const submit = async (raw: string, includeWeb = webOn) => {
     const trimmed = raw.trim();
     if (!trimmed) return;
 
     lastConsumedQuery.current = trimmed;
-    setParams({ q: trimmed, ...(webOn ? { web: "1" } : {}) });
 
+    const convId = active.id;
     const userTurn: ChatTurn = {
       id: crypto.randomUUID(),
       role: "user",
@@ -284,16 +388,25 @@ export function ChatPage() {
       payload: { kind: "loading" },
     };
 
-    setTurns((prev) => [...prev, userTurn, assistantTurn]);
+    patchConversation(convId, (c) => ({
+      ...c,
+      title: c.turns.length === 0 ? titleFromText(trimmed) : c.title,
+      updatedAt: Date.now(),
+      turns: [...c.turns, userTurn, assistantTurn],
+    }));
     setInput("");
 
     const patchAssistant = (fn: (t: ChatTurn) => ChatTurn) =>
-      setTurns((prev) => prev.map((t) => (t.id === assistantTurn.id ? fn(t) : t)));
+      patchConversation(convId, (c) => ({
+        ...c,
+        updatedAt: Date.now(),
+        turns: c.turns.map((t) => (t.id === assistantTurn.id ? fn(t) : t)),
+      }));
 
     // #/@ — deterministic tool path, unchanged (no answer generation involved).
     if (isToolInvocation(trimmed)) {
       try {
-        const data = await search(trimmed, 20, webOn);
+        const data = await search(trimmed, 20, includeWeb);
         patchAssistant((t) => ({ ...t, payload: { kind: "search", data } }));
       } catch (e) {
         const message = e instanceof Error ? e.message : "Request failed";
@@ -302,61 +415,18 @@ export function ChatPage() {
       return;
     }
 
-    // Plain message — RAG-grounded answer streamed from /api/chat.
-    const controller = new AbortController();
-    abortRef.current = controller;
-    let sources: SearchResult[] = [];
-    const errorPayload = (message: string): AssistantPayload => ({
-      kind: "error",
-      message,
-      sources,
-      retryText: trimmed,
-    });
+    // Plain messages return retrieved evidence. No external answer model is invoked.
     try {
-      await chatStream(trimmed, conversationId, webOn, controller.signal, {
-        onSources: (s) => {
-          sources = s;
-          patchAssistant((t) => ({
-            ...t,
-            payload: { kind: "answer", text: "", sources: s, streaming: true },
-          }));
-        },
-        onChunk: (text) =>
-          patchAssistant((t) =>
-            t.payload?.kind === "answer"
-              ? { ...t, payload: { ...t.payload, text: t.payload.text + text } }
-              : { ...t, payload: { kind: "answer", text, sources, streaming: true } },
-          ),
-        onDone: (newConversationId) => {
-          if (newConversationId) {
-            setConversationId(newConversationId);
-            saveConversationId(newConversationId);
-          }
-          patchAssistant((t) =>
-            t.payload?.kind === "answer"
-              ? { ...t, payload: { ...t.payload, streaming: false } }
-              : t,
-          );
-        },
-        onError: (message) => patchAssistant((t) => ({ ...t, payload: errorPayload(message) })),
-      });
+      const data = await search(trimmed, 20, includeWeb);
+      patchAssistant((t) => ({ ...t, payload: { kind: "search", data } }));
     } catch (e) {
-      if (controller.signal.aborted) {
-        patchAssistant((t) =>
-          t.payload?.kind === "answer"
-            ? { ...t, payload: { ...t.payload, streaming: false, stopped: true } }
-            : { ...t, payload: { kind: "error", message: "Stopped before the answer arrived.", retryText: trimmed } },
-        );
-      } else {
-        const message = e instanceof Error ? e.message : "Request failed";
-        patchAssistant((t) => ({ ...t, payload: errorPayload(message) }));
-      }
-    } finally {
-      if (abortRef.current === controller) abortRef.current = null;
+      const message = e instanceof Error ? e.message : "Request failed";
+      patchAssistant((t) => ({
+        ...t,
+        payload: { kind: "error", message, retryText: trimmed },
+      }));
     }
   };
-
-  const stopGenerating = () => abortRef.current?.abort();
 
   // Topbar's independent quick-search box (`/?q=...`) — each new value becomes a new turn.
   useEffect(() => {
@@ -365,234 +435,204 @@ export function ChatPage() {
     const q = params.get("q") ?? "";
     if (!q.trim() || q === lastConsumedQuery.current) return;
     lastConsumedQuery.current = q;
-    if (urlWeb && !searxngReady) {
+    const includeWeb = urlWeb && searxngReady;
+    if (urlWeb && !includeWeb) {
       setWebOn(false);
       setInitialWebWarning(true);
     } else {
-      setWebOn(urlWeb);
+      setWebOn(includeWeb);
     }
-    submit(q);
+    setParams({}, { replace: true });
+    submit(q, includeWeb);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pluginsLoaded, params]);
-
-  const clearChat = () => {
-    setTurns([]);
-    saveHistory([]);
-    setConversationId(null);
-    saveConversationId(null);
-    inputRef.current?.focus();
-  };
 
   const isToolQuery = isToolInvocation(input);
   const lastTurn = turns.length > 0 ? turns[turns.length - 1] : null;
   const isGenerating =
     !!lastTurn &&
-    (lastTurn.payload?.kind === "loading" ||
-      (lastTurn.payload?.kind === "answer" && lastTurn.payload.streaming));
-
-  // Deterministic aggregation of everything retrieved this session — no LLM involved, just
-  // dedup-by-chunk-id (the same chunk can resurface across several queries) and the same
-  // per-source grouping already used for a single turn's results.
-  const { summaryGroups, summaryWebResults, summaryQueryCount } = useMemo(() => {
-    const seen = new Set<string>();
-    const merged: SearchResult[] = [];
-    let queryCount = 0;
-    for (const t of turns) {
-      if (t.role !== "assistant") continue;
-      const results =
-        t.payload?.kind === "search" && t.payload.data.mode === "rag"
-          ? t.payload.data.results
-          : t.payload?.kind === "answer"
-            ? t.payload.sources
-            : null;
-      if (!results) continue;
-      if (results.length > 0) queryCount++;
-      for (const r of results) {
-        if (!seen.has(r.id)) {
-          seen.add(r.id);
-          merged.push(r);
-        }
-      }
-    }
-    return {
-      summaryGroups: groupLocalResults(merged.filter((r) => r.sourceKind !== "web")),
-      summaryWebResults: merged.filter((r) => r.sourceKind === "web"),
-      summaryQueryCount: queryCount,
-    };
-  }, [turns]);
-  const [summaryOpen, setSummaryOpen] = useState(false);
+    lastTurn.payload?.kind === "loading";
+  const activeMessageCount = turns.filter((turn) => turn.role === "user").length;
 
   return (
     <div className="chat-page">
-      {(summaryGroups.length > 0 || summaryWebResults.length > 0) && (
-        <div className="chat-summary-bar">
-          <div className="chat-summary-inner">
-            <button
-              type="button"
-              className="chat-summary-toggle"
-              onClick={() => setSummaryOpen((v) => !v)}
-              aria-expanded={summaryOpen}
-            >
-              <ChevronRightIcon size={13} className={`file-group-chevron ${summaryOpen ? "chev-open" : ""}`} />
-              <span className="mono">
-                Retrieved so far: {summaryGroups.length} {summaryGroups.length === 1 ? "document" : "documents"}
-                {summaryWebResults.length > 0 && `, ${summaryWebResults.length} web`} across {summaryQueryCount}{" "}
-                {summaryQueryCount === 1 ? "query" : "queries"}
-              </span>
-            </button>
-            {summaryOpen && (
-              <div className="chat-summary-body">
-                {summaryGroups.length > 0 && (
-                  <ol className="file-list">
-                    {summaryGroups.map((group, i) => (
-                      <FileGroupCard key={"summary-" + group.sourceName} group={group} rank={i + 1} query="" />
-                    ))}
-                  </ol>
-                )}
-                {summaryWebResults.length > 0 && (
-                  <ol className="web-result-list">
-                    {summaryWebResults.map((r, i) => (
-                      <WebResultCard key={"summary-" + r.id} result={r} rank={i + 1} query="" />
-                    ))}
-                  </ol>
-                )}
-              </div>
-            )}
-          </div>
+      <aside
+        id="chat-history"
+        className={`chat-history-rail ${historyOpen ? "is-mobile-open" : ""}`}
+        aria-label="Conversation history"
+      >
+        <div className="chat-history-header">
+          <span className="chat-history-title">Conversations</span>
+          <button type="button" className="btn btn-sm chat-history-new" onClick={newChat}>
+            <PlusIcon size={13} />
+            New chat
+          </button>
         </div>
-      )}
+        <div className="chat-history-list">
+          {sortedConversations.map((c) => {
+            const messageCount = c.turns.filter((t) => t.role === "user").length;
+            return (
+              <div key={c.id} className={`chat-history-item ${c.id === active.id ? "active" : ""}`}>
+                <button
+                  type="button"
+                  className="chat-history-item-main"
+                  onClick={() => selectConversation(c.id)}
+                  aria-current={c.id === active.id ? "true" : undefined}
+                >
+                  <span className="chat-history-item-title">{c.title}</span>
+                  <span className="chat-history-item-meta mono">
+                    {formatConversationTime(c.updatedAt)}
+                    {messageCount > 0 && ` · ${messageCount} ${messageCount === 1 ? "message" : "messages"}`}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="chat-history-item-delete"
+                  onClick={() => deleteConversation(c.id)}
+                  title="Delete conversation"
+                  aria-label={`Delete conversation: ${c.title}`}
+                >
+                  <TrashIcon size={13} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </aside>
 
-      <div className="chat-thread">
-        {turns.length === 0 && (
-          <div className="chat-empty-state">
-            <h1 className="search-title">Chat with the knowledge base</h1>
-            <p className="search-subtitle">
-              Search retrieves cited context from your knowledge base. Generated answers are available only
-              when the optional Copilot Chat (legacy) plugin is enabled and configured. Type{" "}
-              <code className="hash-hint">
-                <HashIcon size={12} /> keyword
-              </code>{" "}
-              to invoke a tool deterministically.
-            </p>
-          </div>
-        )}
-
-        {initialWebWarning && (
-          <div className="warning-banner" role="status">
-            <AlertIcon size={16} />
-            <span>Web search is unavailable — the SearXNG plugin is not installed or active.</span>
-            <Link to="/plugins" className="btn btn-sm">Go to Plugins</Link>
-          </div>
-        )}
-
-        {turns.map((turn) =>
-          turn.role === "user" ? (
-            <UserTurnBlock key={turn.id} text={turn.text ?? ""} createdAt={turn.createdAt} />
-          ) : (
-            <AssistantTurnBlock
-              key={turn.id}
-              payload={turn.payload}
-              setInput={setInput}
-              focusInput={() => inputRef.current?.focus()}
-              onRetry={submit}
-            />
-          ),
-        )}
-        <div ref={threadEndRef} />
-      </div>
-
-      <div className="chat-composer-bar">
-        <form
-          className="search-box chat-composer"
-          onSubmit={(e) => {
-            e.preventDefault();
-            submit(input);
-          }}
-        >
-          <SearchIcon size={18} className="search-box-icon" />
-          <input
-            ref={inputRef}
-            type="text"
-            className={`search-box-input ${isToolQuery ? "is-tool" : ""}`}
-            value={input}
-            onChange={(e) => {
-              setInput(e.target.value);
-              setAcDismissed(false);
-            }}
-            onKeyDown={handleInputKeyDown}
-            placeholder="Ask a question, or @app #tool_name…"
-            aria-label="Chat message"
-            autoComplete="off"
-          />
-          {acItems.length > 0 && (
-            <ul className="tool-autocomplete" role="listbox">
-              {acItems.map((item, i) => (
-                <li key={item.key} role="option" aria-selected={i === acIndex}>
-                  <button
-                    type="button"
-                    className={`tool-ac-item ${i === acIndex ? "tool-ac-active" : ""}`}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      acceptSuggestion(item);
-                    }}
-                    onMouseEnter={() => setAcIndex(i)}
-                  >
-                    {item.sigil === "@" ? (
-                      <AtSignIcon size={13} className="tool-ac-icon" />
-                    ) : (
-                      <HashIcon size={13} className="tool-ac-icon" />
-                    )}
-                    <span className="tool-ac-name mono">{item.label}</span>
-                    {item.method && (
-                      <span className={`method-badge mono ${item.method === "GET" ? "" : "method-write"}`}>
-                        {item.method}
-                      </span>
-                    )}
-                    <span className="tool-ac-detail">{item.detail}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-          <label className="web-toggle" title={!searxngReady ? "Web search requires SearXNG — install on the Plugins page" : "Augment results with live web content"}>
-            <input
-              type="checkbox"
-              checked={webOn}
-              disabled={!searxngReady}
-              onChange={(e) => setWebOn(e.target.checked)}
-            />
-            <GlobeIcon size={15} />
-            <span className="web-toggle-label">Web</span>
-          </label>
+      <div className="chat-main">
+        <header className="chat-conversation-header">
           <button
             type="button"
-            className="btn btn-sm chat-clear-btn"
-            onClick={clearChat}
-            disabled={turns.length === 0}
-            title="Clear chat"
-            aria-label="Clear chat"
+            className="btn btn-sm chat-history-mobile-toggle"
+            aria-controls="chat-history"
+            aria-expanded={historyOpen}
+            onClick={() => setHistoryOpen((open) => !open)}
           >
-            <TrashIcon size={14} />
+            <BookIcon size={14} />
+            History
           </button>
-          {isGenerating ? (
-            <button
-              type="button"
-              className="btn btn-sm chat-stop-btn"
-              onClick={stopGenerating}
-              title="Stop generating"
-            >
-              <StopIcon size={13} />
-              Stop
-            </button>
-          ) : (
-            <button type="submit" className="btn btn-primary search-box-submit" disabled={!input.trim()}>
-              <SendIcon size={16} />
-              Send
-            </button>
-          )}
-        </form>
-      </div>
+          <div className="chat-conversation-heading">
+            <h1 className="chat-conversation-title">{active.title}</h1>
+            <span className="chat-conversation-meta mono">
+              {activeMessageCount} {activeMessageCount === 1 ? "message" : "messages"}
+            </span>
+          </div>
+        </header>
 
+        <div className="chat-thread">
+          {turns.length === 0 && (
+            <div className="chat-empty-state">
+              <h1 className="search-title">Chat with the knowledge base</h1>
+              <p className="search-subtitle">
+                Search retrieves cited context from your knowledge base.{" "}
+                Type{" "}
+                <code className="hash-hint">
+                  <HashIcon size={12} /> keyword
+                </code>{" "}
+                to invoke a tool deterministically.
+              </p>
+            </div>
+          )}
+
+          {initialWebWarning && (
+            <div className="warning-banner" role="status">
+              <AlertIcon size={16} />
+              <span>Web search is unavailable — the SearXNG plugin is not installed or active.</span>
+              <Link to="/plugins" className="btn btn-sm">Go to Plugins</Link>
+            </div>
+          )}
+
+          {turns.map((turn) =>
+            turn.role === "user" ? (
+              <UserTurnBlock key={turn.id} text={turn.text ?? ""} createdAt={turn.createdAt} />
+            ) : (
+              <AssistantTurnBlock
+                key={turn.id}
+                payload={turn.payload}
+                setInput={setInput}
+                focusInput={() => inputRef.current?.focus()}
+                onRetry={submit}
+              />
+            ),
+          )}
+          <div ref={threadEndRef} />
+        </div>
+
+        <div className="chat-composer-bar">
+          <form
+            className="search-box chat-composer"
+            onSubmit={(e) => {
+              e.preventDefault();
+              submit(input);
+            }}
+          >
+            <SearchIcon size={18} className="search-box-icon" />
+            <input
+              ref={inputRef}
+              type="text"
+              className={`search-box-input ${isToolQuery ? "is-tool" : ""}`}
+              value={input}
+              onChange={(e) => {
+                setInput(e.target.value);
+                setAcDismissed(false);
+              }}
+              onKeyDown={handleInputKeyDown}
+              placeholder="Ask a question, or @app #tool_name…"
+              aria-label="Chat message"
+              autoComplete="off"
+            />
+            {acItems.length > 0 && (
+              <ul className="tool-autocomplete" role="listbox">
+                {acItems.map((item, i) => (
+                  <li key={item.key} role="option" aria-selected={i === acIndex}>
+                    <button
+                      type="button"
+                      className={`tool-ac-item ${i === acIndex ? "tool-ac-active" : ""}`}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        acceptSuggestion(item);
+                      }}
+                      onMouseEnter={() => setAcIndex(i)}
+                    >
+                      {item.sigil === "@" ? (
+                        <AtSignIcon size={13} className="tool-ac-icon" />
+                      ) : (
+                        <HashIcon size={13} className="tool-ac-icon" />
+                      )}
+                      <span className="tool-ac-name mono">{item.label}</span>
+                      {item.method && (
+                        <span className={`method-badge mono ${item.method === "GET" ? "" : "method-write"}`}>
+                          {item.method}
+                        </span>
+                      )}
+                      <span className="tool-ac-detail">{item.detail}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <label className="web-toggle" title={!searxngReady ? "Web search requires SearXNG — install on the Plugins page" : "Augment results with live web content"}>
+              <input
+                type="checkbox"
+                checked={webOn}
+                disabled={!searxngReady}
+                onChange={(e) => setWebOn(e.target.checked)}
+              />
+              <GlobeIcon size={15} />
+              <span className="web-toggle-label">Web</span>
+            </label>
+            <button
+              type="submit"
+              className="btn btn-primary search-box-submit"
+              disabled={!input.trim() || isGenerating}
+            >
+              <SendIcon size={16} />
+              Search
+            </button>
+          </form>
+        </div>
+      </div>
     </div>
   );
 }
@@ -674,7 +714,7 @@ function ErrorView({
       {payload.sources && payload.sources.length > 0 && (
         <>
           <p className="chat-error-fallback">The retrieved excerpts are still available:</p>
-          <SourcesDisclosure sources={payload.sources} defaultOpen />
+          <SourcesDisclosure sources={payload.sources} />
         </>
       )}
     </div>
@@ -696,11 +736,15 @@ function AnswerView({ payload }: { payload: Extract<AssistantPayload, { kind: "a
   );
 }
 
-/** Collapsible per-turn source list: local chunks grouped by file, web results as links. */
-function SourcesDisclosure({ sources, defaultOpen = false }: { sources: SearchResult[]; defaultOpen?: boolean }) {
-  const [open, setOpen] = useState(defaultOpen);
+/**
+ * Per-turn evidence stays hidden behind per-type counts. Expanding it reveals each RAG
+ * file group and web result without overwhelming the conversation transcript.
+ */
+function SourcesDisclosure({ sources, query = "" }: { sources: SearchResult[]; query?: string }) {
+  const [open, setOpen] = useState(false);
   const localGroups = useMemo(() => groupLocalResults(sources.filter((s) => s.sourceKind !== "web")), [sources]);
   const webSources = useMemo(() => sources.filter((s) => s.sourceKind === "web"), [sources]);
+  const evidenceCount = localGroups.length + webSources.length;
 
   return (
     <div className="chat-sources">
@@ -709,27 +753,53 @@ function SourcesDisclosure({ sources, defaultOpen = false }: { sources: SearchRe
         className="chat-sources-toggle"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
+        aria-label={`${open ? "Hide" : "View"} ${evidenceCount} evidence sources`}
       >
-        <ChevronRightIcon size={13} className={`file-group-chevron ${open ? "chev-open" : ""}`} />
-        <span className="mono">
-          Sources ({sources.length})
+        <span className="chat-sources-label">Evidence</span>
+        <span className="chat-source-count mono">
+          <FileIcon size={12} />
+          RAG <strong>{localGroups.length}</strong>
+        </span>
+        <span className="chat-source-count mono">
+          <GlobeIcon size={12} />
+          Web <strong>{webSources.length}</strong>
+        </span>
+        <span className="chat-sources-action">
+          {open ? "Hide sources" : "View sources"}
+          <ChevronRightIcon size={13} className={`file-group-chevron ${open ? "chev-open" : ""}`} />
         </span>
       </button>
       {open && (
         <div className="chat-sources-body">
           {localGroups.length > 0 && (
-            <ol className="file-list">
-              {localGroups.map((group, i) => (
-                <FileGroupCard key={"src-" + group.sourceName} group={group} rank={i + 1} query="" />
-              ))}
-            </ol>
+            <section className="chat-sources-section">
+              <h4 className="chat-sources-section-title">
+                RAG files <span className="mono">{localGroups.length}</span>
+              </h4>
+              <ol className="file-list">
+                {localGroups.map((group, i) => (
+                  <FileGroupCard
+                    key={`src-${group.sourceKind}-${group.sourceName}-${group.sourcePath}-${group.sourceUrl}`}
+                    group={group}
+                    rank={i + 1}
+                    query={query}
+                    defaultExpanded={false}
+                  />
+                ))}
+              </ol>
+            </section>
           )}
           {webSources.length > 0 && (
-            <ol className="web-result-list">
-              {webSources.map((r, i) => (
-                <WebResultCard key={"src-" + r.id} result={r} rank={i + 1} query="" />
-              ))}
-            </ol>
+            <section className="chat-sources-section">
+              <h4 className="chat-sources-section-title">
+                Web sources <span className="mono">{webSources.length}</span>
+              </h4>
+              <ol className="web-result-list">
+                {webSources.map((r, i) => (
+                  <WebResultCard key={"src-" + r.id} result={r} rank={i + 1} query={query} />
+                ))}
+              </ol>
+            </section>
           )}
         </div>
       )}
@@ -842,55 +912,16 @@ function SearchResponseView({
   }
 
   if (response.mode === "rag") {
-    return (
-      <>
-        <div className="results-meta">
-          <span className="results-count mono">
-            {localGroups.length} {localGroups.length === 1 ? "file" : "files"}
-          </span>
-          {webResults.length > 0 && (
-            <>
-              <span className="results-sep">·</span>
-              <span className="results-web mono">
-                <GlobeIcon size={12} /> {webResults.length} web
-              </span>
-            </>
-          )}
-          <span className="results-sep">·</span>
-          <span className="results-chunks mono">
-            {response.total} {response.total === 1 ? "match" : "matches"}
-          </span>
+    if (localGroups.length === 0 && webResults.length === 0) {
+      return (
+        <div className="search-empty">
+          <span className="empty-line">No matching documents.</span>
+          <span className="empty-hint">Upload files via the Files page, then ask again.</span>
         </div>
-
-        {localGroups.length === 0 && webResults.length === 0 ? (
-          <div className="search-empty">
-            <span className="empty-line">No matching documents.</span>
-            <span className="empty-hint">Upload files via the Files page, then ask again.</span>
-          </div>
-        ) : (
-          <>
-            {localGroups.length > 0 && (
-              <ol className="file-list">
-                {localGroups.map((group, i) => (
-                  <FileGroupCard key={"local-" + group.sourceName} group={group} rank={i + 1} query={response.query} />
-                ))}
-              </ol>
-            )}
-            {webResults.length > 0 && (
-              <section className="results-section results-section-web">
-                <h2 className="results-section-title">
-                  <GlobeIcon size={14} /> From the web
-                </h2>
-                <ol className="web-result-list">
-                  {webResults.map((r, i) => (
-                    <WebResultCard key={r.id} result={r} rank={i + 1} query={response.query} />
-                  ))}
-                </ol>
-              </section>
-            )}
-          </>
-        )}
-      </>
+      );
+    }
+    return (
+      <SourcesDisclosure sources={response.results} query={response.query} />
     );
   }
 
@@ -901,12 +932,14 @@ function FileGroupCard({
   group,
   rank,
   query,
+  defaultExpanded,
 }: {
   group: FileGroup;
   rank: number;
   query: string;
+  defaultExpanded?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(rank === 1);
+  const [expanded, setExpanded] = useState(defaultExpanded ?? rank === 1);
   const matchCount = group.chunks.length;
 
   return (

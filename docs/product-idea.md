@@ -323,12 +323,9 @@ native-only constraint), driving the same business services the MCP layer adapts
 - **Chat** — a persistent conversation thread over one input box. History is kept **client-side only**
   (browser `localStorage`, no server-side chat storage, no cross-device sync), so prior turns stay visible
   as new ones are added rather than being replaced:
-  - **Plain-text messages** → RAG-grounded answer generation: retrieval (§5.6) grounds a generated,
-    streamed answer with numbered citations, and the cited sources render under each answer
-    (`POST /api/chat`, SSE). Generation runs through an external Copilot backend — the message and its
-    retrieved excerpts leave the device (the empty-state copy says so), and when generation fails or is
-    unconfigured the raw excerpts are shown instead. The MCP context path stays retrieval-only
-    (see DECISIONS.md 2026-07-25, second entry).
+  - **Plain-text messages** → RAG-grounded retrieval: the Chat page calls `GET /api/search` and renders
+    the returned cited sources directly. It does not send prompts or retrieved excerpts to an external
+    answer-generation backend. The MCP context path stays retrieval-only.
   - **`#` keyword invocation** → deterministic tool routing: `#<app>_<request-name> "primary argument"`
     (e.g. `#todo_app_create_todo "Need to meet chairman"`) resolves the named tool directly — no
     classifier, no LLM. Read tools execute immediately and render results; state-changing tools render

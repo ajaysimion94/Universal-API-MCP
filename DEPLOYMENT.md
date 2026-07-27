@@ -188,42 +188,13 @@ curl "http://127.0.0.1:8080/api/search?q=database+outage+failover&web=true"
 
 ---
 
-## The chat API (Web UI answer path)
+## Chat page
 
-| Method | Path | Description |
-| --- | --- | --- |
-| `POST` | `/api/chat` | One chat turn as Server-Sent Events: RAG-grounded answer generated via Microsoft Copilot |
+The Chat page keeps local conversation history in the browser and displays the cited RAG results for
+each question. It uses the same `GET /api/search` endpoint as the search surface; it does not send
+prompts, files, browser sessions, or credentials to an external answer-generation service.
 
-Request body: `{"message": "...", "conversationId": null, "web": false}`. Response is
-`text/event-stream` with events in order:
-
-- `sources` — the RAG grounding for the turn (same JSON shape as `/api/search` results; may be empty)
-- `chunk` — `{"text": "..."}` answer deltas (markdown)
-- `done` — `{"conversationId": "..."}`; pass it back on the next turn to continue the thread
-- `error` — `{"message": "..."}`; `sources` was still delivered, so callers can show raw excerpts
-
-```sh
-curl -N -X POST http://127.0.0.1:8080/api/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"message":"Summarize the database outage runbook"}'
-```
-
-Answer generation is **credential-gated by Microsoft**: anonymous conversation creation works, but the
-chat WebSocket rejects anonymous handshakes (observed 2026-07-25). Until credentials are configured the
-endpoint still streams `sources` and then an `error` event explaining the setup step. To activate it,
-copy credentials from a signed-in `copilot.microsoft.com` browser session — either paste them in the
-Web UI's **Connect Copilot** dialog (the link icon in the chat composer; validated live, kept in memory
-only) or set env vars (never commit them): `CHAT_COPILOT_ACCESSTOKEN` (the `accessToken` query param of
-the `wss://…/c/api/chat` request in DevTools → Network → WS), optionally `CHAT_COPILOT_IDENTITYTYPE`
-and `CHAT_COPILOT_COOKIES`. Plain chat messages and their retrieved excerpts leave the device for
-Microsoft's consumer API — this path exists for the Web UI only; the MCP context path (`/mcp`) stays
-retrieval-only. See `DECISIONS.md` 2026-07-25.
-
-| Method | Path | Description |
-| --- | --- | --- |
-| `GET` | `/api/chat/credentials` | Credential status for the answer path (never includes secrets) |
-| `POST` | `/api/chat/credentials` | Set credentials `{accessToken?, identityType?, cookies?}` and validate them live; `{ok: true}` means answers will generate |
-| `DELETE` | `/api/chat/credentials` | Clear runtime credentials (back to anonymous) |
+Use `#tool_name` or `@app #tool_name` in the composer to invoke imported tools deterministically.
 
 ---
 

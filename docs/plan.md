@@ -196,14 +196,13 @@ Build checklist:
 - [ ] **Web UI slice 1 — Files & Folders (§5.8):** SharePoint-like manager — folder tree, drag-and-drop
   upload (PDF/Office/Markdown), replace-with-versioning, personal document space (`owner` column;
   `user:<username>` ACL tag), folder-level visibility captured as ACL tags; admin document management
-- [x] **Web UI slice 1 — Chat (RAG):** turn-based chat page — plain-text messages stream a generated,
-  RAG-grounded answer (Microsoft Copilot backend, `POST /api/chat` SSE) with cited sources under each
-  turn; graceful fallback to raw excerpts when generation fails or credentials are unconfigured;
-  `#`/`@` tool invocations unaffected, still the pure deterministic action path. Conversation history is
-  client-side only (`localStorage`), capped, clearable, so prior turns stay visible instead of being
-  replaced. React + TypeScript SPA built into the JAR's static resources (no separate web server).
-  (In-process LLM synthesis was prototyped and declined; external Copilot answer generation was then
-  adopted — see both `DECISIONS.md` 2026-07-25 entries.)
+- [x] **Web UI slice 1 — Chat (RAG):** turn-based chat page — plain-text messages retrieve cited
+  knowledge-base results with the existing search pipeline. Conversation history is client-side only
+  (`localStorage`), capped at 25 conversations and 50 turns per conversation, individually
+  selectable/deletable, so prior searches stay available instead of being replaced. RAG and web evidence is
+  collapsed by default into separate counts; users can expand the evidence and then individual RAG files.
+  `#`/`@` tool invocations remain the pure deterministic action path. React + TypeScript SPA built into
+  the JAR's static resources (no separate web server).
 - [x] Update/delete sync: edits replace chunks in place (same `source_file_id`); deletes purge via
   cascade. True for upload, Confluence, and Jira; SharePoint pending
 - [ ] PII-redaction and retention policies per source, applied before embedding
