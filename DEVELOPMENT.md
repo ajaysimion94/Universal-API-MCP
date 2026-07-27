@@ -79,6 +79,15 @@ Conventions (full detail in [`AGENTS.md`](AGENTS.md)):
 Run the Spring Boot backend and the Vite dev server side by side. The Vite dev server proxies
 `/api/*` to the backend, so you get hot module reload on the UI and live API calls in one window.
 
+### Eclipse and VS Code Java auto-builds
+
+Eclipse m2e, which also powers VS Code's Java project importer, treats workspace builds differently
+from command-line Maven. The POM marks the Node/npm executions as ignored for m2e incremental builds
+so editing Java does not run `npm ci` and a production Vite build. This does not skip the frontend for
+`mvn package`; run that command in a terminal for the complete distributable JAR. After changing or
+pulling the POM, use **Maven: Update Project** in Eclipse or **Java: Clean Java Language Server
+Workspace** in VS Code once to refresh the imported lifecycle.
+
 ```sh
 # terminal 1 — backend (skips the frontend build so it starts fast)
 cd mcp-server
