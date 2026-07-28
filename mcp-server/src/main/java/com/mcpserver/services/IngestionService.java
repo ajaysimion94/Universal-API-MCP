@@ -1,5 +1,6 @@
 package com.mcpserver.services;
 
+import com.mcpserver.cache.CacheService;
 import com.mcpserver.models.Chunk;
 import com.mcpserver.plugins.PluginRegistry;
 import com.mcpserver.rag.chunking.Chunker;
@@ -36,6 +37,7 @@ public class IngestionService {
     private final ChunkRepository chunkRepository;
     private final PluginRegistry pluginRegistry;
     private final IngestionProgressTracker progressTracker;
+    private final CacheService cacheService;
     private final int targetChunkTokens;
     private final int chunkOverlapTokens;
     private final Tika tika;
@@ -55,6 +57,7 @@ public class IngestionService {
                             ChunkRepository chunkRepository,
                             PluginRegistry pluginRegistry,
                             IngestionProgressTracker progressTracker,
+                            CacheService cacheService,
                             @Value("${rag.ingestion.target-chunk-tokens}") int targetChunkTokens,
                             @Value("${rag.ingestion.chunk-overlap-tokens}") int chunkOverlapTokens) {
         this.chunker = chunker;
@@ -62,6 +65,7 @@ public class IngestionService {
         this.chunkRepository = chunkRepository;
         this.pluginRegistry = pluginRegistry;
         this.progressTracker = progressTracker;
+        this.cacheService = cacheService;
         this.targetChunkTokens = targetChunkTokens;
         this.chunkOverlapTokens = chunkOverlapTokens;
         this.tika = new Tika();
@@ -97,6 +101,7 @@ public class IngestionService {
                 // Deleted while we were ingesting: remove the chunks we just wrote.
                 if (cancelledSources.remove(sourceFileId)) {
                     chunkRepository.deleteBySourceFileId(sourceFileId);
+                    cacheService.invalidateSearchResults();
                 }
             } catch (Exception e) {
                 log.warn("Ingestion failed for {} (search will not cover this file): {}",
@@ -125,6 +130,8 @@ public class IngestionService {
 
         String text = extractText(contentBytes, mimeType, sourceName);
         if (text == null || text.isBlank()) {
+            chunkRepository.deleteBySourceFileId(sourceFileId);
+            cacheService.invalidateSearchResults();
             log.info("Skipping ingestion for {} — no extractable text (mimeType={})", sourceName, mimeType);
             return;
         }
@@ -159,6 +166,7 @@ public class IngestionService {
             chunkRepository.save(chunk);
             progressTracker.chunkEmbedded();
         }
+        cacheService.invalidateSearchResults();
         log.info("Ingested {} chunks for {}", chunkTexts.size(), sourceName);
     }
 
@@ -169,6 +177,7 @@ public class IngestionService {
             cancelledSources.add(sourceFileId);
         }
         chunkRepository.deleteBySourceFileId(sourceFileId);
+        cacheService.invalidateSearchResults();
         log.info("Purged chunks for source {}", sourceFileId);
     }
 

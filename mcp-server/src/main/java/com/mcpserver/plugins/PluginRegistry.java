@@ -1,5 +1,6 @@
 package com.mcpserver.plugins;
 
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -10,6 +11,7 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Component
@@ -19,7 +21,11 @@ public class PluginRegistry {
 
     private final List<Plugin> plugins;
     private final PluginStateStore stateStore;
-    private final ExecutorService installExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService installExecutor = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "plugin-install-worker");
+        thread.setDaemon(true);
+        return thread;
+    });
     private final Map<String, InstallJob> jobs = new ConcurrentHashMap<>();
     private final AtomicInteger jobCounter = new AtomicInteger(0);
 
@@ -69,6 +75,16 @@ public class PluginRegistry {
 
     public InstallJob getJob(String jobId) {
         return jobs.get(jobId);
+    }
+
+    @PreDestroy
+    void shutdown() {
+        installExecutor.shutdown();
+        try {
+            installExecutor.awaitTermination(5, TimeUnit.SECONDS);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     public static class InstallJob {

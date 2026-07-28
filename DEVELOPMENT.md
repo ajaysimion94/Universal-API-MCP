@@ -145,8 +145,8 @@ cd mcp-server/webui && npm run typecheck   # frontend type check
 
 - Backend: JUnit 5 + Spring Boot Test + AssertJ. `@SpringBootTest` in `FileServiceTests` boots the
   full context (ONNX model load + SQLite) — tests take ~7s.
-- **Tests write to the SQLite DB** (`data/mcpserver.db`). Delete the file for a clean run:
-  `rm -f mcp-server/data/mcpserver.db`.
+- **Tests use an isolated in-memory SQLite database.** Test fixtures do not touch the developer
+  database at `data/mcpserver.db`.
 - Frontend: no test runner yet; `npm run typecheck` is the only gate.
 - Retrieval: `scripts/run-eval.sh [run-id]` evaluates 50 judged queries through the real Nomic
   embedding model, vector/lexical ordering, RRF, and the bundled cross-encoder. It writes
@@ -179,5 +179,5 @@ UI 404s — either run `mvn package` once, or use the Vite dev server in dev mod
   own Node/npm into `target/` by default, so a system install is only needed for `npm run dev`.
 - **TypeScript build fails on unused imports** — strict mode (`noUnusedLocals`,
   `noUnusedParameters`) is intentional. Remove the unused symbol; don't disable the rule.
-- **Tests leave stale chunks in the DB** — `@SpringBootTest` writes to the SQLite DB. Delete
-  `mcp-server/data/mcpserver.db` for a clean run.
+- **The local app has stale chunks** — stop the app and delete `mcp-server/data/mcpserver.db`
+  only when you intentionally want to reset all local app data.

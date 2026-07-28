@@ -137,8 +137,8 @@ public class WebSearchService {
         return selected;
     }
 
-    public List<String> plannedQueries(String userQuery) {
-        return queryPlanner.plan(userQuery, List.of()).queries();
+    public List<String> plannedQueries(String userQuery, List<String> localContext) {
+        return queryPlanner.plan(userQuery, localContext).queries();
     }
 
     private static List<AggregatedResult> aggregate(List<WebFetcher.WebResult> raw) {

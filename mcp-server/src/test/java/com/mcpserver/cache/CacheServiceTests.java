@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 
@@ -24,7 +25,8 @@ public class CacheServiceTests {
 
     @Test
     void testSearchCacheHitMiss() {
-        String key = CacheService.searchCacheKey("how to install", 10, false);
+        String key = CacheService.searchCacheKey(
+                "how to install", 10, false, true, false, List.of("public"));
         Optional<Object> cached = cacheService.getSearchResult(key);
         assertThat(cached).isEmpty();
 
@@ -46,6 +48,38 @@ public class CacheServiceTests {
         // Invalidate by prefix
         cacheService.invalidateToolResponses(toolId);
         assertThat(cacheService.getToolResponse(key)).isEmpty();
+    }
+
+    @Test
+    void toolCacheKeysDoNotUseCollidingMapHashCodes() {
+        assertThat(Map.of("Aa", 1).hashCode()).isEqualTo(Map.of("BB", 1).hashCode());
+
+        assertThat(CacheService.toolCacheKey("tool", Map.of("Aa", 1)))
+                .isNotEqualTo(CacheService.toolCacheKey("tool", Map.of("BB", 1)));
+    }
+
+    @Test
+    void toolCacheKeyIsStableAcrossNestedMapInsertionOrder() {
+        Map<String, Object> firstNested = new LinkedHashMap<>();
+        firstNested.put("status", "open");
+        firstNested.put("page", 2);
+        Map<String, Object> secondNested = new LinkedHashMap<>();
+        secondNested.put("page", 2);
+        secondNested.put("status", "open");
+
+        assertThat(CacheService.toolCacheKey("tool", Map.of("filter", firstNested)))
+                .isEqualTo(CacheService.toolCacheKey("tool", Map.of("filter", secondNested)));
+    }
+
+    @Test
+    void searchCacheSeparatesReadinessAndAclScopes() {
+        String base = CacheService.searchCacheKey(
+                "policy", 10, true, false, false, List.of("public"));
+
+        assertThat(CacheService.searchCacheKey(
+                "policy", 10, true, true, true, List.of("public"))).isNotEqualTo(base);
+        assertThat(CacheService.searchCacheKey(
+                "policy", 10, true, false, false, List.of("private"))).isNotEqualTo(base);
     }
 
     @Test

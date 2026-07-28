@@ -238,7 +238,7 @@ public class ReportQueryService {
         try {
             connectionService.findAll().stream()
                     .filter(connection -> connection.type() == ConnectionType.API_COLLECTION)
-                    .filter(connection -> connection.status() != ConnectionStatus.DISABLED)
+                    .filter(connection -> connection.status() == ConnectionStatus.CONNECTED)
                     .forEach(collections::add);
         } catch (RuntimeException exception) {
             diagnostics.add(new Diagnostic(Span.of(source, 0, 0), Severity.HINT, "RQL105",
@@ -631,7 +631,8 @@ public class ReportQueryService {
 
     private Dataset slice(Dataset input, int limit, int offset) {
         int start = Math.max(0, Math.min(offset, input.rows().size()));
-        int end = Math.max(start, Math.min(input.rows().size(), start + Math.max(0, limit)));
+        int end = (int) Math.max(start,
+                Math.min((long) input.rows().size(), (long) start + Math.max(0L, limit)));
         return new Dataset(input.name(), input.rows().subList(start, end));
     }
 
@@ -872,12 +873,17 @@ public class ReportQueryService {
 
         Map<String, Map<String, Object>> index = new LinkedHashMap<>();
         for (Map<String, Object> row : right.rows()) {
-            index.putIfAbsent(text(field(row, rightField)).toLowerCase(Locale.ROOT), row);
+            Object key = field(row, rightField);
+            if (key != null) {
+                index.putIfAbsent(text(key).toLowerCase(Locale.ROOT), row);
+            }
         }
         List<Map<String, Object>> rows = new ArrayList<>();
         for (Map<String, Object> row : input.rows()) {
             LinkedHashMap<String, Object> merged = new LinkedHashMap<>(row);
-            Map<String, Object> match = index.get(text(field(row, leftField)).toLowerCase(Locale.ROOT));
+            Object key = field(row, leftField);
+            Map<String, Object> match = key == null
+                    ? null : index.get(text(key).toLowerCase(Locale.ROOT));
             if (match != null) {
                 match.forEach((name, value) -> {
                     merged.put(prefix + "." + name, value);
@@ -1012,7 +1018,10 @@ public class ReportQueryService {
 
     private int integer(String raw, Map<String, Object> variables, int fallback) {
         BigDecimal number = number(literal(raw, variables));
-        return number == null ? fallback : number.intValue();
+        if (number == null) return fallback;
+        if (number.compareTo(BigDecimal.valueOf(Integer.MAX_VALUE)) > 0) return Integer.MAX_VALUE;
+        if (number.compareTo(BigDecimal.valueOf(Integer.MIN_VALUE)) < 0) return Integer.MIN_VALUE;
+        return number.intValue();
     }
 
     private static int indexOfKeyword(String source, String keyword) {

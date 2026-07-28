@@ -170,7 +170,7 @@ cd mcp-server/webui && npm run typecheck
 ```
 
 - Backend: JUnit 5 + Spring Boot Test + AssertJ. `@SpringBootTest` boots the full context (ONNX + SQLite) and takes ~7s per test class.
-- Tests write to `mcp-server/data/mcpserver.db`. Delete the file for a clean run: `rm -f mcp-server/data/mcpserver.db`.
+- Tests use an isolated in-memory SQLite database and do not modify `mcp-server/data/mcpserver.db`.
 - Frontend: no test runner is configured yet; `npm run typecheck` is the only gate.
 
 Key backend test classes:
@@ -224,7 +224,7 @@ Do not violate these without an explicit project decision recorded in `DECISIONS
 - If the dev UI hangs on "connecting…", the backend is not running on `127.0.0.1:8080`.
 - A 404 on a deep UI route means the SPA was not bundled (you likely ran with `-Dskip.frontend=true` and `static/index.html` does not exist). Run `mvn package` once or use the Vite dev server.
 - TypeScript build failures on unused imports are intentional — remove the symbol; do not disable the rule.
-- Tests leave chunks in the SQLite DB; delete `mcp-server/data/mcpserver.db` for a clean run.
+- If the local app has stale chunks, stop it and delete `mcp-server/data/mcpserver.db` only when you intentionally want to reset all local app data.
 - Orphaned chunks may remain across restarts because `InMemoryFileRepository` resets while SQLite persists; delete the DB if needed.
 
 ## Glossary

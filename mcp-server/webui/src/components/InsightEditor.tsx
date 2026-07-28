@@ -50,6 +50,10 @@ export function InsightEditor({ value, onChange, diagnostics, completions }: Ins
         lintGutter(),
         autocompletion({ override: [completionSource] }),
         EditorView.lineWrapping,
+        EditorView.contentAttributes.of({
+          "aria-label": "Insight document editor",
+          "aria-multiline": "true",
+        }),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) onChangeRef.current(update.state.doc.toString());
         }),

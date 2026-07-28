@@ -3,20 +3,24 @@ package com.mcpserver.cache;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.stats.CacheStats;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.lang.reflect.Array;
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
-import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 
 @Component
 public class CacheService {
-    private static final Logger log = LoggerFactory.getLogger(CacheService.class);
-
     private final Cache<String, Object> toolResponses;
     private final Cache<String, Object> searchResults;
 
@@ -54,7 +58,12 @@ public class CacheService {
     }
 
     public void invalidateToolResponses(String toolIdPrefix) {
-        toolResponses.asMap().keySet().removeIf(key -> key.startsWith(toolIdPrefix));
+        String prefix = toolIdPrefix + ":";
+        toolResponses.asMap().keySet().removeIf(key -> key.startsWith(prefix));
+    }
+
+    public void invalidateSearchResults() {
+        searchResults.invalidateAll();
     }
 
     public void invalidateAll() {
@@ -80,12 +89,73 @@ public class CacheService {
     }
 
     public static String toolCacheKey(String toolId, Map<String, Object> args) {
-        // Sort args to make the key deterministic
-        Map<String, Object> sortedArgs = args == null ? Map.of() : new TreeMap<>(args);
-        return toolId + ":" + sortedArgs.hashCode();
+        return toolId + ":" + digest(canonical(args == null ? Map.of() : args));
     }
 
-    public static String searchCacheKey(String query, int topK, boolean web) {
-        return query + ":" + topK + ":" + web;
+    public static String searchCacheKey(String query, int topK, boolean web,
+                                        boolean vectorReady, boolean webReady,
+                                        List<String> aclTags) {
+        Map<String, Object> attributes = Map.of(
+                "query", query,
+                "topK", topK,
+                "web", web,
+                "vectorReady", vectorReady,
+                "webReady", webReady,
+                "aclTags", aclTags == null ? List.of()
+                        : aclTags.stream().filter(Objects::nonNull).sorted().distinct().toList());
+        return "search:" + digest(canonical(attributes));
+    }
+
+    private static String digest(String value) {
+        try {
+            byte[] bytes = MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(bytes);
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable", exception);
+        }
+    }
+
+    private static String canonical(Object value) {
+        StringBuilder out = new StringBuilder();
+        appendCanonical(out, value);
+        return out.toString();
+    }
+
+    private static void appendCanonical(StringBuilder out, Object value) {
+        if (value == null) {
+            out.append('N');
+        } else if (value instanceof Map<?, ?> map) {
+            out.append("M").append(map.size()).append(':');
+            map.entrySet().stream()
+                    .sorted(Comparator.comparing(entry -> String.valueOf(entry.getKey())))
+                    .forEach(entry -> {
+                        appendText(out, "K", String.valueOf(entry.getKey()));
+                        appendCanonical(out, entry.getValue());
+                    });
+        } else if (value instanceof Collection<?> collection) {
+            out.append("L").append(collection.size()).append(':');
+            collection.forEach(item -> appendCanonical(out, item));
+        } else if (value.getClass().isArray()) {
+            int length = Array.getLength(value);
+            out.append("A").append(length).append(':');
+            for (int i = 0; i < length; i++) appendCanonical(out, Array.get(value, i));
+        } else if (value instanceof Number number) {
+            String normalized;
+            try {
+                normalized = new BigDecimal(number.toString()).stripTrailingZeros().toPlainString();
+            } catch (NumberFormatException exception) {
+                normalized = number.toString();
+            }
+            appendText(out, "D", normalized);
+        } else if (value instanceof Boolean bool) {
+            out.append(bool ? "B1" : "B0");
+        } else {
+            appendText(out, "S", String.valueOf(value));
+        }
+    }
+
+    private static void appendText(StringBuilder out, String type, String value) {
+        out.append(type).append(value.length()).append(':').append(value);
     }
 }

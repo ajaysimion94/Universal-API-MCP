@@ -17,6 +17,7 @@ import com.mcpserver.tools.ToolValidationException;
 import com.mcpserver.workflow.WorkflowEngine;
 import com.mcpserver.workflow.WorkflowExecution;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
@@ -63,6 +64,9 @@ public class SearchController {
         if (query == null || query.isBlank()) {
             return Map.of("query", "", "results", List.of(), "mode", "empty");
         }
+        if (topK < 1 || topK > 100) {
+            throw new IllegalArgumentException("topK must be between 1 and 100");
+        }
 
         Optional<ToolQueryParser.ParsedToolQuery> toolQuery = ToolQueryParser.parse(query);
         if (toolQuery.isPresent()) {
@@ -94,8 +98,9 @@ public class SearchController {
 
         boolean webReady = !web || pluginRegistry.isReady("searxng");
 
-        List<SearchPipeline.SearchResult> results =
-                searchPipeline.search(query, topK, List.of(), web);
+        SearchPipeline.SearchResponse searchResponse =
+                searchPipeline.searchWithMetadata(query, topK, List.of(), web);
+        List<SearchPipeline.SearchResult> results = searchResponse.results();
 
         long localCount = results.stream().filter(r -> "local".equals(r.sourceKind())).count();
         long webCount = results.stream().filter(r -> "web".equals(r.sourceKind())).count();
@@ -106,7 +111,7 @@ public class SearchController {
         response.put("web", web);
         response.put("webReady", webReady);
         if (web && webReady) {
-            response.put("webQueries", searchService.plannedWebQueries(query));
+            response.put("webQueries", searchResponse.webQueries());
         }
         if (!webReady) {
             response.put("webMessage", "Web augmentation requires the SearXNG plugin — install it on the Plugins page.");
@@ -305,5 +310,10 @@ public class SearchController {
             map.put("paramsSchema", Map.of("type", "object"));
         }
         return map;
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<Map<String, String>> badRequest(IllegalArgumentException exception) {
+        return ResponseEntity.badRequest().body(Map.of("error", exception.getMessage()));
     }
 }

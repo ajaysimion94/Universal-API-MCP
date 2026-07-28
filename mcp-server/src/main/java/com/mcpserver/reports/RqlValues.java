@@ -1,6 +1,9 @@
 package com.mcpserver.reports;
 
+import java.lang.reflect.Array;
 import java.math.BigDecimal;
+import java.util.Collection;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -15,9 +18,6 @@ import java.util.regex.Pattern;
  * which is what report authors expect of API data ("Open" and "open" are one status).
  */
 public final class RqlValues {
-
-    /** Row-fingerprint field separator — a control character no API value contains. */
-    private static final char SEPARATOR = '\u0001';
 
     private static final Pattern NUMBER = Pattern.compile("-?\\d+(?:\\.\\d+)?");
 
@@ -130,8 +130,41 @@ public final class RqlValues {
     /** A stable identity for a row, used by distinct and the set operations. */
     public static String fingerprint(Map<String, Object> row) {
         StringBuilder builder = new StringBuilder();
-        row.forEach((key, value) -> builder.append(key).append('=').append(text(normalizeScalar(value))).append(SEPARATOR));
+        appendCanonical(builder, row);
         return builder.toString();
+    }
+
+    private static void appendCanonical(StringBuilder out, Object value) {
+        if (value == null) {
+            out.append('N');
+        } else if (value instanceof Map<?, ?> map) {
+            out.append("M").append(map.size()).append(':');
+            map.entrySet().stream()
+                    .sorted(Comparator.comparing(entry -> String.valueOf(entry.getKey())))
+                    .forEach(entry -> {
+                        appendText(out, "K", String.valueOf(entry.getKey()));
+                        appendCanonical(out, entry.getValue());
+                    });
+        } else if (value instanceof Collection<?> collection) {
+            out.append("L").append(collection.size()).append(':');
+            collection.forEach(item -> appendCanonical(out, item));
+        } else if (value.getClass().isArray()) {
+            int length = Array.getLength(value);
+            out.append("A").append(length).append(':');
+            for (int index = 0; index < length; index++) appendCanonical(out, Array.get(value, index));
+        } else if (value instanceof BigDecimal decimal) {
+            appendText(out, "D", decimal.stripTrailingZeros().toPlainString());
+        } else if (value instanceof Number number) {
+            appendText(out, "D", new BigDecimal(number.toString()).stripTrailingZeros().toPlainString());
+        } else if (value instanceof Boolean bool) {
+            out.append(bool ? "B1" : "B0");
+        } else {
+            appendText(out, "S", String.valueOf(value));
+        }
+    }
+
+    private static void appendText(StringBuilder out, String type, String value) {
+        out.append(type).append(value.length()).append(':').append(value);
     }
 
     public static String trimParens(String value) {

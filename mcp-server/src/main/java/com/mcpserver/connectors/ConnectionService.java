@@ -1,11 +1,13 @@
 package com.mcpserver.connectors;
 
+import com.mcpserver.cache.CacheService;
 import com.mcpserver.repositories.ChunkRepository;
 import com.mcpserver.tools.ApiToolService;
 import com.mcpserver.tools.ToolGroupRepository;
 import com.mcpserver.tools.JiraToolProvider;
 import com.mcpserver.tools.ConfluenceToolProvider;
 import com.mcpserver.tools.GitHubToolProvider;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -16,6 +18,7 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -40,6 +43,7 @@ public class ConnectionService {
     private final JiraToolProvider jiraToolProvider;
     private final ConfluenceToolProvider confluenceToolProvider;
     private final GitHubToolProvider githubToolProvider;
+    private final CacheService cacheService;
     private final Map<ConnectionType, SourceConnector> connectorsByType;
 
     private final ExecutorService jobExecutor = Executors.newSingleThreadExecutor(r -> {
@@ -59,6 +63,7 @@ public class ConnectionService {
                               JiraToolProvider jiraToolProvider,
                               ConfluenceToolProvider confluenceToolProvider,
                               GitHubToolProvider githubToolProvider,
+                              CacheService cacheService,
                               List<SourceConnector> connectors) {
         this.connectionRepository = connectionRepository;
         this.chunkRepository = chunkRepository;
@@ -69,6 +74,7 @@ public class ConnectionService {
         this.jiraToolProvider = jiraToolProvider;
         this.confluenceToolProvider = confluenceToolProvider;
         this.githubToolProvider = githubToolProvider;
+        this.cacheService = cacheService;
         this.connectorsByType = connectors.stream()
                 .collect(Collectors.toMap(SourceConnector::type, Function.identity()));
     }
@@ -191,6 +197,7 @@ public class ConnectionService {
     public void delete(String connectionId) {
         findById(connectionId); // 404s if missing
         chunkRepository.deleteBySourceFileIdPrefix(connectionId + ":");
+        cacheService.invalidateSearchResults();
         apiToolService.deleteByConnectionId(connectionId); // also removes TOOL memberships
         toolGroupRepository.deleteMembersForConnection(connectionId);
         connectionRepository.deleteById(connectionId);
@@ -286,6 +293,16 @@ public class ConnectionService {
             throw new IllegalArgumentException("No connector implementation registered for type: " + type);
         }
         return connector;
+    }
+
+    @PreDestroy
+    void shutdown() {
+        jobExecutor.shutdown();
+        try {
+            jobExecutor.awaitTermination(5, TimeUnit.SECONDS);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     public static class ConnectionJob {

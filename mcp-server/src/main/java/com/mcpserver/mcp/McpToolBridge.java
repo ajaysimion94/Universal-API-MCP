@@ -46,7 +46,7 @@ public class McpToolBridge {
     private static final String SEARCH_SCHEMA = """
             {"type":"object","properties":{
               "query":{"type":"string","description":"What to search for"},
-              "topK":{"type":"integer","description":"Maximum results","default":10}},
+              "topK":{"type":"integer","description":"Maximum results","minimum":1,"maximum":100,"default":10}},
              "required":["query"]}""";
 
     private static final String CONFIRM_TOOL = "confirm-action";

@@ -170,7 +170,12 @@ function ManualRequestForm({
       )}
       <form className="tool-form" onSubmit={submit}>
         <div className="rb-url-bar">
-          <select className="form-input rb-method-select" value={method} onChange={(e) => setMethod(e.target.value)}>
+          <select
+            className="form-input rb-method-select"
+            value={method}
+            onChange={(e) => setMethod(e.target.value)}
+            aria-label="HTTP method"
+          >
             {METHODS.map((m) => (
               <option key={m} value={m}>
                 {m}
@@ -182,6 +187,7 @@ function ManualRequestForm({
             value={path}
             onChange={(e) => setPath(e.target.value)}
             placeholder="/users/{id}"
+            aria-label="Request path"
             spellCheck={false}
             required
           />
@@ -220,11 +226,13 @@ function ManualRequestForm({
                 value={p.name}
                 onChange={(e) => updateParam(i, { name: e.target.value })}
                 placeholder="name"
+                aria-label={`Parameter ${i + 1} name`}
               />
               <select
                 className="form-input"
                 value={p.in}
                 onChange={(e) => updateParam(i, { in: e.target.value as "query" | "header" })}
+                aria-label={`Parameter ${i + 1} location`}
               >
                 <option value="query">query</option>
                 <option value="header">header</option>
@@ -234,6 +242,7 @@ function ManualRequestForm({
                 value={p.defaultValue ?? ""}
                 onChange={(e) => updateParam(i, { defaultValue: e.target.value })}
                 placeholder="default (optional)"
+                aria-label={`Parameter ${i + 1} default value`}
               />
               <label className="rb-required-check">
                 <input
@@ -622,7 +631,12 @@ function RunPanel({
             </div>
             {bodyMode === "RAW" && (
               <>
-                <select className="form-input" value={rawContentType} onChange={(e) => setRawContentType(e.target.value)}>
+                <select
+                  className="form-input"
+                  value={rawContentType}
+                  onChange={(e) => setRawContentType(e.target.value)}
+                  aria-label="Raw body content type"
+                >
                   <option value="application/json">application/json</option>
                   <option value="application/xml">application/xml</option>
                   <option value="text/plain">text/plain</option>
@@ -635,6 +649,7 @@ function RunPanel({
                   rows={8}
                   spellCheck={false}
                   placeholder="Raw request body"
+                  aria-label="Raw request body"
                 />
               </>
             )}
@@ -647,7 +662,12 @@ function RunPanel({
               Saved auth for this request only — overrides the app's default for every invocation
               (GET and write alike). Leave as "Inherit" to use the app's auth.
             </p>
-            <select className="form-input" value={authMode} onChange={(e) => setAuthMode(e.target.value as AuthMode)}>
+            <select
+              className="form-input"
+              value={authMode}
+              onChange={(e) => setAuthMode(e.target.value as AuthMode)}
+              aria-label="Request authentication mode"
+            >
               <option value="INHERIT">Inherit from connection</option>
               <option value="NONE">None</option>
               <option value="BASIC">Basic</option>
@@ -656,13 +676,20 @@ function RunPanel({
             </select>
             {authMode === "BASIC" && (
               <>
-                <input className="form-input" placeholder="Username" value={authUsername} onChange={(e) => setAuthUsername(e.target.value)} />
+                <input
+                  className="form-input"
+                  placeholder="Username"
+                  value={authUsername}
+                  onChange={(e) => setAuthUsername(e.target.value)}
+                  aria-label="Basic authentication username"
+                />
                 <input
                   className="form-input"
                   type="password"
                   placeholder={tool.authMode === "BASIC" ? "Password (leave blank to keep existing)" : "Password"}
                   value={authSecret}
                   onChange={(e) => setAuthSecret(e.target.value)}
+                  aria-label="Basic authentication password"
                 />
               </>
             )}
@@ -673,17 +700,25 @@ function RunPanel({
                 placeholder={tool.authMode === "BEARER" ? "Token (leave blank to keep existing)" : "Token"}
                 value={authSecret}
                 onChange={(e) => setAuthSecret(e.target.value)}
+                aria-label="Bearer token"
               />
             )}
             {authMode === "API_KEY_HEADER" && (
               <>
-                <input className="form-input" placeholder="Header name (e.g. X-Api-Key)" value={authUsername} onChange={(e) => setAuthUsername(e.target.value)} />
+                <input
+                  className="form-input"
+                  placeholder="Header name (e.g. X-Api-Key)"
+                  value={authUsername}
+                  onChange={(e) => setAuthUsername(e.target.value)}
+                  aria-label="API key header name"
+                />
                 <input
                   className="form-input"
                   type="password"
                   placeholder={tool.authMode === "API_KEY_HEADER" ? "Key (leave blank to keep existing)" : "Key"}
                   value={authSecret}
                   onChange={(e) => setAuthSecret(e.target.value)}
+                  aria-label="API key value"
                 />
               </>
             )}
@@ -768,19 +803,21 @@ function KvEditor({
             type="checkbox"
             checked={row.enabled}
             onChange={(e) => update(i, { enabled: e.target.checked })}
-            aria-label="Enabled"
+            aria-label={`Row ${i + 1} enabled`}
           />
           <input
             className="form-input"
             value={row.key}
             onChange={(e) => update(i, { key: e.target.value })}
             placeholder={placeholder}
+            aria-label={`Row ${i + 1} name`}
           />
           <input
             className="form-input"
             value={row.value}
             onChange={(e) => update(i, { value: e.target.value })}
             placeholder="value"
+            aria-label={`Row ${i + 1} value`}
           />
           {(row.key || row.value) && (
             <button type="button" className="btn btn-ghost rb-icon-btn" onClick={() => remove(i)} aria-label="Remove">

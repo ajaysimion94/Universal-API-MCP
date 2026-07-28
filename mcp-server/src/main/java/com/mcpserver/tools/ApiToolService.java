@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.mcpserver.cache.CacheService;
 import com.mcpserver.connectors.AuthMode;
 import com.mcpserver.connectors.Connection;
 import com.mcpserver.connectors.CredentialCipher;
@@ -34,16 +35,18 @@ public class ApiToolService {
     private final ApplicationEventPublisher eventPublisher;
     private final ParameterExtractor parameterExtractor;
     private final CredentialCipher credentialCipher;
+    private final CacheService cacheService;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public ApiToolService(ApiToolRepository repository, ToolGroupRepository toolGroupRepository,
                           ApplicationEventPublisher eventPublisher, ParameterExtractor parameterExtractor,
-                          CredentialCipher credentialCipher) {
+                          CredentialCipher credentialCipher, CacheService cacheService) {
         this.repository = repository;
         this.toolGroupRepository = toolGroupRepository;
         this.eventPublisher = eventPublisher;
         this.parameterExtractor = parameterExtractor;
         this.credentialCipher = credentialCipher;
+        this.cacheService = cacheService;
     }
 
     /**
@@ -64,12 +67,14 @@ public class ApiToolService {
         for (ApiToolDefinition def : dedupeSlugs(definitions)) {
             String name = appSlug + "_" + def.requestSlug();
             ApiTool existing = existingByName.remove(name);
+            if (existing != null) cacheService.invalidateToolResponses(existing.id());
             repository.save(existing != null
                     ? existing.withDefinition(def)
                     : ApiTool.fromDefinition(connection.id(), appSlug, def));
             imported++;
         }
         for (ApiTool vanished : existingByName.values()) {
+            cacheService.invalidateToolResponses(vanished.id());
             repository.deleteById(vanished.id());
             toolGroupRepository.deleteMembersForTool(vanished.id());
         }
@@ -159,6 +164,7 @@ public class ApiToolService {
             updated = updated.withKnowledgeSource(false);
         }
         repository.save(updated);
+        cacheService.invalidateToolResponses(tool.id());
         eventPublisher.publishEvent(new ToolsChangedEvent(tool.connectionId()));
         return updated;
     }
@@ -186,6 +192,7 @@ public class ApiToolService {
         }
         ApiTool updated = tool.withKnowledgeSource(flag);
         repository.save(updated);
+        cacheService.invalidateToolResponses(tool.id());
         return updated;
     }
 
@@ -208,6 +215,7 @@ public class ApiToolService {
 
     public void deleteByConnectionId(String connectionId) {
         for (ApiTool tool : repository.findByConnectionId(connectionId)) {
+            cacheService.invalidateToolResponses(tool.id());
             toolGroupRepository.deleteMembersForTool(tool.id());
         }
         repository.deleteByConnectionId(connectionId);
@@ -263,6 +271,7 @@ public class ApiToolService {
         ApiToolDefinition def = buildManualDefinition(input, existing.requestSlug());
         ApiTool updated = existing.withManualDefinition(def);
         repository.save(updated);
+        cacheService.invalidateToolResponses(existing.id());
         eventPublisher.publishEvent(new ToolsChangedEvent(existing.connectionId()));
         return updated;
     }
@@ -280,6 +289,7 @@ public class ApiToolService {
         if (mode == null) {
             ApiTool cleared = existing.withAuthOverride(null, null, null);
             repository.save(cleared);
+            cacheService.invalidateToolResponses(existing.id());
             return cleared;
         }
         String secretEncrypted = secret == null || secret.isBlank()
@@ -287,6 +297,7 @@ public class ApiToolService {
                 : credentialCipher.encrypt(secret);
         ApiTool updated = existing.withAuthOverride(mode, username, secretEncrypted);
         repository.save(updated);
+        cacheService.invalidateToolResponses(existing.id());
         return updated;
     }
 
@@ -299,6 +310,7 @@ public class ApiToolService {
         }
         toolGroupRepository.deleteMembersForTool(id);
         repository.deleteById(id);
+        cacheService.invalidateToolResponses(id);
         eventPublisher.publishEvent(new ToolsChangedEvent(existing.connectionId()));
     }
 

@@ -1,5 +1,6 @@
 package com.mcpserver.connectors;
 
+import com.mcpserver.cache.CacheService;
 import com.mcpserver.repositories.ChunkRepository;
 import com.mcpserver.tools.ApiToolService;
 import com.mcpserver.tools.ConfluenceToolProvider;
@@ -55,6 +56,7 @@ class ConnectionServiceTests {
                 mock(JiraToolProvider.class),
                 mock(ConfluenceToolProvider.class),
                 mock(GitHubToolProvider.class),
+                mock(CacheService.class),
                 List.of(connector));
 
         service.create(ConnectionType.CONFLUENCE, "Docs", "https://docs.example.test",

@@ -29,6 +29,7 @@ import java.util.UUID;
 public class SearchService implements SearchPipeline {
 
     private static final Logger log = LoggerFactory.getLogger(SearchService.class);
+    private static final int MAX_RESULTS = 100;
     private static final Set<String> STOP_WORDS = Set.of(
             "a", "an", "and", "are", "as", "at", "be", "by", "can", "do", "does",
             "for", "from", "how", "i", "in", "is", "it", "of", "on", "or", "our",
@@ -73,25 +74,37 @@ public class SearchService implements SearchPipeline {
 
     @Override
     public List<SearchResult> search(String query, int topN, List<String> userAclTags) {
-        return search(query, topN, userAclTags, false);
+        return searchWithMetadata(query, topN, userAclTags, false).results();
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public List<SearchResult> search(String query, int topN, List<String> userAclTags, boolean includeWeb) {
-        if (query == null || query.isBlank()) return List.of();
+        return searchWithMetadata(query, topN, userAclTags, includeWeb).results();
+    }
 
-        // 1. In-process cache check (Phase 3 — §9)
-        String cacheKey = CacheService.searchCacheKey(query, topN, includeWeb);
-        Optional<Object> cached = cacheService.getSearchResult(cacheKey);
-        if (cached.isPresent()) {
-            log.debug("Search cache hit for key: {}", cacheKey);
-            return (List<SearchResult>) cached.get();
+    @Override
+    public SearchResponse searchWithMetadata(
+            String query, int topN, List<String> userAclTags, boolean includeWeb) {
+        if (query == null || query.isBlank() || topN <= 0) {
+            return new SearchResponse(List.of(), List.of());
         }
+        int safeTopN = Math.min(topN, MAX_RESULTS);
 
         // Lexical FTS5 search always works (built into SQLite); the vector leg needs
         // both the embedding model and the sqlite-vec store. Degrade gracefully.
         boolean vectorLegReady = embeddingClient.isReady() && chunkRepository.isVec0Available();
+        boolean webLegReady = includeWeb && pluginRegistry.isReady("searxng");
+
+        // Readiness and ACL scope are part of the key: otherwise a degraded result can survive
+        // a plugin becoming ready, or a future ACL-aware caller can receive another scope's rows.
+        String cacheKey = CacheService.searchCacheKey(
+                query, safeTopN, includeWeb, vectorLegReady, webLegReady, userAclTags);
+        Optional<Object> cached = cacheService.getSearchResult(cacheKey);
+        if (cached.orElse(null) instanceof SearchResponse response) {
+            log.debug("Search cache hit for key: {}", cacheKey);
+            return response;
+        }
+
         if (!vectorLegReady) {
             log.info("Vector leg unavailable (embedding model or vector store not ready) — lexical-only search");
         }
@@ -108,7 +121,7 @@ public class SearchService implements SearchPipeline {
         Map<String, Chunk> byId = new HashMap<>();
         vectorHits.forEach(c -> byId.put(c.id(), c));
         lexicalHits.forEach(c -> byId.put(c.id(), c));
-        int candidateLimit = Math.max(topN, topN * 3);
+        int candidateLimit = safeTopN * 3;
         List<Chunk> candidates = new ArrayList<>(Math.min(candidateLimit, fused.size()));
         for (var entry : fused) {
             Chunk c = byId.get(entry.getKey());
@@ -130,7 +143,7 @@ public class SearchService implements SearchPipeline {
                 .toList();
 
         List<SearchResult> results = new ArrayList<>();
-        int limit = Math.min(topN, reranked.size());
+        int limit = Math.min(safeTopN, reranked.size());
         for (int i = 0; i < limit; i++) {
             Reranker.ScoredChunk sc = reranked.get(i);
             Chunk c = sc.chunk();
@@ -152,8 +165,14 @@ public class SearchService implements SearchPipeline {
             ));
         }
 
-        if (includeWeb && pluginRegistry.isReady("searxng")) {
-            List<SearchResult> webResults = fetchWebResults(query, List.of(), topN);
+        List<String> webQueries = List.of();
+        if (webLegReady) {
+            List<String> localContext = reranked.stream()
+                    .limit(3)
+                    .map(sc -> sc.chunk().sourceName() + " " + excerpt(sc.chunk().content(), query))
+                    .toList();
+            webQueries = webSearchService.plannedQueries(query, localContext);
+            List<SearchResult> webResults = fetchWebResults(query, localContext, safeTopN);
             results.addAll(webResults);
             log.info("Web augmentation: +{} web results for '{}'", webResults.size(), query);
         }
@@ -163,9 +182,11 @@ public class SearchService implements SearchPipeline {
                 .thenComparing(result -> result.sourceName() == null ? "" : result.sourceName())
                 .thenComparing(result -> result.chunk().id()));
 
-        // Cache the search results before returning
-        cacheService.putSearchResult(cacheKey, results);
-        return results;
+        List<SearchResult> finalResults = List.copyOf(
+                results.subList(0, Math.min(safeTopN, results.size())));
+        SearchResponse response = new SearchResponse(finalResults, webQueries);
+        cacheService.putSearchResult(cacheKey, response);
+        return response;
     }
 
     public List<String> getNotReadyPlugins() {
@@ -182,10 +203,6 @@ public class SearchService implements SearchPipeline {
         } catch (Exception e) {
             return false;
         }
-    }
-
-    public List<String> plannedWebQueries(String query) {
-        return webSearchService.plannedQueries(query);
     }
 
     private List<SearchResult> fetchWebResults(String query, List<String> localContext, int topN) {
