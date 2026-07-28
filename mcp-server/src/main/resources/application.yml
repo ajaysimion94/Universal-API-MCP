@@ -24,11 +24,16 @@ rag:
     model-file: model_quantized.onnx
     dimensions: 768
     max-sequence-length: 512
+  reranker:
+    model-dir: ${user.dir}/models/ms-marco-MiniLM-L6-v2
+    model-file: model.onnx
+    max-sequence-length: 512
   search:
     vector-top-k: 40
     lexical-top-k: 40
     rrf-k: 60               # Reciprocal Rank Fusion constant
     final-top-n: 10         # results after rerank
+    min-relevance-score: 0.015
   ingestion:
     # Must fit the embedding model's 512-token window (incl. "passage: " prefix and
     # tokenizer variance) — larger chunks get silently truncated before embedding.
@@ -36,10 +41,15 @@ rag:
     chunk-overlap-tokens: 80
   web:
     searxng-url: http://127.0.0.1:8888
+    engines: bing,brave,duckduckgo,startpage,stackoverflow
     page-count: 5
-    chunk-per-query: 8
-    page-fetch-timeout-seconds: 10
+    query-count: 4
+    candidate-count: 24
+    page-fetch-count: 10
+    page-fetch-timeout-seconds: 8
+    max-response-bytes: 2097152
     max-content-chars: 20000
+    min-relevance-score: 0.20
 
 # Confluence/Jira connectors (com.mcpserver.connectors)
 connectors:

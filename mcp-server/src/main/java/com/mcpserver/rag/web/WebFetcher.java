@@ -1,28 +1,33 @@
 package com.mcpserver.rag.web;
 
 import java.util.List;
+import java.time.Instant;
 
 /**
  * Fetches relevant web results for a query (plan.md §5.8 universal search — live-web
  * augmentation when the "Web" toggle is on).
  * <p>
  * Provider-swappable seam. The default impl queries a local SearXNG instance (open-source,
- * native process) and returns the title + description snippet SearXNG already provides per
- * result — no page fetching or text extraction. Web results are not persisted.
+ * native process). Page retrieval and relevance ranking are deliberately separate so provider
+ * order is only one input to the final result. Web results are not persisted.
  */
 public interface WebFetcher {
 
     /**
-     * @param query  the search query
-     * @param topN   max number of web results to return
-     * @return web results, best first; empty list if the web source is unavailable
+     * @param queries   contextual query variants to execute
+     * @param perQuery  maximum results to retain from each variant
+     * @return provider results carrying their original query/rank; empty if unavailable
      */
-    List<WebResult> fetch(String query, int topN);
+    List<WebResult> fetch(List<String> queries, int perQuery);
 
     record WebResult(
             String url,
             String title,
             String description,
-            String engine
+            String engine,
+            String query,
+            int providerRank,
+            double providerScore,
+            Instant publishedAt
     ) {}
 }

@@ -2,7 +2,8 @@
 
 An enterprise MCP (Model Context Protocol) server — Java 17+ / Spring Boot 3 backend with a first-party
 React + TypeScript Web UI. Files & folders manager, RAG search over uploaded documents (embedded
-SQLite + sqlite-vec + in-process ONNX embeddings), and an optional web-search toggle (SearXNG).
+SQLite + sqlite-vec + in-process ONNX embeddings and cross-encoder reranking), and contextual
+web research through an optional SearXNG toggle.
 Currently in **Phase 1** per [`docs/plan.md`](docs/plan.md).
 
 > Architecture blueprint: [`docs/product-idea.md`](docs/product-idea.md) · Execution tracker:
@@ -23,6 +24,7 @@ cd mcp-server/webui && npm install && npm run dev             # terminal 2: fron
 
 # fast loops
 cd mcp-server && mvn test                                     # backend tests
+./scripts/run-eval.sh                                         # 50-query P@1/MRR/nDCG gate
 cd mcp-server && mvn package -Dskip.frontend=true             # build JAR, skip SPA rebuild
 cd mcp-server/webui && npm run typecheck                      # frontend type check
 ```
@@ -64,7 +66,7 @@ All dependencies are embedded in the JAR or downloaded on demand via the **Plugi
 | --- | --- |
 | **Java 17+ / Maven / Node 20+ / npm** | Java 17 is the compiled baseline; JDK 17, 20, 21, and newer can build and run the same JAR. Install via your preferred method (Homebrew / apt / dnf / winget / SDKMAN / nvm). |
 | **SQLite + sqlite-vec** | Embedded in the JAR via `org.xerial:sqlite-jdbc`. The sqlite-vec native extension (~1-2MB) is downloaded by the Plugins page per OS/arch. |
-| **nomic-embed-text-v1.5 ONNX model** | Downloaded (~131MB) by the Plugins page from HuggingFace. ONNX Runtime auto-loads the right native lib per platform. |
+| **Nomic embedding + MiniLM reranker ONNX models** | Bundled into the JAR with verified hashes, extracted locally on first boot, and run in-process. ONNX Runtime auto-loads the right native library per platform. |
 | **SearXNG (web toggle)** | Native Python process managed by the Plugins page. Requires Python 3.10+ installed on the system. |
 | **Shell syntax** | macOS/Linux: bash. Windows: PowerShell or cmd. The app commands are identical. |
 | **`application.yml` / `schema.sql` / REST API / SPA** | Identical on every OS. |

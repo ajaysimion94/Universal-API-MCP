@@ -1,0 +1,61 @@
+[
+  {"query":"How do we stop a user from retrieving a document they cannot access?","relevantIds":["access-control"]},
+  {"query":"Where are source permissions captured during ingestion?","relevantIds":["access-control"]},
+  {"query":"What happens when a file has item-level permission overrides?","relevantIds":["access-control"]},
+  {"query":"Why must the unauthenticated server stay on localhost?","relevantIds":["access-control"]},
+  {"query":"Which metadata will later filter knowledge by user groups?","relevantIds":["access-control"]},
+
+  {"query":"What command runs the packaged application JAR?","relevantIds":["deployment"]},
+  {"query":"How can I start the backend on port 9090?","relevantIds":["deployment"]},
+  {"query":"Which Java version is the minimum supported runtime?","relevantIds":["deployment"]},
+  {"query":"Why is the UI on 5173 during development?","relevantIds":["deployment"]},
+  {"query":"What address and port does the production JAR use by default?","relevantIds":["deployment"]},
+
+  {"query":"Which credentials are required for Confluence Cloud?","relevantIds":["confluence"]},
+  {"query":"When does a new Confluence connection become connected?","relevantIds":["confluence"]},
+  {"query":"How are Confluence Cloud changes discovered without webhooks?","relevantIds":["confluence"]},
+  {"query":"Can Confluence Data Center register change webhooks?","relevantIds":["confluence"]},
+  {"query":"What is the authentication difference between Confluence Cloud and Server?","relevantIds":["confluence"]},
+
+  {"query":"Why does Jira try two different search API generations?","relevantIds":["jira"]},
+  {"query":"How are changed Jira issues updated without duplicate chunks?","relevantIds":["jira"]},
+  {"query":"What details are needed to configure a Jira project connection?","relevantIds":["jira"]},
+  {"query":"Does the connector distinguish Jira Cloud from Data Center?","relevantIds":["jira"]},
+  {"query":"Which endpoint is attempted first for JQL issue search?","relevantIds":["jira"]},
+
+  {"query":"Can I import an older Swagger 2.0 definition?","relevantIds":["api-import"]},
+  {"query":"How are Postman collection variables handled during import?","relevantIds":["api-import"]},
+  {"query":"Can the importer discover a spec behind Swagger UI?","relevantIds":["api-import"]},
+  {"query":"What name format is used for imported API operations?","relevantIds":["api-import"]},
+  {"query":"Why are newly imported API tools pending?","relevantIds":["api-import"]},
+
+  {"query":"How do I group orders by status and sum revenue?","relevantIds":["rql"]},
+  {"query":"Which query operation enriches every row with detail data?","relevantIds":["rql"]},
+  {"query":"How can a report calculate count average minimum and maximum?","relevantIds":["rql"]},
+  {"query":"What pipeline stage sorts results by revenue descending?","relevantIds":["rql"]},
+  {"query":"How does the report language combine two datasets?","relevantIds":["rql"]},
+
+  {"query":"How are vector and keyword results combined?","relevantIds":["semantic-search"]},
+  {"query":"What reranks the strongest RAG chunks after RRF?","relevantIds":["semantic-search"]},
+  {"query":"What happens when the embedding model is unavailable?","relevantIds":["semantic-search"]},
+  {"query":"Why do exact ticket IDs benefit from FTS?","relevantIds":["semantic-search"]},
+  {"query":"Which local model creates semantic query vectors?","relevantIds":["semantic-search"]},
+
+  {"query":"How does web search avoid simply trusting SEO order?","relevantIds":["web-research"]},
+  {"query":"Why does one user question produce several web queries?","relevantIds":["web-research"]},
+  {"query":"Which signals favor trustworthy and recent web sources?","relevantIds":["web-research"]},
+  {"query":"How are duplicate tracking URLs removed from web results?","relevantIds":["web-research"]},
+  {"query":"Why fetch page text instead of ranking only search snippets?","relevantIds":["web-research"]},
+
+  {"query":"Which library extracts text from PDF and Office documents?","relevantIds":["file-ingestion"]},
+  {"query":"What happens when the same folder is uploaded twice?","relevantIds":["file-ingestion"]},
+  {"query":"How do headings survive document chunking?","relevantIds":["file-ingestion"]},
+  {"query":"Does deleting an uploaded source remove its indexed chunks?","relevantIds":["file-ingestion"]},
+  {"query":"Which file formats can be dragged into the file manager?","relevantIds":["file-ingestion"]},
+
+  {"query":"What protects a write tool from running without confirmation?","relevantIds":["tool-approval"]},
+  {"query":"Can a read-only imported API request execute immediately?","relevantIds":["tool-approval"]},
+  {"query":"Where are tool invocations recorded for review?","relevantIds":["tool-approval"]},
+  {"query":"What syntax invokes an imported tool deterministically?","relevantIds":["tool-approval"]},
+  {"query":"Which controls apply when an API tool makes an HTTP call?","relevantIds":["tool-approval"]}
+]

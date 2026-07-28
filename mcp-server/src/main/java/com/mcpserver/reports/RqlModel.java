@@ -106,10 +106,21 @@ public final class RqlModel {
         }
     }
 
-    public record Execution(Map<String, Dataset> datasets, List<Diagnostic> diagnostics) {
+    /**
+     * One request this run resolved — the material for STATUS and METRICS blocks. {@code cached}
+     * marks a response served from the tool cache rather than fetched again, so a status table
+     * never implies a call that did not happen.
+     */
+    public record RequestExecution(String request, String method, int status, boolean success,
+                                   long durationMs, boolean cached) {
+    }
+
+    public record Execution(Map<String, Dataset> datasets, List<Diagnostic> diagnostics,
+                            List<RequestExecution> requests) {
         public Execution {
             datasets = datasets == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(datasets));
             diagnostics = diagnostics == null ? List.of() : List.copyOf(diagnostics);
+            requests = requests == null ? List.of() : List.copyOf(requests);
         }
 
         public boolean partial() {

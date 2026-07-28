@@ -20,6 +20,11 @@ import org.springframework.jdbc.core.ConnectionCallback;
 public class ChunkRepository {
 
     private static final Logger log = LoggerFactory.getLogger(ChunkRepository.class);
+    private static final java.util.Set<String> FTS_STOP_WORDS = java.util.Set.of(
+            "a", "an", "and", "are", "as", "at", "be", "by", "can", "do", "does",
+            "for", "from", "how", "i", "in", "is", "it", "of", "on", "or", "our",
+            "that", "the", "this", "to", "was", "we", "what", "when", "where",
+            "which", "who", "why", "with");
 
     private final JdbcTemplate jdbc;
     private volatile boolean vec0Available = false;
@@ -279,7 +284,14 @@ public class ChunkRepository {
     private static String toFtsQuery(String query) {
         String[] terms = query.toLowerCase().replaceAll("[^a-z0-9\\s]", " ").trim().split("\\s+");
         List<String> parts = new ArrayList<>();
-        for (String t : terms) if (!t.isBlank()) parts.add(t);
-        return String.join(" ", parts);
+        for (String term : terms) {
+            if (!term.isBlank() && !FTS_STOP_WORDS.contains(term)) {
+                parts.add("\"" + term + "\"");
+            }
+        }
+        // Natural-language search should retrieve documents matching any meaningful
+        // term and let BM25 rank coverage. Implicit FTS5 AND made one absent
+        // question word erase the entire lexical leg.
+        return String.join(" OR ", parts);
     }
 }

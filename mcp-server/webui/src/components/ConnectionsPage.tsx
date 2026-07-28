@@ -698,8 +698,8 @@ function ConnectionRow({
               : connection.lastSyncedAt
                 ? `Last synced ${new Date(connection.lastSyncedAt).toLocaleString()}`
                 : isApi
-                  ? "Knowledge sources not refreshed yet"
-                  : "Not synced yet"}
+                  ? "Knowledge index: not refreshed yet"
+                  : "Content sync: not started yet"}
             {backfillProgress && backfillProgress.total > 0
               ? ` — ${isApi ? "refreshing" : "backfilling"} ${backfillProgress.done}/${backfillProgress.total}`
               : busy && !backfillProgress
@@ -709,7 +709,11 @@ function ConnectionRow({
         </div>
 
         <div className="plugin-status">
-          <span className={`status-pill ${statusClass(connection.status)}`}>
+          <span
+            className={`status-pill ${statusClass(connection.status)}`}
+            aria-label={`Connection status: ${statusLabel(connection.status, busy)}`}
+            title="Connection verification status"
+          >
             {statusIcon(connection.status)}
             {statusLabel(connection.status, busy)}
           </span>

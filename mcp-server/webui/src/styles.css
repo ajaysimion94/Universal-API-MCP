@@ -30,9 +30,11 @@
   --accent-tint: oklch(0.78 0.15 68 / 0.14); /* selection background     */
   --accent-tint-strong: oklch(0.78 0.15 68 / 0.22);
 
-  /* Semantic */
+  /* Semantic — status only. Series colors live in the data-viz palette below. */
   --danger: oklch(0.70 0.16 25);
   --danger-tint: oklch(0.70 0.16 25 / 0.12);
+  --ok: oklch(0.72 0.15 150);
+  --ok-tint: oklch(0.72 0.15 150 / 0.12);
 
   /* Data-viz palette: CVD-checked against --bg-surface. Amber remains UI-only. */
   --series-1: #3987e5;

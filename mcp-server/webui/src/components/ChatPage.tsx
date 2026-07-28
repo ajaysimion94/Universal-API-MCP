@@ -1,42 +1,214 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams, Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
-  search,
-  listPlugins,
-  listTools,
   ApiToolInfo,
   PluginInfo,
-  SearchResult,
   SearchResponse,
+  SearchResult,
+  listPlugins,
+  listTools,
+  search,
 } from "../api";
 import {
-  SearchIcon,
-  HashIcon,
-  AtSignIcon,
-  FileIcon,
-  ChevronRightIcon,
-  GlobeIcon,
-  ExternalLinkIcon,
   AlertIcon,
-  SendIcon,
-  TrashIcon,
-  PlusIcon,
+  AtSignIcon,
   BookIcon,
+  ChevronRightIcon,
   DownloadIcon,
+  ExternalLinkIcon,
+  FileIcon,
+  GlobeIcon,
+  HashIcon,
+  PlusIcon,
+  SearchIcon,
+  TrashIcon,
   XIcon,
 } from "../icons";
-import { ToolFormPanel } from "./ToolFormPanel";
-import { ToolConfirmPanel } from "./ToolConfirmPanel";
-import { ToolResultPanel } from "./ToolResultPanel";
-import { MarkdownText } from "./MarkdownText";
 import { SummarySourceDialog } from "./SummarySourceDialog";
+import { ToolConfirmPanel } from "./ToolConfirmPanel";
+import { ToolFormPanel } from "./ToolFormPanel";
+import { ToolResultPanel } from "./ToolResultPanel";
 
-const STORE_KEY = "mcp.chat.conversations.v2";
+const STORE_KEY = "mcp.search.sessions.v1";
+const LEGACY_STORE_KEY = "mcp.chat.conversations.v2";
 const LEGACY_HISTORY_KEY = "mcp.chat.history.v1";
-const MAX_STORED_TURNS = 50;
-const MAX_STORED_CONVERSATIONS = 25;
+const MAX_STORED_SESSIONS = 25;
 
-/** The @/# token being typed at the end of the input, if any — drives autocomplete. */
+type SearchStatus = "idle" | "loading" | "success" | "error";
+
+interface SearchSession {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  query: string;
+  web: boolean;
+  status: SearchStatus;
+  response?: SearchResponse;
+  error?: string;
+}
+
+interface SearchStore {
+  activeId: string;
+  sessions: SearchSession[];
+}
+
+interface FileGroup {
+  sourceName: string;
+  sourcePath: string;
+  sourceUrl: string;
+  sourceKind: string;
+  chunks: SearchResult[];
+  bestScore: number;
+}
+
+interface LegacyTurn {
+  role?: "user" | "assistant";
+  createdAt?: number;
+  text?: string;
+  payload?: {
+    kind?: string;
+    data?: SearchResponse;
+    message?: string;
+  };
+}
+
+interface LegacyConversation {
+  id?: string;
+  title?: string;
+  createdAt?: number;
+  updatedAt?: number;
+  turns?: LegacyTurn[];
+}
+
+function freshSession(): SearchSession {
+  const now = Date.now();
+  return {
+    id: crypto.randomUUID(),
+    title: "New search",
+    createdAt: now,
+    updatedAt: now,
+    query: "",
+    web: false,
+    status: "idle",
+  };
+}
+
+function titleFromQuery(query: string): string {
+  return query.length > 52 ? `${query.slice(0, 52).trimEnd()}…` : query;
+}
+
+function sessionFromLegacy(conversation: LegacyConversation): SearchSession | null {
+  const turns = Array.isArray(conversation.turns) ? conversation.turns : [];
+  let queryTurnIndex = -1;
+  for (let i = turns.length - 1; i >= 0; i -= 1) {
+    if (turns[i].role === "user" && turns[i].text?.trim()) {
+      queryTurnIndex = i;
+      break;
+    }
+  }
+  if (queryTurnIndex < 0) return null;
+
+  const queryTurn = turns[queryTurnIndex];
+  const resultTurn = turns
+    .slice(queryTurnIndex + 1)
+    .find((turn) => turn.role === "assistant" && turn.payload);
+  const query = queryTurn.text?.trim() ?? "";
+  const createdAt = conversation.createdAt ?? queryTurn.createdAt ?? Date.now();
+  const updatedAt = conversation.updatedAt ?? resultTurn?.createdAt ?? createdAt;
+  const response = resultTurn?.payload?.kind === "search" ? resultTurn.payload.data : undefined;
+  const error = resultTurn?.payload?.kind === "error" ? resultTurn.payload.message : undefined;
+
+  return {
+    id: conversation.id ?? crypto.randomUUID(),
+    title: query ? titleFromQuery(query) : conversation.title ?? "Saved search",
+    createdAt,
+    updatedAt,
+    query,
+    web: response?.web ?? false,
+    status: response ? "success" : error ? "error" : "idle",
+    response,
+    error,
+  };
+}
+
+function loadStore(): SearchStore {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<SearchStore>;
+      if (Array.isArray(parsed.sessions) && parsed.sessions.length > 0) {
+        const sessions = parsed.sessions.map((session) => ({
+          ...session,
+          status: session.status === "loading" ? "error" as const : session.status,
+          error: session.status === "loading" ? "Search was interrupted. Run it again." : session.error,
+        }));
+        const activeId = sessions.some((session) => session.id === parsed.activeId)
+          ? parsed.activeId as string
+          : sessions[0].id;
+        return { activeId, sessions };
+      }
+    }
+
+    const legacyRaw = localStorage.getItem(LEGACY_STORE_KEY);
+    if (legacyRaw) {
+      const parsed = JSON.parse(legacyRaw) as {
+        activeId?: string;
+        conversations?: LegacyConversation[];
+      };
+      const migrated = (parsed.conversations ?? [])
+        .map(sessionFromLegacy)
+        .filter((session): session is SearchSession => session !== null);
+      if (migrated.length > 0) {
+        const activeId = migrated.some((session) => session.id === parsed.activeId)
+          ? parsed.activeId as string
+          : migrated[0].id;
+        return { activeId, sessions: migrated };
+      }
+    }
+
+    const legacyHistory = localStorage.getItem(LEGACY_HISTORY_KEY);
+    if (legacyHistory) {
+      const migrated = sessionFromLegacy({ turns: JSON.parse(legacyHistory) as LegacyTurn[] });
+      if (migrated) return { activeId: migrated.id, sessions: [migrated] };
+    }
+  } catch {
+    // Unreadable browser storage should never prevent searching.
+  }
+  const session = freshSession();
+  return { activeId: session.id, sessions: [session] };
+}
+
+function saveStore(store: SearchStore) {
+  try {
+    const sessions = store.sessions
+      .filter((session) => session.query || session.id === store.activeId)
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, MAX_STORED_SESSIONS);
+    localStorage.setItem(STORE_KEY, JSON.stringify({ activeId: store.activeId, sessions }));
+  } catch {
+    // History is a convenience; search remains available if storage is full or disabled.
+  }
+}
+
+function formatSessionTime(timestamp: number): string {
+  const date = new Date(timestamp);
+  if (date.toDateString() === new Date().toDateString()) {
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+  return date.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function isToolInvocation(query: string): boolean {
+  const trimmed = query.trimStart();
+  return trimmed.startsWith("#") || trimmed.startsWith("@");
+}
+
+function sessionScope(session: SearchSession): string {
+  if (isToolInvocation(session.query)) return "App";
+  return session.web ? "Knowledge + web" : "Knowledge";
+}
+
 function activeToken(input: string): { sigil: "@" | "#"; fragment: string; start: number } | null {
   const trimmedStart = input.trimStart();
   if (!trimmedStart.startsWith("@") && !trimmedStart.startsWith("#")) return null;
@@ -49,207 +221,64 @@ function activeToken(input: string): { sigil: "@" | "#"; fragment: string; start
   };
 }
 
-interface FileGroup {
-  sourceName: string;
-  sourcePath: string;
-  sourceUrl: string;
-  sourceKind: string;
-  chunks: SearchResult[];
-  bestScore: number;
-}
-
-type AssistantPayload =
-  | { kind: "loading" }
-  | { kind: "error"; message: string; sources?: SearchResult[]; retryText?: string }
-  | {
-      kind: "answer";
-      text: string;
-      sources: SearchResult[];
-      streaming: boolean;
-      stopped?: boolean;
-    }
-  | { kind: "search"; data: SearchResponse };
-
-interface ChatTurn {
-  id: string;
-  role: "user" | "assistant";
-  createdAt: number;
-  text?: string;
-  payload?: AssistantPayload;
-}
-
-interface ChatConversation {
-  id: string;
-  title: string;
-  createdAt: number;
-  updatedAt: number;
-  turns: ChatTurn[];
-}
-
-interface ChatStore {
-  activeId: string;
-  conversations: ChatConversation[];
-}
-
-function freshConversation(): ChatConversation {
-  return {
-    id: crypto.randomUUID(),
-    title: "New chat",
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-    turns: [],
-  };
-}
-
-/** A reload mid-turn leaves stale in-flight states behind — settle them. */
-function settleTurns(turns: ChatTurn[]): ChatTurn[] {
-  if (!Array.isArray(turns)) return [];
-  return turns.map((t) => {
-    if (t.payload?.kind === "loading") {
-      return { ...t, payload: { kind: "error", message: "Interrupted before a response arrived." } };
-    }
-    if (t.payload?.kind === "answer" && t.payload.streaming) {
-      return { ...t, payload: { ...t.payload, streaming: false, stopped: true } };
-    }
-    return t;
-  });
-}
-
-function titleFromText(text: string): string {
-  return text.length > 48 ? text.slice(0, 48).trimEnd() + "…" : text;
-}
-
-function loadStore(): ChatStore {
-  try {
-    const raw = localStorage.getItem(STORE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed && Array.isArray(parsed.conversations) && parsed.conversations.length > 0) {
-        const conversations: ChatConversation[] = parsed.conversations.map((raw: unknown) => {
-          const { id, title, createdAt, updatedAt, turns } = raw as ChatConversation;
-          return { id, title, createdAt, updatedAt, turns: settleTurns(turns) };
-        });
-        const activeId = conversations.some((c) => c.id === parsed.activeId)
-          ? parsed.activeId
-          : conversations[0].id;
-        return { activeId, conversations };
-      }
-    }
-    // One-time migration from the single-thread v1 keys.
-    const legacyRaw = localStorage.getItem(LEGACY_HISTORY_KEY);
-    const legacyTurns = settleTurns(legacyRaw ? JSON.parse(legacyRaw) : []);
-    localStorage.removeItem(LEGACY_HISTORY_KEY);
-    localStorage.removeItem("mcp.chat.conversation.v1");
-    const migrated = freshConversation();
-    migrated.turns = legacyTurns;
-    const firstUser = legacyTurns.find((t) => t.role === "user" && t.text);
-    if (firstUser?.text) migrated.title = titleFromText(firstUser.text);
-    if (legacyTurns.length > 0) {
-      migrated.createdAt = legacyTurns[0].createdAt;
-      migrated.updatedAt = legacyTurns[legacyTurns.length - 1].createdAt;
-    }
-    return { activeId: migrated.id, conversations: [migrated] };
-  } catch {
-    // corrupted storage — start fresh
-  }
-  const conv = freshConversation();
-  return { activeId: conv.id, conversations: [conv] };
-}
-
-function saveStore(store: ChatStore) {
-  try {
-    const conversations = store.conversations
-      .filter((c) => c.turns.length > 0 || c.id === store.activeId)
-      .sort((a, b) => b.updatedAt - a.updatedAt)
-      .slice(0, MAX_STORED_CONVERSATIONS)
-      .map((c) => ({ ...c, turns: c.turns.slice(-MAX_STORED_TURNS) }));
-    localStorage.setItem(STORE_KEY, JSON.stringify({ activeId: store.activeId, conversations }));
-  } catch {
-    // storage full/unavailable — history just won't persist this session
-  }
-}
-
-/** Today → clock time, older → short date. */
-function formatConversationTime(ts: number): string {
-  const d = new Date(ts);
-  const sameDay = d.toDateString() === new Date().toDateString();
-  if (sameDay) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  return d.toLocaleDateString([], { month: "short", day: "numeric" });
-}
-
 function groupLocalResults(results: SearchResult[]): FileGroup[] {
-  const map = new Map<string, FileGroup>();
-  for (const r of results) {
-    const key = `${r.sourceKind}:${r.sourceName}:${r.sourcePath}:${r.sourceUrl}`;
-    let g = map.get(key);
-    if (!g) {
-      g = {
-        sourceName: r.sourceName,
-        sourcePath: r.sourcePath,
-        sourceUrl: r.sourceUrl,
-        sourceKind: r.sourceKind,
-        chunks: [],
-        bestScore: r.score,
-      };
-      map.set(key, g);
+  const groups = new Map<string, FileGroup>();
+  for (const result of results) {
+    const key = `${result.sourceKind}:${result.sourceName}:${result.sourcePath}:${result.sourceUrl}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.chunks.push(result);
+      existing.bestScore = Math.max(existing.bestScore, result.score);
+    } else {
+      groups.set(key, {
+        sourceName: result.sourceName,
+        sourcePath: result.sourcePath,
+        sourceUrl: result.sourceUrl,
+        sourceKind: result.sourceKind,
+        chunks: [result],
+        bestScore: result.score,
+      });
     }
-    g.chunks.push(r);
-    if (r.score > g.bestScore) g.bestScore = r.score;
   }
-  const groups = Array.from(map.values());
-  groups.sort((a, b) => b.bestScore - a.bestScore);
-  for (const g of groups) g.chunks.sort((a, b) => b.score - a.score);
-  return groups;
+  return [...groups.values()]
+    .sort((a, b) => b.bestScore - a.bestScore)
+    .map((group) => ({ ...group, chunks: [...group.chunks].sort((a, b) => b.score - a.score) }));
 }
 
-/** The #/@ grammar invokes tools; every other message retrieves knowledge-base evidence. */
-function isToolInvocation(text: string): boolean {
-  const t = text.trimStart();
-  return t.startsWith("#") || t.startsWith("@");
-}
-
-export function ChatPage() {
+export function SearchPage() {
   const [params, setParams] = useSearchParams();
-  const [store, setStore] = useState<ChatStore>(() => loadStore());
+  const [store, setStore] = useState<SearchStore>(() => loadStore());
   const [input, setInput] = useState("");
   const [webOn, setWebOn] = useState(false);
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [pluginsLoaded, setPluginsLoaded] = useState(false);
-  const [initialWebWarning, setInitialWebWarning] = useState(false);
+  const [allTools, setAllTools] = useState<ApiToolInfo[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
   const [summaryDialogOpen, setSummaryDialogOpen] = useState(false);
+  const [initialWebWarning, setInitialWebWarning] = useState(false);
+  const [acIndex, setAcIndex] = useState(0);
+  const [acDismissed, setAcDismissed] = useState(false);
   const [exportNotice, setExportNotice] = useState<{
     filename: string;
     sourceCount: number;
     chunkCount: number;
   } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const threadEndRef = useRef<HTMLDivElement>(null);
   const lastConsumedQuery = useRef<string | null>(null);
 
-  // Tool autocomplete: the full tool list is small — fetch once, filter as you type.
-  const [allTools, setAllTools] = useState<ApiToolInfo[]>([]);
-  const [acIndex, setAcIndex] = useState(0);
-  const [acDismissed, setAcDismissed] = useState(false);
-
-  const active = store.conversations.find((c) => c.id === store.activeId) ?? store.conversations[0];
-  const turns = active.turns;
-
-  const sortedConversations = useMemo(
-    () => [...store.conversations].sort((a, b) => b.updatedAt - a.updatedAt),
-    [store.conversations],
+  const active = store.sessions.find((session) => session.id === store.activeId) ?? store.sessions[0];
+  const sortedSessions = useMemo(
+    () => [...store.sessions].sort((a, b) => b.updatedAt - a.updatedAt),
+    [store.sessions],
   );
-
-  const searxngReady = useMemo(() => {
-    const p = plugins.find((p) => p.id === "searxng");
-    return p?.status === "ACTIVE";
-  }, [plugins]);
+  const searxngReady = useMemo(
+    () => plugins.find((plugin) => plugin.id === "searxng")?.status === "ACTIVE",
+    [plugins],
+  );
 
   useEffect(() => {
     listTools().then(setAllTools).catch(() => {});
-  }, []);
-
-  useEffect(() => {
     listPlugins()
       .then(setPlugins)
       .catch(() => {})
@@ -261,66 +290,134 @@ export function ChatPage() {
   }, [store]);
 
   useEffect(() => {
-    threadEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [turns, store.activeId]);
-
-  useEffect(() => {
     inputRef.current?.focus();
   }, []);
 
-  /** Patch a conversation by id — a submitted turn keeps targeting the chat it started in. */
-  const patchConversation = (id: string, fn: (c: ChatConversation) => ChatConversation) =>
-    setStore((prev) => ({
-      ...prev,
-      conversations: prev.conversations.map((c) => (c.id === id ? fn(c) : c)),
+  useEffect(() => {
+    setInput(active.query);
+  }, [active.id]);
+
+  const patchSession = (id: string, patch: Partial<SearchSession>) => {
+    setStore((current) => ({
+      ...current,
+      sessions: current.sessions.map((session) =>
+        session.id === id ? { ...session, ...patch } : session),
     }));
+  };
 
-  const newChat = () => {
-    setStore((prev) => {
-      const current = prev.conversations.find((c) => c.id === prev.activeId);
-      if (current && current.turns.length === 0) return prev; // already on a fresh chat
-      const conv = freshConversation();
-      return { activeId: conv.id, conversations: [conv, ...prev.conversations] };
+  const newSearch = () => {
+    setStore((current) => {
+      const selected = current.sessions.find((session) => session.id === current.activeId);
+      if (selected && !selected.query) return current;
+      const session = freshSession();
+      return { activeId: session.id, sessions: [session, ...current.sessions] };
     });
+    setInput("");
     setHistoryOpen(false);
     inputRef.current?.focus();
   };
 
-  const selectConversation = (id: string) => {
-    if (id === store.activeId) return;
-    setStore((prev) => ({ ...prev, activeId: id }));
+  const selectSession = (id: string) => {
+    const session = store.sessions.find((candidate) => candidate.id === id);
+    if (!session) return;
+    setStore((current) => ({ ...current, activeId: id }));
+    setInput(session.query);
+    setWebOn(session.web && searxngReady);
     setHistoryOpen(false);
     inputRef.current?.focus();
   };
 
-  const deleteConversation = (id: string) => {
-    setStore((prev) => {
-      const remaining = prev.conversations.filter((c) => c.id !== id);
+  const deleteSession = (id: string) => {
+    setStore((current) => {
+      const remaining = current.sessions.filter((session) => session.id !== id);
       if (remaining.length === 0) {
-        const conv = freshConversation();
-        return { activeId: conv.id, conversations: [conv] };
+        const session = freshSession();
+        return { activeId: session.id, sessions: [session] };
       }
       return {
-        activeId: prev.activeId === id ? remaining[0].id : prev.activeId,
-        conversations: remaining,
+        activeId: current.activeId === id ? remaining[0].id : current.activeId,
+        sessions: remaining,
       };
     });
     setHistoryOpen(false);
   };
 
-  const token = useMemo(() => activeToken(input), [input]);
+  const runSearch = async (sessionId: string, query: string, includeWeb: boolean) => {
+    const startedAt = Date.now();
+    patchSession(sessionId, {
+      title: titleFromQuery(query),
+      query,
+      web: includeWeb,
+      status: "loading",
+      response: undefined,
+      error: undefined,
+      updatedAt: startedAt,
+    });
+    try {
+      const response = await search(query, 20, includeWeb);
+      patchSession(sessionId, {
+        status: "success",
+        response,
+        updatedAt: Date.now(),
+      });
+    } catch (error) {
+      patchSession(sessionId, {
+        status: "error",
+        error: error instanceof Error ? error.message : "Search failed",
+        updatedAt: Date.now(),
+      });
+    }
+  };
 
+  const submit = (raw: string, includeWeb = webOn, reuseActive = false) => {
+    const query = raw.trim();
+    if (!query) return;
+    lastConsumedQuery.current = query;
+    setInput(query);
+
+    if (reuseActive || !active.query) {
+      void runSearch(active.id, query, includeWeb);
+      return;
+    }
+
+    const session = freshSession();
+    session.title = titleFromQuery(query);
+    session.query = query;
+    session.web = includeWeb;
+    session.status = "loading";
+    setStore((current) => ({
+      activeId: session.id,
+      sessions: [session, ...current.sessions],
+    }));
+    void runSearch(session.id, query, includeWeb);
+  };
+
+  useEffect(() => {
+    if (!pluginsLoaded) return;
+    const query = params.get("q")?.trim() ?? "";
+    if (!query || query === lastConsumedQuery.current) return;
+    const requestedWeb = params.get("web") === "1";
+    const includeWeb = requestedWeb && searxngReady;
+    setWebOn(includeWeb);
+    setInitialWebWarning(requestedWeb && !includeWeb);
+    setParams({}, { replace: true });
+    submit(query, includeWeb);
+    // submit intentionally reads the currently selected session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pluginsLoaded, params]);
+
+  const token = useMemo(() => activeToken(input), [input]);
   const acItems = useMemo(() => {
     if (!token || acDismissed) return [];
     if (token.sigil === "@") {
       const apps = new Map<string, number>();
-      for (const t of allTools) {
-        if (t.appSlug.startsWith(token.fragment)) {
-          apps.set(t.appSlug, (apps.get(t.appSlug) ?? 0) + 1);
+      for (const tool of allTools) {
+        if (tool.enabled && tool.appSlug.startsWith(token.fragment)) {
+          apps.set(tool.appSlug, (apps.get(tool.appSlug) ?? 0) + 1);
         }
       }
-      return Array.from(apps.entries()).slice(0, 8).map(([app, count]) => ({
-        key: "@" + app,
+      return [...apps.entries()].slice(0, 8).map(([app, count]) => ({
+        key: `@${app}`,
         sigil: "@" as const,
         value: app,
         label: app,
@@ -328,24 +425,22 @@ export function ChatPage() {
         method: null as string | null,
       }));
     }
-    // '#' — scope by a preceding @app if one was typed
-    const appMatch = /^@([\w-]+)\s/.exec(input.trimStart());
-    const appScope = appMatch ? appMatch[1].toLowerCase() : null;
+    const appScope = /^@([\w-]+)\s/.exec(input.trimStart())?.[1]?.toLowerCase();
     return allTools
-      .filter((t) => t.enabled)
-      .filter((t) => !appScope || t.appSlug === appScope)
-      .filter((t) =>
-        token.fragment === "" ||
-        t.name.includes(token.fragment) ||
-        t.requestSlug.includes(token.fragment))
+      .filter((tool) => tool.enabled)
+      .filter((tool) => !appScope || tool.appSlug === appScope)
+      .filter((tool) =>
+        !token.fragment ||
+        tool.name.includes(token.fragment) ||
+        tool.requestSlug.includes(token.fragment))
       .slice(0, 8)
-      .map((t) => ({
-        key: "#" + t.name,
+      .map((tool) => ({
+        key: `#${tool.name}`,
         sigil: "#" as const,
-        value: appScope ? t.requestSlug : t.name,
-        label: appScope ? t.requestSlug : t.name,
-        detail: t.displayName,
-        method: t.method,
+        value: appScope ? tool.requestSlug : tool.name,
+        label: appScope ? tool.requestSlug : tool.name,
+        detail: tool.displayName,
+        method: tool.method,
       }));
   }, [token, acDismissed, allTools, input]);
 
@@ -355,187 +450,127 @@ export function ChatPage() {
 
   const acceptSuggestion = (item: { sigil: "@" | "#"; value: string }) => {
     if (!token) return;
-    const next = input.slice(0, token.start) + item.sigil + item.value + " ";
-    setInput(next);
+    setInput(`${input.slice(0, token.start)}${item.sigil}${item.value} `);
     setAcDismissed(false);
     inputRef.current?.focus();
   };
 
-  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (acItems.length === 0) return;
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setAcIndex((i) => (i + 1) % acItems.length);
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setAcIndex((i) => (i - 1 + acItems.length) % acItems.length);
-    } else if (e.key === "Tab" || (e.key === "Enter" && token && token.fragment !== acItems[acIndex]?.value)) {
-      e.preventDefault();
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setAcIndex((index) => (index + 1) % acItems.length);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setAcIndex((index) => (index - 1 + acItems.length) % acItems.length);
+    } else if (
+      event.key === "Tab" ||
+      (event.key === "Enter" && token && token.fragment !== acItems[acIndex]?.value)
+    ) {
+      event.preventDefault();
       acceptSuggestion(acItems[acIndex]);
-    } else if (e.key === "Escape") {
+    } else if (event.key === "Escape") {
       setAcDismissed(true);
     }
   };
 
-  const submit = async (raw: string, includeWeb = webOn) => {
-    const trimmed = raw.trim();
-    if (!trimmed) return;
-
-    lastConsumedQuery.current = trimmed;
-
-    const convId = active.id;
-    const userTurn: ChatTurn = {
-      id: crypto.randomUUID(),
-      role: "user",
-      createdAt: Date.now(),
-      text: trimmed,
-    };
-    const assistantTurn: ChatTurn = {
-      id: crypto.randomUUID(),
-      role: "assistant",
-      createdAt: Date.now(),
-      payload: { kind: "loading" },
-    };
-
-    patchConversation(convId, (c) => ({
-      ...c,
-      title: c.turns.length === 0 ? titleFromText(trimmed) : c.title,
-      updatedAt: Date.now(),
-      turns: [...c.turns, userTurn, assistantTurn],
-    }));
-    setInput("");
-
-    const patchAssistant = (fn: (t: ChatTurn) => ChatTurn) =>
-      patchConversation(convId, (c) => ({
-        ...c,
-        updatedAt: Date.now(),
-        turns: c.turns.map((t) => (t.id === assistantTurn.id ? fn(t) : t)),
-      }));
-
-    // #/@ — deterministic tool path, unchanged (no answer generation involved).
-    if (isToolInvocation(trimmed)) {
-      try {
-        const data = await search(trimmed, 20, includeWeb);
-        patchAssistant((t) => ({ ...t, payload: { kind: "search", data } }));
-      } catch (e) {
-        const message = e instanceof Error ? e.message : "Request failed";
-        patchAssistant((t) => ({ ...t, payload: { kind: "error", message } }));
-      }
-      return;
-    }
-
-    // Plain messages return retrieved evidence. No external answer model is invoked.
-    try {
-      const data = await search(trimmed, 20, includeWeb);
-      patchAssistant((t) => ({ ...t, payload: { kind: "search", data } }));
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "Request failed";
-      patchAssistant((t) => ({
-        ...t,
-        payload: { kind: "error", message, retryText: trimmed },
-      }));
-    }
+  const chooseExample = (value: string) => {
+    setInput(value);
+    setGuideOpen(false);
+    inputRef.current?.focus();
   };
 
-  // Topbar's independent quick-search box (`/?q=...`) — each new value becomes a new turn.
-  useEffect(() => {
-    if (!pluginsLoaded) return;
-    const urlWeb = params.get("web") === "1";
-    const q = params.get("q") ?? "";
-    if (!q.trim() || q === lastConsumedQuery.current) return;
-    lastConsumedQuery.current = q;
-    const includeWeb = urlWeb && searxngReady;
-    if (urlWeb && !includeWeb) {
-      setWebOn(false);
-      setInitialWebWarning(true);
-    } else {
-      setWebOn(includeWeb);
-    }
-    setParams({}, { replace: true });
-    submit(q, includeWeb);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pluginsLoaded, params]);
-
-  const isToolQuery = isToolInvocation(input);
-  const lastTurn = turns.length > 0 ? turns[turns.length - 1] : null;
-  const isGenerating =
-    !!lastTurn &&
-    lastTurn.payload?.kind === "loading";
-  const activeMessageCount = turns.filter((turn) => turn.role === "user").length;
-
   return (
-    <div className="chat-page">
+    <div className="search-workspace">
       <aside
-        id="chat-history"
-        className={`chat-history-rail ${historyOpen ? "is-mobile-open" : ""}`}
-        aria-label="Conversation history"
+        id="search-history"
+        className={`search-history-rail ${historyOpen ? "is-mobile-open" : ""}`}
+        aria-label="Search sessions"
       >
-        <div className="chat-history-header">
-          <span className="chat-history-title">Conversations</span>
-          <button type="button" className="btn btn-sm chat-history-new" onClick={newChat}>
+        <div className="search-history-header">
+          <span className="search-history-title">Search sessions</span>
+          <button type="button" className="btn btn-sm" onClick={newSearch}>
             <PlusIcon size={13} />
-            New chat
+            New
           </button>
         </div>
-        <div className="chat-history-list">
-          {sortedConversations.map((c) => {
-            const messageCount = c.turns.filter((t) => t.role === "user").length;
-            return (
-              <div key={c.id} className={`chat-history-item ${c.id === active.id ? "active" : ""}`}>
-                <button
-                  type="button"
-                  className="chat-history-item-main"
-                  onClick={() => selectConversation(c.id)}
-                  aria-current={c.id === active.id ? "true" : undefined}
-                >
-                  <span className="chat-history-item-title">{c.title}</span>
-                  <span className="chat-history-item-meta mono">
-                    {formatConversationTime(c.updatedAt)}
-                    {messageCount > 0 && ` · ${messageCount} ${messageCount === 1 ? "message" : "messages"}`}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  className="chat-history-item-delete"
-                  onClick={() => deleteConversation(c.id)}
-                  title="Delete conversation"
-                  aria-label={`Delete conversation: ${c.title}`}
-                >
-                  <TrashIcon size={13} />
-                </button>
-              </div>
-            );
-          })}
+        <div className="search-history-list">
+          {sortedSessions.map((session) => (
+            <div
+              key={session.id}
+              className={`search-history-item ${session.id === active.id ? "active" : ""}`}
+            >
+              <button
+                type="button"
+                className="search-history-item-main"
+                onClick={() => selectSession(session.id)}
+                aria-current={session.id === active.id ? "page" : undefined}
+              >
+                <span className="search-history-item-title">{session.title}</span>
+                <span className="search-history-item-meta mono">
+                  {session.query ? sessionScope(session) : "Ready"}
+                  {" · "}
+                  {formatSessionTime(session.updatedAt)}
+                </span>
+              </button>
+              <button
+                type="button"
+                className="search-history-item-delete"
+                onClick={() => deleteSession(session.id)}
+                title="Delete saved search"
+                aria-label={`Delete saved search: ${session.title}`}
+              >
+                <TrashIcon size={13} />
+              </button>
+            </div>
+          ))}
         </div>
+        <p className="search-history-note">
+          Results are saved in this browser. Select a session to reuse its query.
+        </p>
       </aside>
 
-      <div className="chat-main">
-        <header className="chat-conversation-header">
+      <section className="search-main" aria-labelledby="search-workspace-title">
+        <header className="search-workspace-header">
           <button
             type="button"
-            className="btn btn-sm chat-history-mobile-toggle"
-            aria-controls="chat-history"
+            className="btn btn-sm search-history-mobile-toggle"
+            aria-controls="search-history"
             aria-expanded={historyOpen}
             onClick={() => setHistoryOpen((open) => !open)}
           >
             <BookIcon size={14} />
-            History
+            Sessions
           </button>
-          <div className="chat-conversation-heading">
-            <h1 className="chat-conversation-title">{active.title}</h1>
-            <span className="chat-conversation-meta mono">
-              {activeMessageCount} {activeMessageCount === 1 ? "message" : "messages"}
+          <div className="search-workspace-heading">
+            <h1 id="search-workspace-title">{active.query ? active.title : "Knowledge search"}</h1>
+            <span className="mono">
+              {active.query ? `${sessionScope(active)} · saved ${formatSessionTime(active.updatedAt)}` : "Search files, connected sources, and apps"}
             </span>
           </div>
-          <button
-            type="button"
-            className="btn btn-ghost summary-open-button"
-            onClick={() => setSummaryDialogOpen(true)}
-          >
-            <DownloadIcon size={14} />
-            Summary export
-          </button>
+          <div className="search-workspace-actions">
+            <button
+              type="button"
+              className="btn btn-ghost"
+              aria-expanded={guideOpen}
+              aria-controls="search-guide"
+              onClick={() => setGuideOpen((open) => !open)}
+            >
+              <BookIcon size={14} />
+              Search guide
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost summary-open-button"
+              onClick={() => setSummaryDialogOpen(true)}
+            >
+              <DownloadIcon size={14} />
+              Export evidence
+            </button>
+          </div>
         </header>
+
+        {guideOpen && <SearchGuide id="search-guide" onChoose={chooseExample} />}
 
         {exportNotice && (
           <div className="summary-export-notice" role="status">
@@ -556,119 +591,55 @@ export function ChatPage() {
           </div>
         )}
 
-        <div className="chat-thread">
-          {turns.length === 0 && (
-            <div className="chat-empty-state">
-              <h1 className="search-title">Chat with the knowledge base</h1>
-              <p className="search-subtitle">
-                Search retrieves cited context from your knowledge base.{" "}
-                Type{" "}
-                <code className="hash-hint">
-                  <HashIcon size={12} /> keyword
-                </code>{" "}
-                to invoke a tool deterministically.
-              </p>
-            </div>
-          )}
+        <div className="search-query-region">
+          <SearchForm
+            input={input}
+            setInput={(value) => {
+              setInput(value);
+              setAcDismissed(false);
+            }}
+            inputRef={inputRef}
+            webOn={webOn}
+            setWebOn={setWebOn}
+            searxngReady={searxngReady}
+            isLoading={active.status === "loading"}
+            isToolQuery={isToolInvocation(input)}
+            acItems={acItems}
+            acIndex={acIndex}
+            setAcIndex={setAcIndex}
+            acceptSuggestion={acceptSuggestion}
+            handleInputKeyDown={handleInputKeyDown}
+            onSubmit={() => submit(input)}
+          />
+          <p className="search-query-hint">
+            Plain text searches your knowledge base. Start with <code>@app</code> or <code>#tool</code> to run an app action.
+          </p>
+        </div>
 
+        <div className="search-results-region" aria-live="polite">
           {initialWebWarning && (
             <div className="warning-banner" role="status">
               <AlertIcon size={16} />
-              <span>Web search is unavailable — the SearXNG plugin is not installed or active.</span>
-              <Link to="/plugins" className="btn btn-sm">Go to Plugins</Link>
+              <span>Web search is unavailable because SearXNG is not active.</span>
+              <Link to="/plugins" className="btn btn-sm">Open Plugins</Link>
             </div>
           )}
 
-          {turns.map((turn) =>
-            turn.role === "user" ? (
-              <UserTurnBlock key={turn.id} text={turn.text ?? ""} createdAt={turn.createdAt} />
-            ) : (
-              <AssistantTurnBlock
-                key={turn.id}
-                payload={turn.payload}
-                setInput={setInput}
-                focusInput={() => inputRef.current?.focus()}
-                onRetry={submit}
-              />
-            ),
+          {!active.query && (
+            <SearchEmptyState onChoose={chooseExample} />
           )}
-          <div ref={threadEndRef} />
-        </div>
 
-        <div className="chat-composer-bar">
-          <form
-            className="search-box chat-composer"
-            onSubmit={(e) => {
-              e.preventDefault();
-              submit(input);
-            }}
-          >
-            <SearchIcon size={18} className="search-box-icon" />
-            <input
-              ref={inputRef}
-              type="text"
-              className={`search-box-input ${isToolQuery ? "is-tool" : ""}`}
-              value={input}
-              onChange={(e) => {
-                setInput(e.target.value);
-                setAcDismissed(false);
-              }}
-              onKeyDown={handleInputKeyDown}
-              placeholder="Ask a question, or @app #tool_name…"
-              aria-label="Chat message"
-              autoComplete="off"
+          {active.query && (
+            <SearchSnapshot
+              session={active}
+              setInput={setInput}
+              focusInput={() => inputRef.current?.focus()}
+              onRerun={() => submit(active.query, active.web && searxngReady, true)}
             />
-            {acItems.length > 0 && (
-              <ul className="tool-autocomplete" role="listbox">
-                {acItems.map((item, i) => (
-                  <li key={item.key} role="option" aria-selected={i === acIndex}>
-                    <button
-                      type="button"
-                      className={`tool-ac-item ${i === acIndex ? "tool-ac-active" : ""}`}
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        acceptSuggestion(item);
-                      }}
-                      onMouseEnter={() => setAcIndex(i)}
-                    >
-                      {item.sigil === "@" ? (
-                        <AtSignIcon size={13} className="tool-ac-icon" />
-                      ) : (
-                        <HashIcon size={13} className="tool-ac-icon" />
-                      )}
-                      <span className="tool-ac-name mono">{item.label}</span>
-                      {item.method && (
-                        <span className={`method-badge mono ${item.method === "GET" ? "" : "method-write"}`}>
-                          {item.method}
-                        </span>
-                      )}
-                      <span className="tool-ac-detail">{item.detail}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <label className="web-toggle" title={!searxngReady ? "Web search requires SearXNG — install on the Plugins page" : "Augment results with live web content"}>
-              <input
-                type="checkbox"
-                checked={webOn}
-                disabled={!searxngReady}
-                onChange={(e) => setWebOn(e.target.checked)}
-              />
-              <GlobeIcon size={15} />
-              <span className="web-toggle-label">Web</span>
-            </label>
-            <button
-              type="submit"
-              className="btn btn-primary search-box-submit"
-              disabled={!input.trim() || isGenerating}
-            >
-              <SendIcon size={16} />
-              Search
-            </button>
-          </form>
+          )}
         </div>
-      </div>
+      </section>
+
       <SummarySourceDialog
         open={summaryDialogOpen}
         onClose={() => setSummaryDialogOpen(false)}
@@ -678,173 +649,253 @@ export function ChatPage() {
   );
 }
 
-function UserTurnBlock({ text, createdAt }: { text: string; createdAt: number }) {
+// Keep the old export name for extensions importing this module directly.
+export const ChatPage = SearchPage;
+
+function SearchForm({
+  input,
+  setInput,
+  inputRef,
+  webOn,
+  setWebOn,
+  searxngReady,
+  isLoading,
+  isToolQuery,
+  acItems,
+  acIndex,
+  setAcIndex,
+  acceptSuggestion,
+  handleInputKeyDown,
+  onSubmit,
+}: {
+  input: string;
+  setInput: (value: string) => void;
+  inputRef: React.RefObject<HTMLInputElement>;
+  webOn: boolean;
+  setWebOn: (value: boolean) => void;
+  searxngReady: boolean;
+  isLoading: boolean;
+  isToolQuery: boolean;
+  acItems: {
+    key: string;
+    sigil: "@" | "#";
+    value: string;
+    label: string;
+    detail: string;
+    method: string | null;
+  }[];
+  acIndex: number;
+  setAcIndex: (value: number) => void;
+  acceptSuggestion: (item: { sigil: "@" | "#"; value: string }) => void;
+  handleInputKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => void;
+  onSubmit: () => void;
+}) {
   return (
-    <div className="chat-turn chat-turn-user">
-      <div className="chat-turn-meta mono">
-        <span className="chat-turn-role">you</span>
-        <span className="chat-turn-time">{new Date(createdAt).toLocaleTimeString()}</span>
-      </div>
-      <div className="chat-turn-body">{text}</div>
-    </div>
+    <form
+      className="search-box search-workspace-form"
+      role="search"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSubmit();
+      }}
+    >
+      <SearchIcon size={18} className="search-box-icon" />
+      <input
+        ref={inputRef}
+        type="search"
+        className={`search-box-input ${isToolQuery ? "is-tool" : ""}`}
+        value={input}
+        onChange={(event) => setInput(event.target.value)}
+        onKeyDown={handleInputKeyDown}
+        placeholder="Search knowledge, or use @app #tool…"
+        aria-label="Knowledge or app search"
+        aria-autocomplete="list"
+        aria-controls={acItems.length > 0 ? "search-tool-suggestions" : undefined}
+        aria-expanded={acItems.length > 0}
+        autoComplete="off"
+      />
+      {acItems.length > 0 && (
+        <ul id="search-tool-suggestions" className="tool-autocomplete" role="listbox">
+          {acItems.map((item, index) => (
+            <li key={item.key} role="option" aria-selected={index === acIndex}>
+              <button
+                type="button"
+                className={`tool-ac-item ${index === acIndex ? "tool-ac-active" : ""}`}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  acceptSuggestion(item);
+                }}
+                onMouseEnter={() => setAcIndex(index)}
+              >
+                {item.sigil === "@" ? (
+                  <AtSignIcon size={13} className="tool-ac-icon" />
+                ) : (
+                  <HashIcon size={13} className="tool-ac-icon" />
+                )}
+                <span className="tool-ac-name mono">{item.label}</span>
+                {item.method && (
+                  <span className={`method-badge mono ${item.method === "GET" ? "" : "method-write"}`}>
+                    {item.method}
+                  </span>
+                )}
+                <span className="tool-ac-detail">{item.detail}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <label
+        className="web-toggle"
+        title={searxngReady ? "Include live web sources" : "Activate SearXNG on the Plugins page to use web search"}
+      >
+        <input
+          type="checkbox"
+          checked={webOn}
+          disabled={!searxngReady}
+          onChange={(event) => setWebOn(event.target.checked)}
+        />
+        <GlobeIcon size={15} />
+        <span className="web-toggle-label">Web</span>
+      </label>
+      <button
+        type="submit"
+        className="btn btn-primary search-box-submit"
+        disabled={!input.trim() || isLoading}
+      >
+        <SearchIcon size={15} />
+        {isLoading ? "Searching" : "Search"}
+      </button>
+    </form>
   );
 }
 
-function AssistantTurnBlock({
-  payload,
+function SearchGuide({ id, onChoose }: { id: string; onChoose: (value: string) => void }) {
+  return (
+    <section id={id} className="search-guide-panel" aria-label="How to search">
+      <div>
+        <span className="search-guide-kicker mono">KNOWLEDGE</span>
+        <strong>Ask in plain language</strong>
+        <p>Find cited excerpts across files and synced connections.</p>
+        <button type="button" onClick={() => onChoose("What are the release approval steps?")}>
+          What are the release approval steps?
+        </button>
+      </div>
+      <div>
+        <span className="search-guide-kicker mono">APP + TOOL</span>
+        <strong>Choose an app, then an action</strong>
+        <p>Type <code>@</code> for an app and <code>#</code> for one of its tools.</p>
+        <button type="button" onClick={() => onChoose("@jira #")}>
+          @jira #
+        </button>
+      </div>
+      <div>
+        <span className="search-guide-kicker mono">DIRECT TOOL</span>
+        <strong>Run a known tool</strong>
+        <p>Start with <code>#</code> when you already know the imported tool name.</p>
+        <button type="button" onClick={() => onChoose("#")}>
+          Browse available tools
+        </button>
+      </div>
+      <Link to="/guide" className="search-guide-full-link">
+        Open the full workspace guide <ChevronRightIcon size={13} />
+      </Link>
+    </section>
+  );
+}
+
+function SearchEmptyState({ onChoose }: { onChoose: (value: string) => void }) {
+  return (
+    <section className="search-home">
+      <div className="search-home-copy">
+        <span className="eyebrow mono">RETRIEVAL WORKSPACE</span>
+        <h2>Find evidence. Run tools.</h2>
+        <p>
+          Search returns source-backed results from your knowledge base. App commands are
+          deterministic and stay separate from normal queries.
+        </p>
+      </div>
+      <div className="search-home-options">
+        <button type="button" onClick={() => onChoose("Summarize the onboarding policy")}>
+          <span><SearchIcon size={16} /> Search knowledge</span>
+          <small>Use a natural-language question</small>
+          <code>Summarize the onboarding policy</code>
+        </button>
+        <button type="button" onClick={() => onChoose("@jira #")}>
+          <span><AtSignIcon size={16} /> Use an app</span>
+          <small>Scope actions to one connected app</small>
+          <code>@jira #</code>
+        </button>
+        <button type="button" onClick={() => onChoose("#")}>
+          <span><HashIcon size={16} /> Run a tool</span>
+          <small>Choose an imported API operation</small>
+          <code>#tool_name</code>
+        </button>
+      </div>
+      <p className="search-home-footnote">
+        Each completed query is saved as a reusable search session in the rail.
+      </p>
+    </section>
+  );
+}
+
+function SearchSnapshot({
+  session,
   setInput,
   focusInput,
-  onRetry,
+  onRerun,
 }: {
-  payload?: AssistantPayload;
-  setInput: (v: string) => void;
+  session: SearchSession;
+  setInput: (value: string) => void;
   focusInput: () => void;
-  onRetry: (text: string) => void;
+  onRerun: () => void;
 }) {
   return (
-    <div className="chat-turn chat-turn-assistant">
-      <div className="chat-turn-meta mono">
-        <span className="chat-turn-role">assistant</span>
-      </div>
-      <div className="chat-turn-body">
-        {!payload || payload.kind === "loading" ? (
-          <GeneratingIndicator />
-        ) : payload.kind === "error" ? (
-          <ErrorView payload={payload} onRetry={onRetry} />
-        ) : payload.kind === "answer" ? (
-          <AnswerView payload={payload} />
-        ) : (
-          <SearchResponseView response={payload.data} setInput={setInput} focusInput={focusInput} />
-        )}
-      </div>
-    </div>
-  );
-}
+    <article className="search-snapshot">
+      <header className="search-snapshot-header">
+        <div>
+          <span className="search-snapshot-label mono">RESULTS FOR</span>
+          <h2>{session.query}</h2>
+        </div>
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={onRerun}
+          disabled={session.status === "loading"}
+        >
+          <SearchIcon size={14} />
+          Run again
+        </button>
+      </header>
 
-function GeneratingIndicator() {
-  return (
-    <div className="chat-generating mono" role="status">
-      <span className="chat-generating-dots">
-        <span />
-        <span />
-        <span />
-      </span>
-      generating…
-    </div>
-  );
-}
-
-function ErrorView({
-  payload,
-  onRetry,
-}: {
-  payload: Extract<AssistantPayload, { kind: "error" }>;
-  onRetry: (text: string) => void;
-}) {
-  const retryText = payload.retryText;
-  return (
-    <div className="chat-error">
-      <div className="error-banner" role="alert">{payload.message}</div>
-      <div className="chat-error-actions">
-        {retryText && (
-          <button type="button" className="btn btn-sm chat-retry-btn" onClick={() => onRetry(retryText)}>
-            Retry
-          </button>
-        )}
-      </div>
-      {payload.sources && payload.sources.length > 0 && (
-        <>
-          <p className="chat-error-fallback">The retrieved excerpts are still available:</p>
-          <SourcesDisclosure sources={payload.sources} />
-        </>
-      )}
-    </div>
-  );
-}
-
-function AnswerView({ payload }: { payload: Extract<AssistantPayload, { kind: "answer" }> }) {
-  return (
-    <div className="chat-answer">
-      {payload.text ? (
-        <MarkdownText text={payload.text} />
-      ) : (
-        payload.streaming && <GeneratingIndicator />
-      )}
-      {payload.streaming && payload.text !== "" && <span className="chat-cursor" aria-hidden>▍</span>}
-      {payload.stopped && <div className="chat-note mono">stopped — the answer above is partial</div>}
-      {payload.sources.length > 0 && <SourcesDisclosure sources={payload.sources} />}
-    </div>
-  );
-}
-
-/**
- * Per-turn evidence stays hidden behind per-type counts. Expanding it reveals each RAG
- * file group and web result without overwhelming the conversation transcript.
- */
-function SourcesDisclosure({ sources, query = "" }: { sources: SearchResult[]; query?: string }) {
-  const [open, setOpen] = useState(false);
-  const localGroups = useMemo(() => groupLocalResults(sources.filter((s) => s.sourceKind !== "web")), [sources]);
-  const webSources = useMemo(() => sources.filter((s) => s.sourceKind === "web"), [sources]);
-  const evidenceCount = localGroups.length + webSources.length;
-
-  return (
-    <div className="chat-sources">
-      <button
-        type="button"
-        className="chat-sources-toggle"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        aria-label={`${open ? "Hide" : "View"} ${evidenceCount} evidence sources`}
-      >
-        <span className="chat-sources-label">Evidence</span>
-        <span className="chat-source-count mono">
-          <FileIcon size={12} />
-          RAG <strong>{localGroups.length}</strong>
-        </span>
-        <span className="chat-source-count mono">
-          <GlobeIcon size={12} />
-          Web <strong>{webSources.length}</strong>
-        </span>
-        <span className="chat-sources-action">
-          {open ? "Hide sources" : "View sources"}
-          <ChevronRightIcon size={13} className={`file-group-chevron ${open ? "chev-open" : ""}`} />
-        </span>
-      </button>
-      {open && (
-        <div className="chat-sources-body">
-          {localGroups.length > 0 && (
-            <section className="chat-sources-section">
-              <h4 className="chat-sources-section-title">
-                RAG files <span className="mono">{localGroups.length}</span>
-              </h4>
-              <ol className="file-list">
-                {localGroups.map((group, i) => (
-                  <FileGroupCard
-                    key={`src-${group.sourceKind}-${group.sourceName}-${group.sourcePath}-${group.sourceUrl}`}
-                    group={group}
-                    rank={i + 1}
-                    query={query}
-                    defaultExpanded={false}
-                  />
-                ))}
-              </ol>
-            </section>
-          )}
-          {webSources.length > 0 && (
-            <section className="chat-sources-section">
-              <h4 className="chat-sources-section-title">
-                Web sources <span className="mono">{webSources.length}</span>
-              </h4>
-              <ol className="web-result-list">
-                {webSources.map((r, i) => (
-                  <WebResultCard key={"src-" + r.id} result={r} rank={i + 1} query={query} />
-                ))}
-              </ol>
-            </section>
-          )}
+      {session.status === "loading" && (
+        <div className="search-loading" role="status">
+          <span className="search-loading-indicator" aria-hidden />
+          <div>
+            <strong>Searching sources</strong>
+            <span>Retrieving and ranking matching evidence…</span>
+          </div>
         </div>
       )}
-    </div>
+
+      {session.status === "error" && (
+        <div className="search-request-error" role="alert">
+          <AlertIcon size={16} />
+          <div>
+            <strong>Search could not be completed</strong>
+            <span>{session.error}</span>
+          </div>
+          <button type="button" className="btn btn-sm" onClick={onRerun}>Try again</button>
+        </div>
+      )}
+
+      {session.status === "success" && session.response && (
+        <SearchResponseView
+          response={session.response}
+          setInput={setInput}
+          focusInput={focusInput}
+        />
+      )}
+    </article>
   );
 }
 
@@ -854,22 +905,27 @@ function SearchResponseView({
   focusInput,
 }: {
   response: SearchResponse;
-  setInput: (v: string) => void;
+  setInput: (value: string) => void;
   focusInput: () => void;
 }) {
-  const { localGroups, webResults } = useMemo(() => {
-    if (response.mode !== "rag") return { localGroups: [] as FileGroup[], webResults: [] as SearchResult[] };
-    return {
-      localGroups: groupLocalResults(response.results.filter((r) => r.sourceKind !== "web")),
-      webResults: response.results.filter((r) => r.sourceKind === "web"),
-    };
-  }, [response]);
+  const localGroups = useMemo(
+    () => response.mode === "rag"
+      ? groupLocalResults(response.results.filter((result) => result.sourceKind !== "web"))
+      : [],
+    [response],
+  );
+  const webResults = useMemo(
+    () => response.mode === "rag"
+      ? response.results.filter((result) => result.sourceKind === "web")
+      : [],
+    [response],
+  );
 
   if (response.mode === "notReady") {
     return (
-      <div className="setup-banner" role="status">
+      <div className="setup-banner search-setup-banner" role="status">
         <div className="setup-banner-content">
-          <span className="setup-banner-title">Search requires setup</span>
+          <span className="setup-banner-title">Search needs setup</span>
           <span className="setup-banner-text">{response.message}</span>
           {response.pluginStatus && response.pluginStatus.length > 0 && (
             <ul className="setup-plugin-list">
@@ -883,7 +939,7 @@ function SearchResponseView({
             </ul>
           )}
         </div>
-        <Link to="/plugins" className="btn btn-primary">Go to Plugins</Link>
+        <Link to="/plugins" className="btn btn-primary">Open Plugins</Link>
       </div>
     );
   }
@@ -898,22 +954,22 @@ function SearchResponseView({
         <p className="tool-result-message">{response.message}</p>
         {response.suggestions && response.suggestions.length > 0 && (
           <ul className="tool-suggestion-list">
-            {response.suggestions.map((s) => (
-              <li key={s.id}>
+            {response.suggestions.map((suggestion) => (
+              <li key={suggestion.id}>
                 <button
                   type="button"
                   className="tool-ac-item"
                   onClick={() => {
-                    setInput(`#${s.name} `);
+                    setInput(`#${suggestion.name} `);
                     focusInput();
                   }}
                 >
                   <HashIcon size={13} className="tool-ac-icon" />
-                  <span className="tool-ac-name mono">{s.name}</span>
-                  <span className={`method-badge mono ${s.method === "GET" ? "" : "method-write"}`}>
-                    {s.method}
+                  <span className="tool-ac-name mono">{suggestion.name}</span>
+                  <span className={`method-badge mono ${suggestion.method === "GET" ? "" : "method-write"}`}>
+                    {suggestion.method}
                   </span>
-                  <span className="tool-ac-detail">{s.displayName}</span>
+                  <span className="tool-ac-detail">{suggestion.displayName}</span>
                 </button>
               </li>
             ))}
@@ -956,17 +1012,61 @@ function SearchResponseView({
     if (localGroups.length === 0 && webResults.length === 0) {
       return (
         <div className="search-empty">
-          <span className="empty-line">No matching documents.</span>
-          <span className="empty-hint">Upload files via the Files page, then ask again.</span>
+          <span className="empty-line">No matching sources</span>
+          <span className="empty-hint">Try fewer terms, check your connection sync, or upload files first.</span>
         </div>
       );
     }
     return (
-      <SourcesDisclosure sources={response.results} query={response.query} />
+      <div className="search-evidence">
+        <div className="search-evidence-summary">
+          <span>
+            <FileIcon size={14} />
+            <strong>{localGroups.length}</strong> knowledge {localGroups.length === 1 ? "source" : "sources"}
+          </span>
+          <span>
+            <GlobeIcon size={14} />
+            <strong>{webResults.length}</strong> web {webResults.length === 1 ? "source" : "sources"}
+          </span>
+          {response.lexicalOnly && <span className="mono">LEXICAL MODE</span>}
+        </div>
+        {response.lexicalMessage && <p className="search-mode-note">{response.lexicalMessage}</p>}
+        {localGroups.length > 0 && (
+          <section className="search-evidence-section">
+            <h3>Knowledge sources <span className="mono">{localGroups.length}</span></h3>
+            <ol className="file-list">
+              {localGroups.map((group, index) => (
+                <FileGroupCard
+                  key={`${group.sourceKind}-${group.sourceName}-${group.sourcePath}-${group.sourceUrl}`}
+                  group={group}
+                  rank={index + 1}
+                  query={response.query}
+                  defaultExpanded={index === 0}
+                />
+              ))}
+            </ol>
+          </section>
+        )}
+        {webResults.length > 0 && (
+          <section className="search-evidence-section">
+            <h3>Web sources <span className="mono">{webResults.length}</span></h3>
+            <ol className="web-result-list">
+              {webResults.map((result, index) => (
+                <WebResultCard key={result.id} result={result} rank={index + 1} query={response.query} />
+              ))}
+            </ol>
+          </section>
+        )}
+      </div>
     );
   }
 
-  return null;
+  return (
+    <div className="search-empty">
+      <span className="empty-line">{response.message ?? "No results returned"}</span>
+      <span className="empty-hint">Refine the query and run this search again.</span>
+    </div>
+  );
 }
 
 function FileGroupCard({
@@ -978,16 +1078,17 @@ function FileGroupCard({
   group: FileGroup;
   rank: number;
   query: string;
-  defaultExpanded?: boolean;
+  defaultExpanded: boolean;
 }) {
-  const [expanded, setExpanded] = useState(defaultExpanded ?? rank === 1);
-  const matchCount = group.chunks.length;
-
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  const [showAllMatches, setShowAllMatches] = useState(false);
+  const visibleChunks = showAllMatches ? group.chunks : group.chunks.slice(0, 3);
   return (
     <li className="file-group">
       <button
+        type="button"
         className="file-group-header"
-        onClick={() => setExpanded((v) => !v)}
+        onClick={() => setExpanded((open) => !open)}
         aria-expanded={expanded}
       >
         <ChevronRightIcon
@@ -998,22 +1099,26 @@ function FileGroupCard({
         <FileIcon size={15} className="file-group-icon" />
         <span className="file-group-name">{group.sourceName}</span>
         <span className="file-group-count mono">
-          {matchCount} {matchCount === 1 ? "match" : "matches"}
+          {group.chunks.length} {group.chunks.length === 1 ? "match" : "matches"}
         </span>
       </button>
-
       <div className="file-group-path mono">{group.sourcePath}</div>
-
       {expanded && (
         <div className="file-group-chunks">
-          {group.chunks.map((chunk, i) => (
-            <ChunkCard
-              key={chunk.id}
-              chunk={chunk}
-              rank={i + 1}
-              query={query}
-            />
+          {visibleChunks.map((chunk, index) => (
+            <ChunkCard key={chunk.id} chunk={chunk} rank={index + 1} query={query} />
           ))}
+          {group.chunks.length > 3 && (
+            <button
+              type="button"
+              className="file-group-more"
+              onClick={() => setShowAllMatches((showAll) => !showAll)}
+            >
+              {showAllMatches
+                ? "Show fewer matches"
+                : `Show ${group.chunks.length - visibleChunks.length} more matches`}
+            </button>
+          )}
         </div>
       )}
     </li>
@@ -1036,7 +1141,6 @@ function WebResultCard({
       return result.sourceUrl;
     }
   }, [result.sourceUrl]);
-
   return (
     <li className="web-result-card">
       <div className="web-result-rank mono">{rank}</div>
@@ -1056,7 +1160,7 @@ function WebResultCard({
             rel="noopener noreferrer"
             className="web-result-link"
             title={`Open ${result.sourceUrl}`}
-            aria-label="Open in new tab"
+            aria-label={`Open ${result.sourceName || "web source"} in a new tab`}
           >
             <ExternalLinkIcon size={14} />
           </a>
@@ -1098,38 +1202,32 @@ function ChunkCard({
   );
 }
 
-/** Splits text into runs, marking query terms with <mark>. Case-insensitive match. */
 function HighlightedText({ text, query }: { text: string; query: string }) {
-  const terms = useMemo(() => {
-    return query
+  const terms = useMemo(
+    () => query
       .toLowerCase()
-      .replace(/[#]/g, "")
+      .replace(/#/g, "")
       .split(/[^a-z0-9]+/i)
-      .filter((t) => t.length >= 2)
-      .map(escapeRegex);
-  }, [query]);
-
+      .filter((term) => term.length >= 2)
+      .map(escapeRegex),
+    [query],
+  );
   if (terms.length === 0) return <>{text}</>;
-
-  const re = new RegExp(`(${terms.join("|")})`, "gi");
-  const parts = text.split(re);
-  const lowerTerms = terms.map((t) => t.toLowerCase());
-
+  const expression = new RegExp(`(${terms.join("|")})`, "gi");
+  const lowerTerms = terms.map((term) => term.toLowerCase());
   return (
     <>
-      {parts.map((part, i) =>
+      {text.split(expression).map((part, index) =>
         lowerTerms.includes(part.toLowerCase()) ? (
-          <mark key={i} className="search-highlight">
-            {part}
-          </mark>
+          <mark key={index} className="search-highlight">{part}</mark>
         ) : (
-          <React.Fragment key={i}>{part}</React.Fragment>
+          <React.Fragment key={index}>{part}</React.Fragment>
         ),
       )}
     </>
   );
 }
 
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

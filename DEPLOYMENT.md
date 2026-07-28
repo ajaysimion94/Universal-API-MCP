@@ -116,12 +116,21 @@ java -jar target/mcp-server.jar      # API works; UI 404s unless SPA was built o
 | `spring.sql.init.mode` | `always` | Runs `schema.sql` on startup (idempotent) |
 | `spring.servlet.multipart.max-file-size` | `100MB` | Upload limit |
 | `rag.embedding.model-dir` | `${user.dir}/models/nomic-embed-text-v1.5` | Path to the ONNX model + tokenizer |
+| `rag.reranker.model-dir` | `${user.dir}/models/ms-marco-MiniLM-L6-v2` | Path to the cross-encoder ONNX model + tokenizer |
 | `rag.search.vector-top-k` | `40` | Candidates from the vector leg |
 | `rag.search.lexical-top-k` | `40` | Candidates from the FTS leg |
 | `rag.search.rrf-k` | `60` | Reciprocal Rank Fusion constant |
+| `rag.search.min-relevance-score` | `0.015` | Local abstention threshold after cross-encoder reranking |
 | `rag.web.searxng-url` | `http://127.0.0.1:8888` | SearXNG JSON API endpoint (web toggle) |
-| `rag.web.page-count` | `5` | Max web pages fetched per query |
-| `rag.web.chunk-per-query` | `8` | Max web chunks embedded in-memory per query |
+| `rag.web.engines` | `bing,brave,duckduckgo,startpage,stackoverflow` | Explicit provider fallback set; successful engines still contribute when another is rate-limited |
+| `rag.web.page-count` | `5` | Max ranked web results returned |
+| `rag.web.query-count` | `4` | Contextual query variants generated from user intent |
+| `rag.web.candidate-count` | `24` | Deduplicated SearXNG candidates retained before reranking |
+| `rag.web.page-fetch-count` | `10` | Strongest candidates whose full pages are safely extracted |
+| `rag.web.page-fetch-timeout-seconds` | `8` | Per-page HTTP timeout |
+| `rag.web.max-response-bytes` | `2097152` | Hard response-body download cap |
+| `rag.web.max-content-chars` | `20000` | Extracted text cap per page |
+| `rag.web.min-relevance-score` | `0.20` | Minimum calibrated score for a web result |
 
 ---
 
@@ -172,14 +181,18 @@ curl http://127.0.0.1:8080/api/files/root/children
 | `GET` | `/api/search?q=...&topK=20&web=false` | RAG search — cited context from ingested documents |
 
 Plain keywords run the RAG pipeline (embed query → hybrid search: sqlite-vec cosine + FTS5,
-RRF-merged → rerank → cited context). `#keyword` invocations are the deterministic tool path (Phase 3
+deterministic RRF merge → ONNX cross-encoder rerank → cited context). A semantic/lexical fallback
+remains available if the reranker model cannot load. `#keyword` invocations are the deterministic tool path (Phase 3
 seam — returns "no tools registered" until then). The server returns **cited context, not generated
 answers**.
 
-The `web=true` toggle augments results with live web content: the server queries the local SearXNG
-instance for relevant URLs, fetches + extracts (Tika) + chunks + embeds each page **in-memory** (not
-persisted), and merges the web chunks into results tagged `sourceKind="web"` with the source URL as
-provenance. Requires SearXNG running; if it's down, the toggle degrades gracefully to local-only.
+The `web=true` toggle performs contextual research rather than forwarding only the raw question:
+the server creates focused primary-source and recency/security variants, retrieves a broad SearXNG
+candidate set, canonicalizes and deduplicates URLs, safely fetches the strongest pages, extracts
+their text with Tika, and semantically reranks them. Authority, freshness, cross-query/engine
+corroboration, and domain diversity are ranking features; provider order is not the final order.
+The JSON response includes `webQueries` for transparency. Web content remains in memory and is not
+persisted. Requires SearXNG; if it is down, the request degrades gracefully to local-only.
 
 ```sh
 # upload a document (triggers ingestion: chunk → embed → store)

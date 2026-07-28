@@ -11,7 +11,7 @@ class GuideCatalogTests {
     @Test
     void exposesArticlesForPeopleAndMcpClientInstructions() {
         assertThat(catalog.summaries()).extracting(GuideCatalog.GuideSummary::id)
-                .containsExactly("start", "knowledge", "api-tools", "mcp-clients", "development");
+                .containsExactly("start", "knowledge", "api-tools", "queries", "insights", "mcp-clients", "development");
         assertThat(catalog.find("mcp-clients")).isPresent();
         assertThat(catalog.llmGuideMarkdown())
                 .contains("search-knowledge-base", "confirm-action", "explicit, current human approval");

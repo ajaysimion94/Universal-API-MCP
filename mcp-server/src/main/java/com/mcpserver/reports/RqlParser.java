@@ -107,8 +107,7 @@ public class RqlParser {
                 continue;
             }
             String keyword = stage.split("\\s+", 2)[0];
-            if (!List.of("where", "select", "order", "limit", "offset", "distinct", "group", "expand",
-                    "join", "lookup", "rename", "parse").contains(keyword)) {
+            if (!ReportQueryService.stageKeywords().contains(keyword)) {
                 diagnostics.add(new Diagnostic(Span.of(source, parts.get(i).offset(),
                         parts.get(i).offset() + parts.get(i).text().length()), Severity.ERROR, "RQL014",
                         "Unknown pipeline stage '" + keyword + "'."));

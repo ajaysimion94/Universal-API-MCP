@@ -1,0 +1,52 @@
+[
+  {
+    "id": "access-control",
+    "sourceName": "access-control-guide.md",
+    "content": "Access control and document permissions. Every ingested chunk captures ACL tags from its source. User and group entitlements are applied as retrieval filters so a person cannot receive documents they are not allowed to read. Item-level overrides and broken inheritance must be preserved. Authorization enforcement is activated in the security phase; until then the server stays bound to localhost and must not be exposed publicly."
+  },
+  {
+    "id": "deployment",
+    "sourceName": "deployment-guide.md",
+    "content": "Deployment and runtime guide. Build the single runnable Spring Boot JAR with Maven package. Start it with java -jar target/mcp-server.jar. The server binds to 127.0.0.1 on port 8080 by default. Override the port with --server.port=9090. Development uses the backend on 8080 and the Vite UI on localhost 5173. Java 17 or newer is supported."
+  },
+  {
+    "id": "confluence",
+    "sourceName": "confluence-connector-guide.md",
+    "content": "Confluence connector setup and troubleshooting. Confluence Cloud uses the site URL, account email, and API token. Server and Data Center use username and password or personal access token. Creating a connection verifies credentials and performs the initial backfill before status becomes connected. Cloud relies on scheduled CQL delta polling; Server and Data Center can also register webhooks."
+  },
+  {
+    "id": "jira",
+    "sourceName": "jira-connector-guide.md",
+    "content": "Jira connector operations. Configure the Jira base URL, project key, account identity, and API token. The connector detects Cloud versus Server or Data Center. It tries the modern POST search JQL endpoint and falls back to the classic search endpoint for compatible older installations. Backfill imports issues and delta polling updates changed issues without duplicating chunks."
+  },
+  {
+    "id": "api-import",
+    "sourceName": "api-import-guide.md",
+    "content": "Zero-code API onboarding accepts OpenAPI 3, Swagger 2.0, and Postman collection version 2 documents. Import from an uploaded file or a reachable specification URL. Swagger UI pages are resolved to their underlying specification. Postman collection variables are substituted before the base URL and endpoint paths are derived. Imported operations become lowercase snake-case tools and remain pending until reviewed and enabled."
+  },
+  {
+    "id": "rql",
+    "sourceName": "query-language-reference.md",
+    "content": "Report Query Language uses pipelines. Read an API request, filter rows with where, select fields, group rows by a property, calculate count sum average minimum or maximum, order results, and limit output. Example: request \"Orders\" | group by status count as total sum amount as revenue | order by revenue desc. Lookup enriches each row and join combines datasets."
+  },
+  {
+    "id": "semantic-search",
+    "sourceName": "semantic-search-guide.md",
+    "content": "Knowledge search combines a Nomic text embedding vector search with SQLite FTS5 lexical search. Reciprocal Rank Fusion merges both ranked lists and an in-process ONNX cross-encoder reranks the strongest chunks. If the embedding model or sqlite-vec is unavailable, search degrades to keyword-only mode and explains which plugin needs attention. Exact ticket IDs and acronyms benefit from the lexical leg."
+  },
+  {
+    "id": "web-research",
+    "sourceName": "web-research-guide.md",
+    "content": "Contextual web research expands the user's intent into several focused queries, including primary documentation and time-sensitive security or release queries. SearXNG supplies broad candidates, but its provider rank is not final. Search snippets are short and often SEO-shaped, so top pages are fetched safely and their extracted text provides full semantic context. URLs are canonicalized and deduplicated, then authority, freshness, corroboration, and domain diversity reduce SEO manipulation."
+  },
+  {
+    "id": "file-ingestion",
+    "sourceName": "file-ingestion-guide.md",
+    "content": "Files and folders support drag-and-drop uploads for PDF, Word, Excel, PowerPoint, Markdown, text, JSON and other formats. Apache Tika extracts text from binary documents. Structure-aware chunking preserves headings and overlap, then creates embeddings and FTS entries. Re-uploading a folder reuses existing folders and skips files already present at the same path. Deleting a source purges its chunks."
+  },
+  {
+    "id": "tool-approval",
+    "sourceName": "tool-approval-guide.md",
+    "content": "Imported API tools use deterministic hash and at-sign query grammar. Read-only operations may execute immediately after validation. State-changing tools never run from a suggestion alone: the workflow engine creates a preview and short-lived confirmation token, then requires explicit user approval. Every invocation and execution is written to the audit log. Rate limits and host pinning apply to tool calls."
+  }
+]

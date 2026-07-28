@@ -5,7 +5,7 @@ import { EditorView, highlightActiveLineGutter, lineNumbers } from "@codemirror/
 import { useEffect, useRef } from "react";
 import type { QueryCompletion, QueryDiagnostic } from "../api";
 
-interface DashboardEditorProps {
+interface InsightEditorProps {
   value: string;
   onChange: (value: string) => void;
   diagnostics: QueryDiagnostic[];
@@ -13,7 +13,7 @@ interface DashboardEditorProps {
 }
 
 /** A small CodeMirror 6 shell; language intelligence comes from debounced server analysis. */
-export function DashboardEditor({ value, onChange, diagnostics, completions }: DashboardEditorProps) {
+export function InsightEditor({ value, onChange, diagnostics, completions }: InsightEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
@@ -94,5 +94,5 @@ export function DashboardEditor({ value, onChange, diagnostics, completions }: D
     editor.dispatch(setDiagnostics(editor.state, lint));
   }, [diagnostics]);
 
-  return <div ref={host} className="dashboard-code-editor" aria-label="Dashboard document editor" />;
+  return <div ref={host} className="insight-code-editor" aria-label="Insight document editor" />;
 }

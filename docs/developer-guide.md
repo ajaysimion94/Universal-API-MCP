@@ -64,7 +64,10 @@ handling.
 ## Knowledge, tools, and query grammar
 
 Plain text in Chat runs the RAG context path. It returns evidence from indexed files and, when
-enabled, temporary SearXNG web results. It does not generate an answer through an external provider.
+enabled, temporary contextual SearXNG web results. The server expands user intent into focused
+queries, fetches and extracts the strongest pages, and reranks them with semantic, authority,
+freshness, corroboration, and domain-diversity signals. It does not generate an answer through an
+external provider.
 
 Imported API requests become deterministic tools. Use the following grammar in Chat:
 
@@ -79,9 +82,15 @@ For example, #inventory_list_products finds a tool by keyword, while
 their input is valid. Write tools return a preview and a single-use confirmation token; the UI must
 show the preview and receive explicit person-level approval before confirmation.
 
-The dashboard slice executes enabled GET tools only. It parses .rqd dashboard documents with fenced
+The insight slice executes enabled GET tools only. It parses .rqd insight documents with fenced
 RQL blocks and renders the supported Stat, BarChart, and DataTable components. It deliberately does
 not introduce arbitrary code execution or a second API credential path.
+
+The user-facing documentation for this is split in three: query-language-reference.md is the RQL/RQD
+reference including every diagnostic code and endpoint contract, reports-and-insights-tutorial.md
+is the hands-on build, and user-guide.md covers the rest of the application. When you change grammar,
+stage behaviour, a diagnostic code, or a component prop, update the reference in the same change —
+its "Current limits" section is what keeps the design docs from being read as shipped behaviour.
 
 ## Guide system
 

@@ -32,6 +32,21 @@ ALTER TABLE chunks ADD COLUMN external_id TEXT;
 ALTER TABLE chunks ADD COLUMN url TEXT;
 ALTER TABLE chunks ADD COLUMN updated_at TEXT;
 
+-- Saved insight documents (.rqd source: Markdown + RQL + components). One row per insight; a
+-- workspace is expected to accumulate many of them. `connection_id` is only the preferred app for
+-- unqualified request names — a document may read from several collections.
+CREATE TABLE IF NOT EXISTS insights (
+    id            TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    description   TEXT NOT NULL DEFAULT '',
+    source        TEXT NOT NULL,
+    connection_id TEXT,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_insights_name ON insights(name);
+
 -- A credentialed, schedulable connection to a remote knowledge source (Confluence, Jira; more
 -- types reserved). Distinct from the plugins/ subsystem, which manages singleton local
 -- infrastructure (embedding model, vector store, SearXNG) rather than N remote connections.

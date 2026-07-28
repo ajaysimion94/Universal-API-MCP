@@ -393,7 +393,7 @@ export function AppsPage() {
   const groupInfo = groups.find((g) => g.id === selectedGroupId) ?? null;
 
   return (
-    <>
+    <div className="apps-page">
       <aside className="sidebar apps-sidebar">
         <div className="apps-groups-header">
           <span className="apps-groups-title">Groups</span>
@@ -492,7 +492,8 @@ export function AppsPage() {
         </div>
       </aside>
 
-      <main className="main">
+      <section className="main" aria-labelledby="apps-page-title">
+        <h1 id="apps-page-title" className="sr-only">Apps and API requests</h1>
         {error && (
           <div className="error-banner" role="alert">
             {error}
@@ -654,12 +655,13 @@ export function AppsPage() {
 
             <div className="rb-workspace">
               {openTabs.length === 0 ? (
-                <div className="table-empty">
-                  <span className="empty-line">No request open.</span>
+                <div className="table-empty apps-workspace-empty">
+                  <span className="empty-line">Choose an endpoint to start a request</span>
                   <span className="empty-hint">
-                    Pick an endpoint from the sidebar, or hover an app and click + to start a new
-                    request.
+                    Expand an app in the sidebar and select an endpoint. Use the + action beside an
+                    app to create a custom request.
                   </span>
+                  <Link to="/guide" className="empty-link">Read the app query guide</Link>
                 </div>
               ) : (
                 openTabs.map((tab) => (
@@ -691,8 +693,8 @@ export function AppsPage() {
             </div>
           </>
         )}
-      </main>
-    </>
+      </section>
+    </div>
   );
 }
 

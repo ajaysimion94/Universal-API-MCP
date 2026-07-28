@@ -105,6 +105,9 @@ public class SearchController {
         response.put("mode", "rag");
         response.put("web", web);
         response.put("webReady", webReady);
+        if (web && webReady) {
+            response.put("webQueries", searchService.plannedWebQueries(query));
+        }
         if (!webReady) {
             response.put("webMessage", "Web augmentation requires the SearXNG plugin — install it on the Plugins page.");
         }

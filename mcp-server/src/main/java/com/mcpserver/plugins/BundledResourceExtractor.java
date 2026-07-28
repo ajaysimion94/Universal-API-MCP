@@ -28,9 +28,13 @@ public class BundledResourceExtractor {
     public static final String SQLITE_VEC_DIR = "lib/sqlite-vec";
 
     public BundledResourceExtractor(@Value("${rag.embedding.model-dir}") String modelDir,
-                                    @Value("${rag.embedding.model-file}") String modelFile) {
+                                    @Value("${rag.embedding.model-file}") String modelFile,
+                                    @Value("${rag.reranker.model-dir:${user.dir}/models/ms-marco-MiniLM-L6-v2}") String rerankerDir,
+                                    @Value("${rag.reranker.model-file:model.onnx}") String rerankerFile) {
         extractIfMissing("bundled/model/" + modelFile, Path.of(modelDir, modelFile));
         extractIfMissing("bundled/model/tokenizer.json", Path.of(modelDir, "tokenizer.json"));
+        extractIfMissing("bundled/reranker/" + rerankerFile, Path.of(rerankerDir, rerankerFile));
+        extractIfMissing("bundled/reranker/tokenizer.json", Path.of(rerankerDir, "tokenizer.json"));
         String lib = "vec0" + libExtension();
         extractIfMissing("bundled/sqlite-vec/" + detectOs() + "-" + detectArch() + "/" + lib,
                 Path.of(SQLITE_VEC_DIR, lib));

@@ -1,5 +1,6 @@
 package com.mcpserver.plugins;
 
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -12,6 +13,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.*;
 import java.time.Duration;
+import java.util.concurrent.TimeUnit;
 
 @Component
 public class SearXngPlugin implements Plugin {
@@ -19,18 +21,28 @@ public class SearXngPlugin implements Plugin {
     private static final Logger log = LoggerFactory.getLogger(SearXngPlugin.class);
     private static final String PLUGIN_ID = "searxng";
     private static final String INSTALL_DIR = "lib/searxng";
+    private static final String PID_FILE = "searxng.pid";
     /** Pinned SearXNG source snapshot bundled in the jar at build time (see pom.xml). */
     private static final String BUNDLED_SOURCE = "bundled/searxng/searxng-src.zip";
 
     private final PluginStateStore stateStore;
     private final String searxngUrl;
+    private final HttpClient healthClient;
     private volatile Process process;
+    private volatile ProcessHandle managedHandle;
     private volatile String errorMsg;
+    private volatile boolean lastHealth;
+    private volatile long lastHealthCheckNanos;
 
     public SearXngPlugin(PluginStateStore stateStore,
                          @Value("${rag.web.searxng-url:http://127.0.0.1:8888}") String searxngUrl) {
         this.stateStore = stateStore;
         this.searxngUrl = searxngUrl;
+        this.healthClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(2))
+                .followRedirects(HttpClient.Redirect.NEVER)
+                .build();
+        adoptManagedProcess();
     }
 
     @Override
@@ -49,7 +61,7 @@ public class SearXngPlugin implements Plugin {
     public Status status() {
         if (errorMsg != null && !stateStore.isInstalled(PLUGIN_ID)) return Status.ERROR;
         if (!stateStore.isEnabled(PLUGIN_ID)) return Status.DISABLED;
-        if (process != null && process.isAlive()) return Status.ACTIVE;
+        if (isReady()) return Status.ACTIVE;
         if (stateStore.isInstalled(PLUGIN_ID)) return Status.INSTALLED;
         return Status.NOT_INSTALLED;
     }
@@ -58,7 +70,7 @@ public class SearXngPlugin implements Plugin {
     public boolean isEnabled() { return stateStore.isEnabled(PLUGIN_ID); }
 
     @Override
-    public boolean isRunning() { return process != null && process.isAlive(); }
+    public boolean isRunning() { return endpointHealthy(); }
 
     @Override
     public void install() throws Exception {
@@ -107,18 +119,23 @@ public class SearXngPlugin implements Plugin {
     @Override
     public void disable() {
         stateStore.setEnabled(PLUGIN_ID, false);
-        if (process != null && process.isAlive()) {
-            process.destroy();
-            process = null;
-        }
+        stop();
     }
 
     @Override
-    public void start() throws Exception {
+    public synchronized void start() throws Exception {
         if (!stateStore.isInstalled(PLUGIN_ID)) {
             throw new IllegalStateException("SearXNG not installed");
         }
-        if (process != null && process.isAlive()) return;
+        if (endpointHealthy(true)) {
+            log.info("SearXNG is already healthy on {}; reusing it", searxngUrl);
+            return;
+        }
+        adoptManagedProcess();
+        if (managedProcessAlive()) {
+            waitUntilHealthy();
+            return;
+        }
 
         Path dir = Path.of(INSTALL_DIR);
         Path srcDir = dir.resolve("src");
@@ -129,46 +146,154 @@ public class SearXngPlugin implements Plugin {
         pb.environment().put("SEARXNG_SETTINGS_PATH", settingsFile.toAbsolutePath().toString());
         pb.directory(srcDir.toFile());
         pb.redirectErrorStream(true);
+        pb.redirectOutput(ProcessBuilder.Redirect.appendTo(dir.resolve("searxng.log").toFile()));
         process = pb.start();
+        managedHandle = process.toHandle();
+        Files.writeString(dir.resolve(PID_FILE), Long.toString(process.pid()),
+                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+        invalidateHealth();
         log.info("SearXNG process started (pid={})", process.pid());
+        try {
+            waitUntilHealthy();
+            errorMsg = null;
+        } catch (Exception e) {
+            errorMsg = e.getMessage();
+            stop();
+            throw e;
+        }
     }
 
     @Override
-    public void stop() {
-        if (process != null && process.isAlive()) {
-            process.descendants().forEach(ph -> {
-                try {
-                    ph.destroy();
-                } catch (Exception ignored) {}
-            });
-            process.destroy();
+    public synchronized void stop() {
+        ProcessHandle handle = managedHandle;
+        if (handle == null && process != null) handle = process.toHandle();
+        if (handle != null && handle.isAlive() && isSearXngProcess(handle)) {
+            handle.descendants().forEach(SearXngPlugin::destroyQuietly);
+            handle.destroy();
             try {
-                process.waitFor();
-            } catch (InterruptedException ignored) {}
-            if (process != null && process.isAlive()) {
-                process.descendants().forEach(ph -> {
-                    try {
-                        ph.destroyForcibly();
-                    } catch (Exception ignored) {}
-                });
-                process.destroyForcibly();
+                handle.onExit().get(5, TimeUnit.SECONDS);
+            } catch (Exception ignored) {
+                handle.descendants().forEach(SearXngPlugin::destroyForciblyQuietly);
+                handle.destroyForcibly();
             }
-            process = null;
-            log.info("SearXNG process stopped");
+            log.info("Managed SearXNG process stopped (pid={})", handle.pid());
         }
+        process = null;
+        managedHandle = null;
+        deletePidFile();
+        invalidateHealth();
     }
 
     @Override
     public String health() {
         if (!stateStore.isEnabled(PLUGIN_ID)) return "disabled";
-        if (process != null && process.isAlive()) return "running on " + searxngUrl;
+        if (endpointHealthy()) {
+            return managedProcessAlive()
+                    ? "healthy on " + searxngUrl + " (managed)"
+                    : "healthy on " + searxngUrl + " (external process)";
+        }
+        if (managedProcessAlive()) return "process running, health check pending on " + searxngUrl;
         if (stateStore.isInstalled(PLUGIN_ID)) return "installed, not running";
         return errorMsg != null ? errorMsg : "not installed";
     }
 
     @Override
     public boolean isReady() {
-        return isEnabled() && process != null && process.isAlive();
+        return isEnabled() && endpointHealthy();
+    }
+
+    private void waitUntilHealthy() throws Exception {
+        long deadline = System.nanoTime() + Duration.ofSeconds(20).toNanos();
+        while (System.nanoTime() < deadline) {
+            if (endpointHealthy(true)) return;
+            if (!managedProcessAlive()) {
+                throw new IOException("SearXNG exited before its HTTP endpoint became ready");
+            }
+            Thread.sleep(200);
+        }
+        throw new IOException("SearXNG did not become healthy on " + searxngUrl + " within 20 seconds");
+    }
+
+    private boolean endpointHealthy() {
+        return endpointHealthy(false);
+    }
+
+    private boolean endpointHealthy(boolean force) {
+        long now = System.nanoTime();
+        if (!force && now - lastHealthCheckNanos < Duration.ofSeconds(1).toNanos()) {
+            return lastHealth;
+        }
+        boolean healthy = false;
+        try {
+            URI base = URI.create(searxngUrl.endsWith("/") ? searxngUrl : searxngUrl + "/");
+            HttpRequest request = HttpRequest.newBuilder(base)
+                    .header("Accept", "text/html, application/json;q=0.5")
+                    .timeout(Duration.ofSeconds(2))
+                    .GET()
+                    .build();
+            int status = healthClient.send(request, HttpResponse.BodyHandlers.discarding()).statusCode();
+            healthy = status >= 200 && status < 400;
+        } catch (Exception ignored) {
+            healthy = false;
+        }
+        lastHealth = healthy;
+        lastHealthCheckNanos = now;
+        return healthy;
+    }
+
+    private void invalidateHealth() {
+        lastHealth = false;
+        lastHealthCheckNanos = 0;
+    }
+
+    private boolean managedProcessAlive() {
+        if (process != null && process.isAlive()) return true;
+        return managedHandle != null && managedHandle.isAlive() && isSearXngProcess(managedHandle);
+    }
+
+    private void adoptManagedProcess() {
+        Path pidFile = Path.of(INSTALL_DIR, PID_FILE);
+        if (!Files.exists(pidFile)) return;
+        try {
+            long pid = Long.parseLong(Files.readString(pidFile).trim());
+            ProcessHandle.of(pid).filter(ProcessHandle::isAlive)
+                    .filter(SearXngPlugin::isSearXngProcess)
+                    .ifPresent(handle -> {
+                        managedHandle = handle;
+                        log.info("Adopted managed SearXNG process from pid file (pid={})", pid);
+                    });
+            if (managedHandle == null) Files.deleteIfExists(pidFile);
+        } catch (Exception e) {
+            try { Files.deleteIfExists(pidFile); } catch (IOException ignored) {}
+        }
+    }
+
+    private static boolean isSearXngProcess(ProcessHandle handle) {
+        String commandLine = handle.info().commandLine().orElse("").toLowerCase();
+        String[] arguments = handle.info().arguments().orElse(new String[0]);
+        String joinedArgs = String.join(" ", arguments).toLowerCase();
+        return commandLine.contains("searx.webapp") || joinedArgs.contains("searx.webapp");
+    }
+
+    private static void destroyQuietly(ProcessHandle handle) {
+        try { handle.destroy(); } catch (Exception ignored) {}
+    }
+
+    private static void destroyForciblyQuietly(ProcessHandle handle) {
+        try { handle.destroyForcibly(); } catch (Exception ignored) {}
+    }
+
+    private void deletePidFile() {
+        try {
+            Files.deleteIfExists(Path.of(INSTALL_DIR, PID_FILE));
+        } catch (IOException e) {
+            log.debug("Could not remove stale SearXNG pid file: {}", e.getMessage());
+        }
+    }
+
+    @PreDestroy
+    void close() {
+        stop();
     }
 
     /**

@@ -1,6 +1,7 @@
 package com.mcpserver.rag.retrieval;
 
 import java.util.HashMap;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
@@ -28,7 +29,11 @@ public final class RrfFusion {
         accumulate(vectorRanked, scores);
         accumulate(lexicalRanked, scores);
         return scores.entrySet().stream()
-                .sorted(Map.Entry.<String, Float>comparingByValue().reversed())
+                // Equal RRF scores are common (for example, an item at rank 1 in only
+                // one leg). HashMap iteration order is not a ranking contract, so use
+                // the stable chunk id as the final tie-breaker.
+                .sorted(Map.Entry.<String, Float>comparingByValue().reversed()
+                        .thenComparing(Map.Entry::getKey, Comparator.naturalOrder()))
                 .toList();
     }
 

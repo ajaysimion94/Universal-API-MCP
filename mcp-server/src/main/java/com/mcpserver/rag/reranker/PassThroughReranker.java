@@ -1,7 +1,6 @@
 package com.mcpserver.rag.reranker;
 
 import com.mcpserver.models.Chunk;
-import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -12,7 +11,6 @@ import java.util.List;
  * Preserves the incoming RRF order with descending synthetic scores so the interface contract holds.
  * Swap for {@code OnnxCrossEncoderReranker} (bge-reranker) without changing the pipeline.
  */
-@Component
 public class PassThroughReranker implements Reranker {
 
     @Override

@@ -63,7 +63,7 @@ public class GuideCatalog {
                     )),
             new GuideArticle(
                     "api-tools",
-                    "API tools and dashboards",
+                    "API tools and insights",
                     "Connect an API, invoke an imported request deliberately, then explore safe read data.",
                     "Operators",
                     List.of(
@@ -77,10 +77,82 @@ public class GuideCatalog {
                                     List.of("Inspect the resolved URL, headers, and body.", "Ask the person for a clear approval.",
                                             "Confirm once; tokens are single-use and expire."), null,
                                     "Never reuse a confirmation token or treat an earlier approval as approval for changed arguments."),
-                            section("Build a small dashboard", "Dashboards run enabled GET tools through a constrained RQL document and render "
-                                            + "Stat, BarChart, and DataTable components.",
-                                    List.of("Open Dashboards and choose a connection.", "Start from the included RQL example.",
-                                            "Run it, inspect the data table, then refine the visualization."), null, null)
+                            section("Build a small insight", "Insights run enabled GET tools through a constrained RQL document and render "
+                                            + "charts, tables, and summary blocks. One insight can read from several connected apps.",
+                                    List.of("Open Insights and start from the included example.",
+                                            "Qualify a request with its app when two apps share a request name.",
+                                            "Run it, inspect the data table, then save it to the library."), null, null)
+                    )),
+            new GuideArticle(
+                    "queries",
+                    "Query system (RQL)",
+                    "Turn imported read requests — from one app or several — into rows you can filter, aggregate, and chart.",
+                    "Operators",
+                    List.of(
+                            section("What a query runs against", "RQL queries imported API requests, not the knowledge base. "
+                                            + "Every query goes through the same executor and credentials as any other tool call: enabled read "
+                                            + "requests only, no second credential path.",
+                                    List.of("Import a collection on Connections.", "Enable the GET requests you want to query on Apps.",
+                                            "Reference a request by its display name."),
+                                    "let posts = request \"List all posts\"\n  |> limit 25;", null),
+                            section("Statements and pipelines", "A program is statements ending in ';'. Use set for parameters, let to bind a "
+                                            + "dataset, and emit to publish one. A pipeline is a source followed by stages joined with '|>'.",
+                                    List.of("set name = value; then reference it as $name.", "let name = pipeline; binds a dataset.",
+                                            "Stages: where, select, order by, limit, offset, distinct, group by, expand, rename."),
+                                    "set minUser = 1;\n\nlet by_user = request \"List all posts\"\n  |> where userId >= $minUser\n"
+                                            + "  |> group by userId agg count(*) as posts\n  |> order by posts desc;", null),
+                            section("Combine and enrich", "Beyond filtering, a pipeline can pull detail per row, join a prior dataset, "
+                                            + "work with dates, and compare sources. Text matching is case-insensitive throughout.",
+                                    List.of("lookup request \"...\" by <field> runs a detail request for every row.",
+                                            "parse date <field> format \"...\" timezone \"...\" enables date_preset and date ranges.",
+                                            "intersect, except, and diff add _source and _in_<label> provenance columns.",
+                                            "compare [a as \"x\", b as \"y\"] on <field> builds a value matrix with _count."),
+                                    "let detailed = orders\n  |> lookup request \"Get order detail\" by id\n"
+                                            + "  |> where createdAt date_preset THIS_MONTH;", null),
+                            section("Read the diagnostics", "The editor analyses the document as you type and returns coded diagnostics with "
+                                            + "source positions. Execution never aborts: a failed request becomes an empty dataset and every other "
+                                            + "dataset still runs.",
+                                    List.of("RQL101 — the request name does not exist in this collection.",
+                                            "RQL102 — the request is disabled and returns no rows.",
+                                            "RQL104 — the request writes data and cannot be queried.",
+                                            "RQL201 — the request ran but returned an error status."), null,
+                                    "See docs/query-language-reference.md for the full grammar, every diagnostic code, and the "
+                                            + "mapping from .filter report keywords to their RQL spelling.")
+                    )),
+            new GuideArticle(
+                    "insights",
+                    "Build an insight",
+                    "A short path from one request to a saved insight with KPIs, a chart, and a table.",
+                    "Operators",
+                    List.of(
+                            section("1. Start from one request", "Open Insights. Begin with a single request and a table, so you "
+                                            + "can see the real field names before designing anything.",
+                                    List.of("Optionally pick a default app in the header.", "Write one let with a limit.",
+                                            "Bind it to a DataTable and press Run insight."),
+                                    "```rql\nlet records = request \"List all posts\" |> limit 25;\n```\n\n<DataTable data={records} />",
+                                    "If the table shows one odd row, the API nests its rows under a key. Use expand to unwrap it."),
+                            section("2. Aggregate, then visualise", "Charts need one row per category, which is what group by produces. "
+                                            + "Add the KPI row and the bar chart once the aggregated table looks right.",
+                                    List.of("group by a field with count(*), sum, avg, min, or max.",
+                                            "Use Stat for single numbers, BarChart for comparisons.",
+                                            "DataTable, x, y, and data props are required where listed."),
+                                    "<Stat value={count(records)} label=\"Rows\" />\n"
+                                            + "<BarChart data={by_user} x=\"userId\" y=\"posts\" title=\"Posts per user\" />",
+                                    "Dual axes and author-chosen series colours are rejected by design; add a second chart instead. "
+                                            + "Colour is semantic only — true/false and request status colour themselves."),
+                            section("3. Summarise beyond charts", "Text, KeyValue, LabelValue, QuickTable, and LabelTable write summary blocks "
+                                            + "directly in the document; Status and Metrics report on the run itself. Values accept conditionals.",
+                                    List.of("Use Text or KeyValue for a computed sentence or a single fact.",
+                                            "Use QuickTable/LabelTable for inline tables written in the document.",
+                                            "Add Status for per-request status and duration, Metrics for the aggregate."),
+                                    "<KeyValue label=\"Coverage\" value={if count(detailed) = count(orders) then \"complete\" else \"partial\"} />\n"
+                                            + "<Status />", null),
+                            section("4. Parameterise, combine apps, and save", "Declare parameters in front matter and read them as $name. "
+                                            + "Requests resolve across every connected app, and Save keeps the insight in the library.",
+                                    List.of("Add params to the front matter with a type and default.",
+                                            "Qualify a request as \"App: Request\" to read from another app in the same document.",
+                                            "Name the insight and press Save; reopen it any time from the library."),
+                                    "---\ntitle: API activity\nparams:\n  minUser: { type: number, default: 1 }\n---", null)
                     )),
             new GuideArticle(
                     "mcp-clients",

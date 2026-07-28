@@ -348,3 +348,108 @@ small original fixtures.
 
 **Refs:** `connectors/ConnectionService.java`; `tools/OpenApiParser.java`;
 `tools/PostmanCollectionParser.java`; parser fixtures under `src/test/resources/specs/`
+
+### 2026-07-28 — User documentation is split by task, and the reference documents shipped behaviour only
+
+**Decision:** User-facing documentation is three documents with distinct jobs: `docs/user-guide.md`
+(every application process end to end), `docs/query-language-reference.md` (RQL/RQD grammar,
+diagnostic codes, endpoint contracts), and `docs/reports-and-dashboards-tutorial.md` (hands-on
+build). The reference describes only what the implementation does and carries an explicit
+"Current limits" section naming the gaps against `report-query-design.md` / `dashboard-design.md`
+(`join`/`lookup` non-executable, `parse date` validate-only, `use collection` advisory, one chart
+type, no persistence or export). Two in-app guide articles — `queries` and `dashboards` — were added
+to `GuideCatalog` so people and MCP clients get the same short version.
+
+**Why:** The design documents predate the implemented slice and read as capability claims. Someone
+following them writes a query with `join` and gets a warning and wrong numbers. Keeping design intent
+and shipped behaviour in separate documents, with the reference authoritative on the latter, is what
+makes the docs usable without weakening the design docs' role. Every claim in the reference was
+verified against a running server (an imported Postman fixture over a local JSON endpoint), not
+inferred from the design.
+
+**Status:** active
+
+**Refs:** `docs/user-guide.md`; `docs/query-language-reference.md`;
+`docs/reports-and-dashboards-tutorial.md`; `guides/GuideCatalog.java`; `docs/developer-guide.md`
+
+### 2026-07-29 — RQL reaches function parity with the .filter report language
+
+**Decision:** The dashboard query engine now implements every function of the `.filter` language in
+`Postman-excel-report-automation`, keeping RQL's pipeline syntax rather than adopting that language's
+statement-per-line shape. Added: a ported date engine (`parse date` / `date config` with format and
+timezone, ten relative presets, date-aware `between`), `if … then … else` predicates, executable
+`lookup` (per-row detail request, merged as `detail.<field>` plus unprefixed when there is no clash)
+and `join`, `compare … on <field>` value matrices, `_source` / `_in_<label>` provenance on
+`intersect` / `except` / `diff`, `diff` corrected from an alias for `except` to a true symmetric
+difference, `expand` child-field prefixing with sparse fields under an exception label, and
+case-insensitive text semantics with `regex` find(). Dashboards gained the summary blocks: `<Text>`,
+`<KeyValue>`, `<LabelValue>`, `<QuickTable>`, `<LabelTable>`, `<Status>`, `<Metrics>`, plus `title`
+and `AS` renames on `<DataTable>`, all sharing one expression language with conditionals.
+
+**Why:** The two systems answer the same question — turn Postman-imported requests into a report —
+and a user moving from one to the other should not lose a capability. Parity was defined as
+functions, not syntax: RQL's pipelines compose better than repeated `SHAPE`/`FILTER` statements
+targeting a key, and the `COLLECTION`/`REQUESTS` selection statements have no meaning here because
+the connection is chosen by the page. Two deliberate non-ports: `COLOR` clauses, because colour here
+is semantic (true/false, pass/fail) and author-chosen colour is a structural guardrail
+(`RQD013`); and `OUTPUT_PREFIX`, which belongs with the workbook export that has not shipped yet.
+
+**Status:** active
+
+**Refs:** `reports/RqlDates.java`; `reports/RqlPredicate.java`; `reports/RqlValues.java`;
+`reports/ReportQueryService.java`; `dashboards/DashboardDocumentParser.java`;
+`webui/src/dashboardExpr.ts`; `webui/src/components/DashboardPage.tsx`;
+`docs/query-language-reference.md` §8 maps every `.filter` keyword to its RQL spelling
+
+### 2026-07-29 — Dashboards become Insights: saved, and free to span several apps
+
+**Decision:** The dashboard slice is renamed **Insights** throughout — route `/insights`, package
+`com.mcpserver.insights`, API `/api/insights`, document diagnostics recoded `RQD*` → `RQI*`.
+`/dashboards` and `/reports` redirect. Two capabilities land with the rename:
+
+1. **Insights are saved.** A new `insights` table plus REST CRUD (`GET/POST/PUT/DELETE
+   /api/insights`) and a library panel in the workspace. A workspace is expected to hold many.
+2. **One insight can read from several apps.** A request name resolves qualified
+   (`request "CRM: List customers"`), scoped (`use collection "CRM";` — previously advisory, now
+   real), preferred (the page's default app), then across every connected API collection. A bare
+   name matching two apps fails with `RQL106` naming the candidates instead of silently choosing;
+   an unknown app is `RQL107`. `<Status>`/`<Metrics>` gained a `cached` flag so a run served from
+   the tool cache does not report HTTP calls it never made.
+
+**Why:** "Dashboard" described the widget grid; the work these documents do is answer a question by
+combining sources, and the old name kept the feature sounding narrower than it is. Persistence and
+multi-app resolution follow from that framing: an insight worth naming is worth keeping, and the
+questions worth asking cross app boundaries — orders in one collection, customers in another. Tying
+a document to a single `connectionId` was an artefact of the first slice, not a constraint anything
+depended on. Ambiguity is reported rather than resolved by precedence because silently reading the
+wrong app's data is the one failure a report must never produce.
+
+**Status:** active
+
+**Refs:** `insights/` (InsightController, InsightService, InsightRepository, SavedInsight,
+InsightDocumentParser, InsightModel); `reports/ReportQueryService.java` (Scope, Resolution);
+`schema.sql` (insights table); `webui/src/components/InsightPage.tsx`; `config/WebMvcConfig.java`;
+`docs/query-language-reference.md` §3.4
+
+### 2026-07-29 — Retrieval uses cross-encoder ranking and contextual web research
+
+**Decision:** Replace pass-through RRF scoring with the portable ONNX
+`cross-encoder/ms-marco-MiniLM-L6-v2` model, with a deterministic Nomic-cosine/lexical fallback when
+the model cannot load. Filename relevance is a bounded pre-sort feature, RRF ties are deterministic,
+and local/web scores are sorted on the same 0–1 relevance scale. Web augmentation generates up to
+four intent-preserving query variants, deduplicates SearXNG candidates, fetches a bounded set of
+public pages through SSRF-safe HTTP, extracts text with Tika, and ranks with semantic relevance plus
+authority, freshness, corroboration, and domain diversity. SearXNG readiness is an HTTP health fact;
+a managed PID file permits adoption after an app restart.
+
+**Why:** The prior implementation mutated filename scores after sorting, used a pass-through
+reranker, forwarded only the raw question to SearXNG, and preserved provider order over snippets.
+Those behaviours made displayed scores contradictory and web ranking overly dependent on SEO.
+A 50-query real-model gate now prevents silent quality regressions.
+
+**Status:** active; supersedes the 2026-07-04 pass-through-reranker decision and completes the
+page-fetch/semantic-ranking contract of the 2026-07-04 web-search decision.
+
+**Refs:** `rag/reranker/OnnxCrossEncoderReranker.java`; `rag/web/WebSearchService.java`;
+`rag/web/WebQueryPlanner.java`; `plugins/SearXngPlugin.java`; `eval-harness/`;
+`scripts/run-eval.sh`; `.github/workflows/ci.yml`

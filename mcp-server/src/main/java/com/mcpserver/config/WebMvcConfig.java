@@ -18,6 +18,9 @@ public class WebMvcConfig implements WebMvcConfigurer {
         registry.addViewController("/connections").setViewName("forward:/index.html");
         registry.addViewController("/apps").setViewName("forward:/index.html");
         registry.addViewController("/guide").setViewName("forward:/index.html");
+        registry.addViewController("/insights").setViewName("forward:/index.html");
+        registry.addViewController("/insights/**").setViewName("forward:/index.html");
+        // Kept so links made before the rename still resolve; the SPA redirects them.
         registry.addViewController("/dashboards").setViewName("forward:/index.html");
         registry.addViewController("/dashboards/**").setViewName("forward:/index.html");
         registry.addViewController("/reports").setViewName("forward:/index.html");

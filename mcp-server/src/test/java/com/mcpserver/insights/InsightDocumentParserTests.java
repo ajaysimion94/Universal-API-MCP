@@ -1,16 +1,16 @@
-package com.mcpserver.dashboards;
+package com.mcpserver.insights;
 
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class DashboardDocumentParserTests {
+class InsightDocumentParserTests {
 
-    private final DashboardDocumentParser parser = new DashboardDocumentParser();
+    private final InsightDocumentParser parser = new InsightDocumentParser();
 
     @Test
     void parsesFrontmatterRqlAndSafeComponents() {
-        DashboardModel.Document document = parser.parse("""
+        InsightModel.Document document = parser.parse("""
                 ---
                 title: API Health
                 connection: demo-api
@@ -32,16 +32,16 @@ class DashboardDocumentParserTests {
             assertThat(param.type()).isEqualTo("number");
         });
         assertThat(document.rql()).contains("let posts");
-        assertThat(document.components()).extracting(DashboardModel.Component::type)
+        assertThat(document.components()).extracting(InsightModel.Component::type)
                 .containsExactly("Stat", "BarChart");
         assertThat(document.diagnostics()).isEmpty();
     }
 
     @Test
     void rejectsUnsupportedVisualEscapes() {
-        DashboardModel.Document document = parser.parse("<BarChart data={rows} x=\"a\" y=\"b\" y2=\"c\" color=\"#fff\" />");
+        InsightModel.Document document = parser.parse("<BarChart data={rows} x=\"a\" y=\"b\" y2=\"c\" color=\"#fff\" />");
 
         assertThat(document.diagnostics()).extracting(diagnostic -> diagnostic.code())
-                .contains("RQD011", "RQD013");
+                .contains("RQI011", "RQI013");
     }
 }

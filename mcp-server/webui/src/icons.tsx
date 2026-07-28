@@ -89,6 +89,15 @@ export function TrashIcon({ size = 16, className }: IconProps) {
   );
 }
 
+export function SaveIcon({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className}>
+      <path d="M5 3h11l3 3v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" />
+      <path d="M8 3v6h7V3M8 21v-6h8v6" />
+    </svg>
+  );
+}
+
 export function SearchIcon({ size = 16, className }: IconProps) {
   return (
     <svg {...base(size)} className={className}>

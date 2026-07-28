@@ -277,6 +277,28 @@
                         </configuration>
                     </execution>
                     <execution>
+                        <id>bundle-cross-encoder-model</id>
+                        <phase>generate-resources</phase>
+                        <goals><goal>wget</goal></goals>
+                        <configuration>
+                            <url>https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2/resolve/main/onnx/model.onnx</url>
+                            <outputDirectory>${bundled.dir}/reranker</outputDirectory>
+                            <outputFileName>model.onnx</outputFileName>
+                            <sha256>5d3e70fd0c9ff14b9b5169a51e957b7a9c74897afd0a35ce4bd318150c1d4d4a</sha256>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>bundle-cross-encoder-tokenizer</id>
+                        <phase>generate-resources</phase>
+                        <goals><goal>wget</goal></goals>
+                        <configuration>
+                            <url>https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2/resolve/main/tokenizer.json</url>
+                            <outputDirectory>${bundled.dir}/reranker</outputDirectory>
+                            <outputFileName>tokenizer.json</outputFileName>
+                            <sha256>d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66</sha256>
+                        </configuration>
+                    </execution>
+                    <execution>
                         <id>bundle-sqlite-vec-macos-aarch64</id>
                         <phase>generate-resources</phase>
                         <goals><goal>wget</goal></goals>

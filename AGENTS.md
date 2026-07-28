@@ -18,7 +18,8 @@ An enterprise MCP (Model Context Protocol) server with a first-party React/TypeS
 It exposes:
 
 - A **files & folders manager** (SharePoint-like upload + folder tree).
-- A **RAG search** pipeline over ingested documents (hybrid sqlite-vec + FTS5, RRF fusion, reranker seam).
+- A **RAG search** pipeline over ingested documents (hybrid sqlite-vec + FTS5, deterministic RRF,
+  in-process ONNX cross-encoder reranking).
 - **Connectors** for Confluence, Jira, and zero-code API onboarding via Postman/OpenAPI import.
 - Imported API tools that can be invoked from the Web UI `#`/`@` grammar or over MCP.
 - A real **MCP Streamable HTTP endpoint** at `/mcp` for AI clients.
@@ -104,8 +105,8 @@ Open **http://localhost:5173** (not 8080) in dev mode.
 │   │   │   ├── chunking/         # Chunker, StructureAwareChunker
 │   │   │   ├── embedding/        # EmbeddingClient, OnnxEmbeddingClient
 │   │   │   ├── retrieval/        # SearchPipeline, RrfFusion
-│   │   │   ├── reranker/         # Reranker, PassThroughReranker
-│   │   │   └── web/              # WebFetcher, SearXngWebFetcher
+│   │   │   ├── reranker/         # ONNX cross-encoder + deterministic semantic fallback
+│   │   │   └── web/              # query planner, SearXNG, page fetch, semantic ranking
 │   │   ├── connectors/           # Confluence/Jira/API_COLLECTION connectors, event queue
 │   │   ├── tools/                # Postman/OpenAPI parsers, ApiToolService/Executor/Controller
 │   │   └── mcp/                  # McpServerConfig, McpToolBridge (only SDK touch points)
@@ -164,6 +165,7 @@ Open **http://localhost:5173** (not 8080) in dev mode.
 ```sh
 cd mcp-server && mvn test
 cd mcp-server && mvn test -Dtest=FileServiceTests#canUploadFileAndItAppearsAsAChild
+./scripts/run-eval.sh
 cd mcp-server/webui && npm run typecheck
 ```
 
@@ -181,7 +183,7 @@ Key backend test classes:
 
 ## Runtime architecture and deployment
 
-- **Single runnable JAR.** `mvn package` bundles the React SPA into `BOOT-INF/classes/static/` and downloads/extracts the ONNX model, per-platform sqlite-vec libs, and SearXNG source snapshot into the JAR (sha256-verified, cached under `~/.m2/.cache/mcp-server-bundle`).
+- **Single runnable JAR.** `mvn package` bundles the React SPA into `BOOT-INF/classes/static/` and downloads/extracts the embedding + cross-encoder ONNX models, per-platform sqlite-vec libs, and SearXNG source snapshot into the JAR (sha256-verified, cached under `~/.m2/.cache/mcp-server-bundle`).
 - **Embedded SQLite** at `./data/mcpserver.db`; no external database is required.
 - **Plugins page (`/plugins`)** installs/enables local infrastructure: vector store, embedding model, and optional SearXNG. The app boots in degraded mode (file management works, search/ingestion report "not ready") when plugins are missing.
 - **Default bind:** `server.address=127.0.0.1`, `server.port=8080` — trusted internal network only until Phase 6.

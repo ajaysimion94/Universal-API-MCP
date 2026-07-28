@@ -51,12 +51,12 @@ export function FileTable({
   const ordered = [...folders, ...files];
 
   return (
-    <div className="table-wrap">
+    <div className="table-wrap" role="table" aria-label="Files and folders">
       <div className="table-head" role="row">
-        <span className="col-name">Name</span>
-        <span className="col-owner">Owner</span>
-        <span className="col-size">Size</span>
-        <span className="col-modified">Modified</span>
+        <span className="col-name" role="columnheader">Name</span>
+        <span className="col-owner" role="columnheader">Owner</span>
+        <span className="col-size" role="columnheader">Size</span>
+        <span className="col-modified" role="columnheader">Modified</span>
         <span className="col-actions" />
       </div>
 

@@ -199,8 +199,9 @@ export function FilesPage() {
         currentId={current?.id ?? root.id}
         onSelect={loadFolder}
       />
-      <main
+      <section
         className={`main ${dragOver ? "is-dragover" : ""}`}
+        aria-label="File browser"
         onDragEnter={onDragEnter}
         onDragLeave={onDragLeave}
         onDragOver={onDragOver}
@@ -249,6 +250,7 @@ export function FilesPage() {
               type="file"
               multiple
               className="file-input-hidden"
+              aria-label="Choose files to upload"
               onChange={(e) => {
                 handleUpload(e.target.files);
                 e.target.value = "";
@@ -259,6 +261,7 @@ export function FilesPage() {
               type="file"
               multiple
               className="file-input-hidden"
+              aria-label="Choose a folder to upload"
               onChange={(e) => {
                 handleUploadFolder(e.target.files);
                 e.target.value = "";
@@ -331,7 +334,7 @@ export function FilesPage() {
             </div>
           </div>
         )}
-      </main>
+      </section>
     </div>
   );
 }

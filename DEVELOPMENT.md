@@ -48,8 +48,8 @@ mcp-server/
 │   │   │       ├── chunking/                #   Chunker + StructureAwareChunker
 │   │   │       ├── embedding/               #   EmbeddingClient + OnnxEmbeddingClient (nomic)
 │   │   │       ├── retrieval/               #   SearchPipeline, HybridSearcher, RrfFusion
-│   │   │       ├── reranker/                #   Reranker + PassThroughReranker (bge staged)
-│   │   │       └── web/                     #   WebFetcher + SearXngWebFetcher
+│   │   │       ├── reranker/                #   ONNX cross-encoder + semantic fallback
+│   │   │       └── web/                     #   query planner, SearXNG, page fetch, semantic ranking
 │   │   └── resources/
 │   │       ├── application.yml              # config
 │   │       ├── schema.sql                   # chunks table + FTS5 (vec0 created by plugin)
@@ -139,6 +139,7 @@ mvn -Dskip.frontend=true -q compile          # compile only, no tests/package �
 
 ```sh
 cd mcp-server && mvn test              # backend unit/integration tests
+./scripts/run-eval.sh                   # real-model P@1, MRR, nDCG@10 regression gate
 cd mcp-server/webui && npm run typecheck   # frontend type check
 ```
 
@@ -147,6 +148,10 @@ cd mcp-server/webui && npm run typecheck   # frontend type check
 - **Tests write to the SQLite DB** (`data/mcpserver.db`). Delete the file for a clean run:
   `rm -f mcp-server/data/mcpserver.db`.
 - Frontend: no test runner yet; `npm run typecheck` is the only gate.
+- Retrieval: `scripts/run-eval.sh [run-id]` evaluates 50 judged queries through the real Nomic
+  embedding model, vector/lexical ordering, RRF, and the bundled cross-encoder. It writes
+  `eval-runs/<run-id>/report.json` and fails when P@1, MRR, or nDCG@10 falls below the versioned
+  baseline in `eval-harness/golden-set/baseline.json`.
 
 ---
 

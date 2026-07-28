@@ -1,5 +1,6 @@
 # Build output
 mcp-server/target/
+eval-runs/
 
 # Node / frontend
 mcp-server/webui/node_modules/

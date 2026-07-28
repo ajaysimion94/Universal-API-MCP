@@ -296,7 +296,7 @@ export async function createSummaryExport(
   };
 }
 
-/* ── Reports and dashboards (.rql / .rqd) ── */
+/* ── Reports and insights (.rql / .rqd) ── */
 
 export type QueryDiagnosticSeverity = "ERROR" | "WARNING" | "INFO" | "HINT";
 
@@ -337,36 +337,47 @@ export interface RqlAnalysis {
   symbols: QuerySymbol[];
 }
 
-export interface DashboardParam {
+export interface InsightParam {
   name: string;
   type: string;
   defaultValue: unknown;
 }
 
-export interface DashboardComponent {
+export interface InsightComponent {
   type: string;
   props: Record<string, string>;
   span: SourceSpan;
 }
 
-export interface DashboardAnalysis {
+export interface InsightAnalysis {
   diagnostics: QueryDiagnostic[];
   completions: QueryCompletion[];
-  params: DashboardParam[];
-  outline: DashboardComponent[];
+  params: InsightParam[];
+  outline: InsightComponent[];
 }
 
-export interface DashboardDataset {
+export interface InsightDataset {
   columns: string[];
   rows: Record<string, unknown>[];
   schema: Record<string, string>;
 }
 
-export interface DashboardData {
-  datasets: Record<string, DashboardDataset>;
+export interface InsightRequestExecution {
+  request: string;
+  method: string;
+  status: number;
+  success: boolean;
+  durationMs: number;
+  /** True when the response came from the tool cache rather than a fresh call. */
+  cached: boolean;
+}
+
+export interface InsightData {
+  datasets: Record<string, InsightDataset>;
   diagnostics: QueryDiagnostic[];
-  params: DashboardParam[];
-  outline: DashboardComponent[];
+  params: InsightParam[];
+  outline: InsightComponent[];
+  requests: InsightRequestExecution[];
 }
 
 export async function analyzeRql(input: {
@@ -383,13 +394,13 @@ export async function analyzeRql(input: {
   );
 }
 
-export async function analyzeDashboard(input: {
+export async function analyzeInsight(input: {
   source: string;
   connectionId?: string;
   cursorOffset?: number;
-}): Promise<DashboardAnalysis> {
-  return json<DashboardAnalysis>(
-    await fetch("/api/dashboards/analyze", {
+}): Promise<InsightAnalysis> {
+  return json<InsightAnalysis>(
+    await fetch("/api/insights/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
@@ -397,18 +408,72 @@ export async function analyzeDashboard(input: {
   );
 }
 
-export async function loadDashboardData(input: {
+export async function loadInsightData(input: {
   source: string;
   connectionId?: string;
   parameters?: Record<string, unknown>;
-}): Promise<DashboardData> {
-  return json<DashboardData>(
-    await fetch("/api/dashboards/data", {
+}): Promise<InsightData> {
+  return json<InsightData>(
+    await fetch("/api/insights/data", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
     }),
   );
+}
+
+/** A stored insight document. connectionId is only the preferred app for unqualified requests. */
+export interface SavedInsight {
+  id: string;
+  name: string;
+  description: string;
+  source: string;
+  connectionId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SaveInsightInput {
+  name: string;
+  description?: string;
+  source: string;
+  connectionId?: string | null;
+}
+
+export async function listInsights(): Promise<SavedInsight[]> {
+  return json<SavedInsight[]>(await fetch("/api/insights"));
+}
+
+export async function getInsight(id: string): Promise<SavedInsight> {
+  return json<SavedInsight>(await fetch(`/api/insights/${id}`));
+}
+
+export async function createInsight(input: SaveInsightInput): Promise<SavedInsight> {
+  return json<SavedInsight>(
+    await fetch("/api/insights", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function updateInsight(id: string, input: SaveInsightInput): Promise<SavedInsight> {
+  return json<SavedInsight>(
+    await fetch(`/api/insights/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function deleteInsight(id: string): Promise<void> {
+  const res = await fetch(`/api/insights/${id}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 204) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(body.error ?? `Delete failed (${res.status})`);
+  }
 }
 
 /* ── Plugins ── */

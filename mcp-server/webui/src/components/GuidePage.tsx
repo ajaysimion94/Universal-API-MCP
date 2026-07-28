@@ -45,11 +45,11 @@ export function GuidePage() {
   }, [selectedId]);
 
   return (
-    <main className="guide-page">
+    <section className="guide-page" aria-labelledby="guide-page-title">
       <header className="guide-page-header">
         <div>
           <p className="guide-eyebrow"><BookIcon size={15} /> Working guide</p>
-          <h1>Use the workspace with confidence.</h1>
+          <h1 id="guide-page-title">Use the workspace with confidence.</h1>
           <p>Short, current instructions for people using the app and clients connecting through MCP.</p>
         </div>
         <div className="guide-header-note">
@@ -85,7 +85,7 @@ export function GuidePage() {
           {loadingArticle || !article ? <GuideArticleSkeleton /> : <Article article={article} />}
         </section>
       </div>
-    </main>
+    </section>
   );
 }
 
