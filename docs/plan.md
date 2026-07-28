@@ -317,7 +317,7 @@ E2E test checklist:
 ### Phase 4 — Integrations (§6.1, §6.2, §8, §11)
 
 > **Pulled forward (2026-07-13, see DECISIONS.md):** the §8 zero-code onboarding slice landed early —
-> `API_COLLECTION` connections import Postman v2.1 / OpenAPI 3.x specs (file or URL, Swagger-UI-page
+> `API_COLLECTION` connections import Postman v2.x / Swagger 2.0 / OpenAPI 3.x specs (file or URL, Swagger-UI-page
 > resolution included), generate `{app}_{request-name}` tools (GETs auto-enabled, writes pending
 > approval), expose them over a real MCP endpoint (`/mcp`, Streamable HTTP, runtime addTool/removeTool)
 > and the Web UI `#`/`@app` grammar with auto-generated inline argument forms, and support

@@ -127,7 +127,8 @@ public class SpecFetcher {
         FetchedSpec spec = tryParse(content, sourceUrl);
         if (spec == null) {
             throw new IllegalArgumentException(
-                    "Document is not a recognizable Postman v2.1 collection or OpenAPI 3.x spec.");
+                    "Document is not a recognizable Postman collection, Swagger 2.0 document, "
+                            + "or OpenAPI 3.x spec.");
         }
         return spec;
     }

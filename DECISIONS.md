@@ -328,3 +328,23 @@ while supporting environments already standardized on Java 17, 20, or 21.
 **Status:** active
 
 **Refs:** `mcp-server/pom.xml`; `DEPLOYMENT.md`; `README.md`
+
+### 2026-07-27 — A connected source has completed its initial sync; legacy Swagger imports are supported
+
+**Decision:** Creating a Confluence, Jira, or GitHub connection now performs its first historical
+backfill inside the initial asynchronous verification job and only then changes the status to
+`CONNECTED`. Credential re-tests and re-enables remain lightweight and do not force another full
+backfill. API definition imports now accept Swagger 2.0 alongside OpenAPI 3.x, and Postman parsing
+accepts metadata-light v2 exports and resolves collection variables before deriving the base URL or
+normalizing endpoint paths.
+
+**Why:** “Connected” previously meant only that credentials were valid, so a newly added Confluence
+source could show green while still containing no searchable content until the separate Backfill
+button was discovered. Real `swagger.json` files are frequently Swagger 2.0, and real Postman
+collections often compose their host from collection variables; both valid inputs fell outside the
+small original fixtures.
+
+**Status:** active
+
+**Refs:** `connectors/ConnectionService.java`; `tools/OpenApiParser.java`;
+`tools/PostmanCollectionParser.java`; parser fixtures under `src/test/resources/specs/`

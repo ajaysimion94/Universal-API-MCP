@@ -100,6 +100,22 @@ class ApiCollectionConnectorTests {
     }
 
     @Test
+    void importsSwagger2FromDirectSwaggerJsonUrl() throws Exception {
+        stubFor(get(urlPathEqualTo("/swagger.json"))
+                .willReturn(okJson(fixture("/specs/petstore-swagger-2.json"))));
+        Connection connection = newConnection(
+                "http://localhost:" + wireMock.port() + "/swagger.json", null);
+
+        connector.testConnection(connection);
+
+        assertThat(apiToolRepository.findByConnectionId(connection.id()))
+                .extracting(ApiTool::requestSlug)
+                .containsExactlyInAnyOrder("list_pets", "create_pet");
+        assertThat(connectionRepository.findById(connection.id()).orElseThrow().specFormat())
+                .isEqualTo("OPENAPI");
+    }
+
+    @Test
     void resolvesSwaggerUiPageToUnderlyingSpec() throws Exception {
         String html = """
                 <!DOCTYPE html><html><body>

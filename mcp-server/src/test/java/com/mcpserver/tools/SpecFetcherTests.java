@@ -31,6 +31,14 @@ class SpecFetcherTests {
     }
 
     @Test
+    void parseContentHandlesSwagger2Json() throws IOException {
+        String json = fixture("/specs/petstore-swagger-2.json");
+        SpecFetcher.FetchedSpec spec = fetcher.parseContent(json, null);
+        assertThat(spec.parser().format()).isEqualTo("OPENAPI");
+        assertThat(spec.parser().parse(spec.parsed())).hasSize(2);
+    }
+
+    @Test
     void parseContentRejectsNonSpecDocuments() {
         assertThatThrownBy(() -> fetcher.parseContent("{\"hello\": \"world\"}", null))
                 .isInstanceOf(IllegalArgumentException.class)

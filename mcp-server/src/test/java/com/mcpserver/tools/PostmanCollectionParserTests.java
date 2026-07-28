@@ -92,6 +92,31 @@ class PostmanCollectionParserTests {
                 .doesNotContainKey("Authorization");
     }
 
+    @Test
+    void acceptsMetadataLightCollectionsAndResolvesUrlVariables() throws Exception {
+        JsonNode collection = new ObjectMapper().readTree("""
+                {
+                  "info": {"name": "Variable URL"},
+                  "variable": [
+                    {"key": "protocol", "value": "https"},
+                    {"key": "host", "value": "api.example.test"}
+                  ],
+                  "item": [{
+                    "name": "List things",
+                    "request": {
+                      "method": "GET",
+                      "url": {"raw": "{{protocol}}://{{host}}/v1/things"}
+                    }
+                  }]
+                }
+                """);
+
+        assertThat(parser.supports(collection)).isTrue();
+        assertThat(parser.extractBaseUrl(collection)).isEqualTo("https://api.example.test");
+        assertThat(parser.parse(collection)).singleElement()
+                .satisfies(def -> assertThat(def.urlTemplate()).isEqualTo("/v1/things"));
+    }
+
     private static ApiToolDefinition byName(String displayName) {
         return defs.stream().filter(d -> d.displayName().equals(displayName)).findFirst().orElseThrow();
     }

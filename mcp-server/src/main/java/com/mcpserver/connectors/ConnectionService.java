@@ -93,7 +93,7 @@ public class ConnectionService {
         Connection connection = Connection.create(type, name, baseUrl, username,
                 credentialCipher.encrypt(password), aclScope);
         connectionRepository.save(connection);
-        return new CreateResult(connection.id(), startTestConnectionJob(connection.id()));
+        return new CreateResult(connection.id(), startTestConnectionJob(connection.id(), true));
     }
 
     public record CreateResult(String connectionId, String jobId) {}
@@ -122,8 +122,13 @@ public class ConnectionService {
 
     /** Re-tests credentials/reachability for an existing connection; returns the job id. */
     public String startTestConnectionJob(String connectionId) {
+        return startTestConnectionJob(connectionId, false);
+    }
+
+    private String startTestConnectionJob(String connectionId, boolean initialSync) {
         String jobId = "job-" + jobCounter.incrementAndGet();
-        ConnectionJob job = new ConnectionJob(connectionId, ConnectionJob.Kind.TEST_CONNECTION);
+        ConnectionJob job = new ConnectionJob(
+                connectionId, ConnectionJob.Kind.TEST_CONNECTION, initialSync);
         jobs.put(jobId, job);
         jobExecutor.submit(() -> runTestConnection(connectionId, job));
         return jobId;
@@ -132,7 +137,8 @@ public class ConnectionService {
     /** Full historical crawl for an existing connection; returns the job id. */
     public String startBackfillJob(String connectionId) {
         String jobId = "job-" + jobCounter.incrementAndGet();
-        ConnectionJob job = new ConnectionJob(connectionId, ConnectionJob.Kind.BACKFILL);
+        ConnectionJob job = new ConnectionJob(
+                connectionId, ConnectionJob.Kind.BACKFILL, false);
         jobs.put(jobId, job);
         jobExecutor.submit(() -> runBackfill(connectionId, job));
         return jobId;
@@ -221,6 +227,19 @@ public class ConnectionService {
             Connection activeConnection = findById(connectionId);
             registerBuiltInToolsIfApplicable(activeConnection);
 
+            // A newly-created content connection is not usable until its historical content has
+            // been ingested. Keep it PENDING until that first backfill succeeds so "CONNECTED"
+            // means the source has actually completed its initial sync. API_COLLECTION already
+            // imports its tools in testConnection and has no content to crawl by default.
+            if (job.initialSync && activeConnection.type() != ConnectionType.API_COLLECTION) {
+                connector.backfill(activeConnection, (done, total) -> {
+                    job.itemsProcessed = done;
+                    job.itemsTotal = total;
+                });
+                connectionRepository.save(findById(connectionId)
+                        .withLastSyncedAt(java.time.Instant.now()));
+            }
+
             connectionRepository.save(findById(connectionId).withStatus(ConnectionStatus.CONNECTED, null));
             job.status = "completed";
             log.info("Connection {} verified ({})", connectionId, deployment);
@@ -278,10 +297,12 @@ public class ConnectionService {
         public volatile String error;
         public volatile int itemsProcessed = 0;
         public volatile int itemsTotal = 0;
+        private final boolean initialSync;
 
-        public ConnectionJob(String connectionId, Kind kind) {
+        public ConnectionJob(String connectionId, Kind kind, boolean initialSync) {
             this.connectionId = connectionId;
             this.kind = kind;
+            this.initialSync = initialSync;
         }
     }
 }

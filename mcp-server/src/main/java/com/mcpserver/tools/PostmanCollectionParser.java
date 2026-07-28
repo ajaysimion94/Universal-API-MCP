@@ -38,7 +38,9 @@ public class PostmanCollectionParser implements SpecParser {
         if (root == null) return false;
         JsonNode info = root.path("info");
         return root.has("item")
-                && (info.has("_postman_id") || info.path("schema").asText("").contains("getpostman.com"));
+                && (info.has("_postman_id")
+                    || info.path("schema").asText("").contains("getpostman.com")
+                    || containsRequest(root.path("item")));
     }
 
     @Override
@@ -49,7 +51,7 @@ public class PostmanCollectionParser implements SpecParser {
     @Override
     public List<ApiToolDefinition> parse(JsonNode root) {
         List<ApiToolDefinition> out = new ArrayList<>();
-        walk(root.path("item"), "", out);
+        walk(root.path("item"), "", collectVariables(root), out);
         return out;
     }
 
@@ -62,26 +64,28 @@ public class PostmanCollectionParser implements SpecParser {
      */
     @Override
     public String extractBaseUrl(JsonNode root) {
-        for (JsonNode variable : root.path("variable")) {
-            String key = variable.path("key").asText("");
-            String value = variable.path("value").asText("");
+        Map<String, String> variables = collectVariables(root);
+        for (Map.Entry<String, String> variable : variables.entrySet()) {
+            String key = variable.getKey();
+            String value = variable.getValue();
             if (!value.isBlank() && BASE_URL_VAR.matcher("{{" + key + "}}").find()
                     && value.matches("^https?://.*")) {
                 return value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
             }
         }
-        return firstAbsoluteOrigin(root.path("item"));
+        return firstAbsoluteOrigin(root.path("item"), variables);
     }
 
-    private String firstAbsoluteOrigin(JsonNode items) {
+    private String firstAbsoluteOrigin(JsonNode items, Map<String, String> variables) {
         if (!items.isArray()) return null;
         for (JsonNode item : items) {
             if (item.has("item")) {
-                String found = firstAbsoluteOrigin(item.path("item"));
+                String found = firstAbsoluteOrigin(item.path("item"), variables);
                 if (found != null) return found;
             } else if (item.has("request")) {
                 JsonNode url = item.path("request").path("url");
                 String raw = url.isTextual() ? url.asText() : url.path("raw").asText("");
+                raw = resolveVariables(raw, variables);
                 if (raw.matches("^https?://.*")) {
                     try {
                         URI uri = URI.create(raw);
@@ -96,6 +100,15 @@ public class PostmanCollectionParser implements SpecParser {
             }
         }
         return null;
+    }
+
+    private boolean containsRequest(JsonNode items) {
+        if (!items.isArray()) return false;
+        for (JsonNode item : items) {
+            if (item.has("request")) return true;
+            if (item.has("item") && containsRequest(item.path("item"))) return true;
+        }
+        return false;
     }
 
     /** Header names conventionally used for an API key when no explicit Postman auth block exists. */
@@ -194,20 +207,22 @@ public class PostmanCollectionParser implements SpecParser {
         return null;
     }
 
-    private void walk(JsonNode items, String folderPath, List<ApiToolDefinition> out) {
+    private void walk(JsonNode items, String folderPath, Map<String, String> variables,
+                      List<ApiToolDefinition> out) {
         if (!items.isArray()) return;
         for (JsonNode item : items) {
             String name = item.path("name").asText("unnamed");
             if (item.has("item")) {
                 String childPath = folderPath.isEmpty() ? name : folderPath + "/" + name;
-                walk(item.path("item"), childPath, out);
+                walk(item.path("item"), childPath, variables, out);
             } else if (item.has("request")) {
-                out.add(toDefinition(item, name, folderPath));
+                out.add(toDefinition(item, name, folderPath, variables));
             }
         }
     }
 
-    private ApiToolDefinition toDefinition(JsonNode item, String name, String folderPath) {
+    private ApiToolDefinition toDefinition(JsonNode item, String name, String folderPath,
+                                           Map<String, String> variables) {
         JsonNode request = item.path("request");
         String method = request.path("method").asText("GET").toUpperCase();
         String description = request.path("description").isObject()
@@ -220,7 +235,8 @@ public class PostmanCollectionParser implements SpecParser {
         ArrayNode required = schema.putArray("required");
         Map<String, String> locations = new LinkedHashMap<>();
 
-        String urlTemplate = parseUrl(request.path("url"), properties, required, locations);
+        String urlTemplate = parseUrl(
+                request.path("url"), variables, properties, required, locations);
         Map<String, String> staticHeaders = parseHeaders(request.path("header"), properties, required, locations);
         String bodyTemplate = parseBody(request.path("body"), properties, required, locations, staticHeaders);
         if (required.isEmpty()) schema.remove("required");
@@ -236,9 +252,11 @@ public class PostmanCollectionParser implements SpecParser {
      * a leading {@code {{baseUrl}}}-style variable or absolute origin is stripped, {@code :var}
      * and inline {@code {{var}}} path segments become {@code {var}} template params.
      */
-    private String parseUrl(JsonNode url, ObjectNode properties, ArrayNode required,
+    private String parseUrl(JsonNode url, Map<String, String> variables,
+                            ObjectNode properties, ArrayNode required,
                             Map<String, String> locations) {
         String raw = url.isTextual() ? url.asText() : url.path("raw").asText("/");
+        raw = resolveVariables(raw, variables);
 
         String pathPart = raw;
         Matcher baseVar = BASE_URL_VAR.matcher(pathPart);
@@ -282,6 +300,20 @@ public class PostmanCollectionParser implements SpecParser {
             }
         }
         return pathPart;
+    }
+
+    private static String resolveVariables(String raw, Map<String, String> variables) {
+        String resolved = raw;
+        for (int pass = 0; pass < 5; pass++) {
+            String before = resolved;
+            Matcher matcher = TEMPLATE_VAR.matcher(resolved);
+            resolved = matcher.replaceAll(match -> {
+                String value = variables.get(match.group(1).trim());
+                return value == null ? Matcher.quoteReplacement(match.group()) : Matcher.quoteReplacement(value);
+            });
+            if (resolved.equals(before)) break;
+        }
+        return resolved;
     }
 
     private Map<String, String> parseHeaders(JsonNode headers, ObjectNode properties,

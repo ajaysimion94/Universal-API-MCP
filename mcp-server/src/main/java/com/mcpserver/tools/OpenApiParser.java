@@ -12,8 +12,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * OpenAPI 3.x → {@link ApiToolDefinition}s. Walks paths → operations, flattening path/query/header
- * parameters and the application/json request-body schema into one flat object schema. Local
+ * OpenAPI 3.x / Swagger 2.0 → {@link ApiToolDefinition}s. Walks paths → operations, flattening
+ * path/query/header parameters and JSON request-body schemas into one flat object schema. Local
  * {@code $ref}s are resolved with a depth cap; external refs degrade to {@code {"type":"object"}}.
  */
 @Component
@@ -26,7 +26,8 @@ public class OpenApiParser implements SpecParser {
 
     @Override
     public boolean supports(JsonNode root) {
-        return root != null && root.has("openapi") && root.has("paths");
+        return root != null && root.has("paths")
+                && (root.has("openapi") || root.path("swagger").asText("").startsWith("2."));
     }
 
     @Override
@@ -34,12 +35,27 @@ public class OpenApiParser implements SpecParser {
         return "OPENAPI";
     }
 
-    /** servers[0].url when present — pre-fills the connection's base URL suggestion. */
+    /** OpenAPI servers[0].url or Swagger 2 schemes/host/basePath. */
     public static String extractServerUrl(JsonNode root) {
         JsonNode servers = root.path("servers");
         if (servers.isArray() && !servers.isEmpty()) {
             String url = servers.get(0).path("url").asText("");
             if (!url.isBlank()) return url;
+        }
+        if (root.path("swagger").asText("").startsWith("2.")) {
+            String host = root.path("host").asText("");
+            String basePath = root.path("basePath").asText("");
+            if (!basePath.isBlank() && !basePath.startsWith("/")) basePath = "/" + basePath;
+            if (!host.isBlank()) {
+                String scheme = "https";
+                JsonNode schemes = root.path("schemes");
+                if (schemes.isArray() && !schemes.isEmpty()
+                        && !schemes.get(0).asText("").isBlank()) {
+                    scheme = schemes.get(0).asText();
+                }
+                return scheme + "://" + host + basePath;
+            }
+            if (!basePath.isBlank()) return basePath;
         }
         return null;
     }
@@ -93,12 +109,36 @@ public class OpenApiParser implements SpecParser {
         collectParameters(root, pathLevelParams, properties, required, locations);
         collectParameters(root, op.path("parameters"), properties, required, locations);
 
-        String bodyTemplate = collectRequestBody(root, op, properties, required, locations);
+        String bodyTemplate = root.path("swagger").asText("").startsWith("2.")
+                ? collectSwaggerBody(root, pathLevelParams, op.path("parameters"),
+                        properties, required, locations)
+                : collectRequestBody(root, op, properties, required, locations);
         if (required.isEmpty()) schema.remove("required");
 
         return new ApiToolDefinition(displayName, requestSlug, description, category,
                 method.toUpperCase(), path, schema, locations, staticHeadersFor(bodyTemplate),
                 bodyTemplate, primaryParam(properties, required, locations));
+    }
+
+    private String collectSwaggerBody(JsonNode root, JsonNode pathLevelParams, JsonNode opParams,
+                                      ObjectNode properties, ArrayNode required,
+                                      Map<String, String> locations) {
+        JsonNode bodyParam = findSwaggerBodyParameter(root, opParams);
+        if (bodyParam == null) bodyParam = findSwaggerBodyParameter(root, pathLevelParams);
+        if (bodyParam == null) return null;
+
+        JsonNode bodySchema = resolveRef(root, bodyParam.path("schema"), 0);
+        return collectBodySchema(root, bodySchema, bodyParam.path("required").asBoolean(false),
+                properties, required, locations);
+    }
+
+    private JsonNode findSwaggerBodyParameter(JsonNode root, JsonNode params) {
+        if (!params.isArray()) return null;
+        for (JsonNode raw : params) {
+            JsonNode param = resolveRef(root, raw, 0);
+            if ("body".equals(param.path("in").asText(""))) return param;
+        }
+        return null;
     }
 
     private void collectParameters(JsonNode root, JsonNode params, ObjectNode properties,
@@ -112,7 +152,11 @@ public class OpenApiParser implements SpecParser {
             if (!in.equals("path") && !in.equals("query") && !in.equals("header")) continue;
 
             ObjectNode prop = properties.putObject(name);
-            JsonNode paramSchema = resolveRef(root, param.path("schema"), 0);
+            // OpenAPI 3 puts type/default/enum under parameter.schema; Swagger 2 keeps them
+            // directly on the parameter object.
+            JsonNode paramSchema = param.has("schema")
+                    ? resolveRef(root, param.path("schema"), 0)
+                    : param;
             prop.put("type", jsonType(paramSchema.path("type").asText("string")));
             String desc = param.path("description").asText("");
             if (!desc.isBlank()) prop.put("description", desc);
@@ -147,7 +191,13 @@ public class OpenApiParser implements SpecParser {
 
         JsonNode bodySchema = resolveRef(root, media.path("schema"), 0);
         if (bodySchema.isMissingNode()) return null;
+        return collectBodySchema(root, bodySchema,
+                requestBody.path("required").asBoolean(false), properties, required, locations);
+    }
 
+    private String collectBodySchema(JsonNode root, JsonNode bodySchema, boolean bodyRequired,
+                                     ObjectNode properties, ArrayNode required,
+                                     Map<String, String> locations) {
         List<String> requiredBodyProps = new ArrayList<>();
         JsonNode req = bodySchema.path("required");
         if (req.isArray()) req.forEach(n -> requiredBodyProps.add(n.asText()));
@@ -173,7 +223,7 @@ public class OpenApiParser implements SpecParser {
             properties.putObject("body").put("type", "object")
                     .put("description", "Raw JSON request body");
             locations.put("body", "body");
-            if (requestBody.path("required").asBoolean(false)) required.add("body");
+            if (bodyRequired) required.add("body");
         }
         return template.isEmpty() ? null : template.toString();
     }

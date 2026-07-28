@@ -30,6 +30,37 @@ class OpenApiParserTests {
     }
 
     @Test
+    void supportsSwagger2AndDerivesItsServerUrl() throws Exception {
+        JsonNode swagger = new ObjectMapper().readTree(
+                OpenApiParserTests.class.getResourceAsStream("/specs/petstore-swagger-2.json"));
+
+        assertThat(parser.supports(swagger)).isTrue();
+        assertThat(parser.extractBaseUrl(swagger)).isEqualTo("https://pets.example.test/api/v1");
+        List<ApiToolDefinition> swaggerDefinitions = parser.parse(swagger);
+        assertThat(swaggerDefinitions).extracting(ApiToolDefinition::requestSlug)
+                .containsExactly("list_pets", "create_pet");
+        ApiToolDefinition list = swaggerDefinitions.get(0);
+        assertThat(list.paramsSchema().path("properties").path("limit").path("type").asText())
+                .isEqualTo("integer");
+    }
+
+    @Test
+    void parsesSwagger2BodyParameters() throws Exception {
+        JsonNode swagger = new ObjectMapper().readTree(
+                OpenApiParserTests.class.getResourceAsStream("/specs/petstore-swagger-2.json"));
+
+        ApiToolDefinition create = parser.parse(swagger).stream()
+                .filter(def -> def.requestSlug().equals("create_pet"))
+                .findFirst().orElseThrow();
+
+        assertThat(create.paramLocations())
+                .containsEntry("name", "body")
+                .containsEntry("age", "body");
+        assertThat(create.paramsSchema().path("required").toString()).contains("name");
+        assertThat(create.staticHeaders()).containsEntry("Content-Type", "application/json");
+    }
+
+    @Test
     void parsesOneToolPerOperation() {
         assertThat(defs).hasSize(5);
         assertThat(defs).extracting(ApiToolDefinition::requestSlug)
