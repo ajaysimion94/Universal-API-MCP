@@ -1,5 +1,6 @@
 package com.mcpserver.connectors;
 
+import com.mcpserver.config.TlsHttpClientFactory;
 import com.mcpserver.services.IngestionService;
 import com.mcpserver.tools.ApiTool;
 import com.mcpserver.tools.ApiToolDefinition;
@@ -35,20 +36,22 @@ public class ApiCollectionConnector implements SourceConnector {
     private final ApiToolExecutor apiToolExecutor;
     private final ConnectionRepository connectionRepository;
     private final IngestionService ingestionService;
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(10))
-            .build();
+    private final HttpClient httpClient;
 
     public ApiCollectionConnector(SpecFetcher specFetcher,
                                   ApiToolService apiToolService,
                                   ApiToolExecutor apiToolExecutor,
                                   ConnectionRepository connectionRepository,
-                                  IngestionService ingestionService) {
+                                  IngestionService ingestionService,
+                                  TlsHttpClientFactory tlsHttpClientFactory) {
         this.specFetcher = specFetcher;
         this.apiToolService = apiToolService;
         this.apiToolExecutor = apiToolExecutor;
         this.connectionRepository = connectionRepository;
         this.ingestionService = ingestionService;
+        this.httpClient = tlsHttpClientFactory.builder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .build();
     }
 
     @Override

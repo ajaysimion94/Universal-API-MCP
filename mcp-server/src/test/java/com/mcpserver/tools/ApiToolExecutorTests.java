@@ -50,9 +50,14 @@ class ApiToolExecutorTests {
 
     private ApiTool tool(String method, String urlTemplate, String schema, String locations,
                          String bodyTemplate) {
+        return tool(method, urlTemplate, schema, locations, "{}", bodyTemplate);
+    }
+
+    private ApiTool tool(String method, String urlTemplate, String schema, String locations,
+                         String headers, String bodyTemplate) {
         return new ApiTool(UUID.randomUUID().toString(), "conn-test", "testapp",
                 "testapp_request", "request", "Request", "", "general", method, urlTemplate,
-                schema, locations, "{}", bodyTemplate, null,
+                schema, locations, headers, bodyTemplate, null,
                 true, false, false, Instant.now(), Instant.now());
     }
 
@@ -147,6 +152,32 @@ class ApiToolExecutorTests {
         executor.execute(tool, connection(AuthMode.NONE, null, null), Map.of());
 
         verify(getRequestedFor(urlPathEqualTo("/todos")).withQueryParam("limit", equalTo("20")));
+    }
+
+    @Test
+    void rendersRawAndUrlEncodedImportedBodies() throws Exception {
+        stubFor(post(urlPathEqualTo("/raw")).willReturn(ok()));
+        stubFor(post(urlPathEqualTo("/form")).willReturn(ok()));
+
+        executor.execute(tool("POST", "/raw",
+                        "{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"}}}",
+                        "{\"name\":\"body\"}", "{\"Content-Type\":\"application/xml\"}",
+                        "<item>{name}</item>"),
+                connection(AuthMode.NONE, null, null), Map.of("name", "milk"));
+
+        executor.execute(tool("POST", "/form",
+                        "{\"type\":\"object\",\"properties\":{\"user_name\":{\"type\":\"string\"}}}",
+                        "{\"user_name\":\"body\"}",
+                        "{\"Content-Type\":\"application/x-www-form-urlencoded\"}",
+                        "user-name={user_name}"),
+                connection(AuthMode.NONE, null, null), Map.of("user_name", "A Jay"));
+
+        verify(postRequestedFor(urlPathEqualTo("/raw"))
+                .withHeader("Content-Type", equalTo("application/xml"))
+                .withRequestBody(equalTo("<item>milk</item>")));
+        verify(postRequestedFor(urlPathEqualTo("/form"))
+                .withHeader("Content-Type", equalTo("application/x-www-form-urlencoded"))
+                .withRequestBody(equalTo("user-name=A+Jay")));
     }
 
     @Test

@@ -4,8 +4,8 @@ const routes = {
   "/": () => import("./pages/search.js"),
   "/files": () => import("./pages/files.js"),
   "/plugins": () => import("./pages/plugins.js"),
-  "/connections": () => import("./pages/connections.js"),
-  "/apps": () => import("./pages/apps.js"),
+  "/connections": () => import("./pages/connections.js?v=vanilla-3"),
+  "/apps": () => import("./pages/apps.js?v=vanilla-4"),
   "/insights": () => import("./pages/insights.js"),
   "/guide": () => import("./pages/guide.js"),
 };

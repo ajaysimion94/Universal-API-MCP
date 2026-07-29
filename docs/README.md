@@ -1,8 +1,8 @@
 # Enterprise MCP Server
 
 An enterprise MCP (Model Context Protocol) server that turns fragmented enterprise knowledge and
-application APIs into a single, governed context layer for any AI client — GitHub Copilot CLI, VS Code
-Copilot, Microsoft Copilot Studio, ChatGPT, Claude Desktop, or any MCP-compatible client. A Java 17+ /
+application APIs into a single, governed context layer for any AI client — Claude Desktop, Claude Code,
+ChatGPT, IDE MCP extensions, or any MCP-compatible client. A Java 17+ /
 Spring Boot 3 service exposes **tools** (deterministic, approval-gated actions in connected systems),
 **resources** (ACL-gated enterprise content), **prompts** (versioned enterprise templates), and an
 **ACL-filtered RAG pipeline** that returns grounded, cited context — the AI client synthesizes; the

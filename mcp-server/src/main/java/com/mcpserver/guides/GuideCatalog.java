@@ -157,7 +157,7 @@ public class GuideCatalog {
             new GuideArticle(
                     "mcp-clients",
                     "Connect an MCP client",
-                    "A protocol-level checklist for ChatGPT, Claude, Copilot, or another MCP-compatible client.",
+                    "A protocol-level checklist for ChatGPT, Claude, an IDE extension, or another MCP-compatible client.",
                     "MCP client authors",
                     List.of(
                             section("Connect locally", "The Streamable HTTP endpoint is local-only until the authentication phase ships. "

@@ -6,7 +6,7 @@ order** we build it and **how we know each step is done**. Update checkboxes and
 progresses.
 
 The server is a Java 17+ / Spring Boot 3 MCP server that exposes tools, resources, prompts, and a
-grounded RAG pipeline to any AI client (GitHub Copilot, VS Code Copilot, Microsoft Copilot Studio,
+grounded RAG pipeline to any AI client (Claude Desktop, Claude Code, IDE MCP extensions,
 ChatGPT, Claude Desktop, any MCP client) over the MCP protocol. AI clients do the synthesis; the server
 keeps retrieval grounded and cited, and actions deterministic, approval-gated, and auditable. A
 first-party **Web UI** (§5.8) rides the same services: a SharePoint-like files & folders manager, a
@@ -460,7 +460,7 @@ Build checklist:
 - [ ] Spring Security + OAuth2 resource server: JWT validation on every MCP endpoint
 - [ ] **MCP authorization spec:** OAuth 2.1 with PKCE, protected-resource metadata (RFC 9728),
   authorization-server discovery, dynamic client registration — verified against real AI clients
-  (Claude, Copilot Studio, ChatGPT connectors)
+  (Claude, ChatGPT, IDE MCP extension connectors)
 - [ ] Keycloak OIDC (native bare-JVM install) as default IdP; Admin/Manager/User realm roles;
   Entra ID / Okta pluggable seam
 - [ ] API keys for headless / service-to-service clients

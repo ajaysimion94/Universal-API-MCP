@@ -108,6 +108,9 @@ resource processing. There is no separate frontend build and no `-Dskip.frontend
 | `spring.datasource.url` | `jdbc:sqlite:./data/mcpserver.db` | SQLite database path |
 | `spring.sql.init.mode` | `always` | Runs `schema.sql` on startup (idempotent) |
 | `spring.servlet.multipart.max-file-size` | `100MB` | Upload limit |
+| `http.tls.use-windows-root-store` | `true` | Add Windows Trusted Root Certification Authorities to outbound API trust |
+| `http.tls.ca-certificate-paths` | empty | Comma-separated PEM/DER corporate CA files; set with `MCP_TLS_CA_CERTIFICATE_PATHS` |
+| `http.tls.disable-certificate-validation` | `false` | Emergency certificate-chain bypass; set with `MCP_TLS_DISABLE_VERIFY=true` |
 | `rag.embedding.model-dir` | `${user.dir}/models/nomic-embed-text-v1.5` | Path to the ONNX model + tokenizer |
 | `rag.reranker.model-dir` | `${user.dir}/models/ms-marco-MiniLM-L6-v2` | Path to the cross-encoder ONNX model + tokenizer |
 | `rag.search.vector-top-k` | `40` | Candidates from the vector leg |
@@ -124,6 +127,38 @@ resource processing. There is no separate frontend build and no `-Dskip.frontend
 | `rag.web.max-response-bytes` | `2097152` | Hard response-body download cap |
 | `rag.web.max-content-chars` | `20000` | Extracted text cap per page |
 | `rag.web.min-relevance-score` | `0.20` | Minimum calibrated score for a web result |
+
+### Internal HTTPS APIs and corporate certificates
+
+Outbound API calls always verify the certificate chain and hostname. On Windows, the app
+automatically combines Java's bundled CA roots with the Windows **Trusted Root Certification
+Authorities** store, so an internal API trusted by Edge/Postman normally works without extra
+configuration.
+
+If the corporate CA is not installed in Windows Trusted Roots, export the issuing root/intermediate
+certificate as PEM or DER and point the app at it:
+
+```powershell
+$env:MCP_TLS_CA_CERTIFICATE_PATHS = 'C:\certs\corp-root.pem,C:\certs\corp-intermediate.cer'
+java -jar target\mcp-server.jar
+```
+
+This setting adds trust only for chains issued by those certificates. It does not disable hostname
+verification or accept arbitrary self-signed certificates. Restart the server after changing the
+certificate files or environment variable.
+
+For temporary parity with Postman's disabled **SSL certificate verification** setting, certificate
+chain validation can be bypassed explicitly:
+
+```powershell
+$env:MCP_TLS_DISABLE_VERIFY = 'true'
+java -jar target\mcp-server.jar
+```
+
+The server logs a security warning while this mode is active. It trusts any presented certificate
+chain for every outbound connector and imported API request, so use it only for controlled internal
+troubleshooting, never for production or untrusted networks. Remove the variable (or set it to
+`false`) and restart to restore verification. Hostname verification remains enabled.
 
 ---
 

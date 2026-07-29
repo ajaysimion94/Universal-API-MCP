@@ -165,12 +165,6 @@ Format:
 **Status:** active (chat/history stands; LLM synthesis stands rejected)
 **Refs:** `webui/src/components/ChatPage.tsx`; `controllers/SearchController.java`
 
-### 2026-07-25 — Web UI Chat now generates answers via Microsoft Copilot (external); supersedes the same-day "no answer generation" stance for the UI chat path only
-**Decision:** Plain-text messages on the Chat page are now answered by generated text: the server grounds each message with RAG retrieval (top-6 chunks, cited [n]) and streams an answer from **Microsoft Copilot** (`copilot.microsoft.com`, reverse-engineered WebSocket client in `copilot/`) over SSE at `POST /api/chat`. This **reverses the 2026-07-25 "no server-side answer generation" entry above for the Web UI chat path only** — the user wrote the Copilot client themselves after declining the *in-process* LLM (whose ~3-4GB local memory cost was the actual blocker; an external backend has none). The MCP context path (`/mcp`) stays retrieval-only; `#`/`@` tool invocation stays deterministic on `/api/search`. History remains client-side; the Copilot `conversationId` is kept in `localStorage` for follow-up turns. Generation failure degrades gracefully: the turn's retrieved excerpts are still delivered (`sources` event) and rendered raw.
-**Why:** A chat page that only returns excerpts forces users to read chunks; the declined alternative (in-process LLM) cost too much RAM. External Copilot is free and in-process-nothing. Known costs, accepted by the user: (1) plain chat messages + retrieved excerpts **leave the device** for Microsoft's consumer API — the empty-state copy says so; (2) the API is undocumented and can break or change anytime; (3) **anonymous chat is gated server-side** (verified 2026-07-25: conversation creation works anonymously, the WS handshake 401s) — answer generation needs `chat.copilot.access-token` (+ `identity-type`/`cookies`) copied from a signed-in browser session, set via env vars (`CHAT_COPILOT_ACCESSTOKEN`, …), never committed. Also observed: a cookie session may create only **one** conversation (second create → 401), so the client resets to a pristine cookie session per new conversation.
-**Status:** active
-**Refs:** `copilot/Copilot*.java`; `services/CopilotChatService.java`; `services/ChatPromptBuilder.java`; `controllers/ChatController.java` (`/api/chat` SSE); `webui/src/components/ChatPage.tsx`; `webui/src/components/MarkdownText.tsx`; `application.yml` (`chat.copilot.*`)
-
 ### 2026-07-26 — Absorb the `.filter` DSL from Postman-excel-report-automation as RQL; redesign the grammar rather than port it
 **Decision:** The `.filter` report DSL from the separate `Postman-excel-report-automation` CLI (Java 17, ~6,000 lines in `filter/`) will be brought into this server as a new **RQL** (Report Query Language) subsystem under `com.mcpserver.reports`, with a **breaking grammar redesign** rather than a straight port. Design is written up in `docs/report-query-design.md`; **no code has been written** — this entry records the design decision only. Three parts: (1) *Language* — replace the statement-per-verb grammar and its §7 "target matrix" with a uniform **dataset/pipeline** model (`let x = request "…" |> where … |> select …`), where every stage accepts every dataset. (2) *Fault tolerance* — the parser **never throws**; it returns `ParseResult(Program, List<Diagnostic>)` with `Error*` nodes in the tree and two resync levels (`;` for statements, `|>` for stages), and every node carries a `Span`. Diagnostics become structured records with stable codes (`RQL0xx`–`RQL3xx`), severity, and machine-applicable `Fix`es. (3) *IDE* — a `/reports` SPA page with **CodeMirror 6** wired to a pure `POST /api/reports/analyze` endpoint (diagnostics + completions + symbols, no execution), plus observed-response **schema inference** cached per tool to make field-name completion possible. Execution reuses the existing async job pattern and adds a first-class `PARTIAL` terminal state. Only the *language* and the *POI Excel renderer* (2,643 ln) are ported; the old repo's `http/`, `postman/`, `auth/`, and `cli/` packages are **dropped** in favour of `tools.ApiToolExecutor`, `tools.PostmanCollectionParser`, and `connectors.CredentialCipher`, which already exist here and are stronger.
 **Why:** The old query system's blockers are structural, not cosmetic: `FilterQueryParser.error()` throws on the first bad token (one typo blanks all editor feedback — fatal for live editing), diagnostics are formatted strings with no end position or severity, and the arbitrary target matrix is the direct cause of four of the ten rows in the old guide's own "Common Mistakes" table (`FILTER` can't target a union, `COLUMNS` can't target a lookup table, `EXPAND` has no `*`, and `JOIN` doesn't exist despite the runtime supporting it). A uniform dataset model deletes all four by construction. Pipelines over nested SQL were chosen specifically for IDE affordance — after `|>` the legal-token set is small and closed, which is the precondition for good completion — and because `|>` doubles as a free error-recovery resync point. Integration cost is unusually low: same language/build (Java 17→21 is source-compatible), and **`poi-ooxml:5.4.1` is already on the classpath transitively via `tika-parsers-standard-package`** (verified with `mvn dependency:tree`), so Excel output adds zero backend dependencies. CodeMirror 6 (~200KB) would be the SPA's first substantial UI dependency; Monaco was rejected at 2MB+. Accepted costs: (a) existing `.filter` files break — mitigated by hand-translating the 13 files in the old repo's `filters/` into a **workbook-equivalence migration corpus**, which is the only credible proof no semantics were lost; (b) **this is ahead of the tracker** — `docs/plan.md` still has Phases 1–2 open and report generation is Phase 3/4 work (closest to Phase 4's "an unseen API onboards by file"), so the sequencing is a deliberate choice, not an oversight.
@@ -183,21 +177,9 @@ Format:
 **Status:** proposed (design only — not implemented, not scheduled)
 **Refs:** `docs/dashboard-design.md`; `docs/report-query-design.md` §1.4; `.impeccable.md` (principle 3, anti-references); `webui/src/styles.css` (`--bg-surface`, `--accent`; gains `--series-1…8`)
 
-### 2026-07-27 — Consumer Copilot is an opt-in plugin with an isolated browser profile
-**Decision:** The reverse-engineered consumer-Copilot answer path is a built-in optional plugin (`copilot-chat`) that defaults to disabled. Enabling it does not expose a token form. Instead, the plugin launches Chrome/Chromium with a dedicated profile at `./data/copilot-browser-profile`, a random localhost-only DevTools port, and an explicit Copilot tab. The user completes Microsoft's sign-in manually, then explicitly selects **Use signed-in session**; the app reads Copilot cookies/local storage only from that isolated profile and transfers the resulting credentials to `CopilotChatService` in memory. Disabling the plugin closes the controlled browser and clears the in-memory handoff. The user's default browser profile is never attached.
-**Why:** A normal cross-origin popup cannot expose `copilot.microsoft.com` session state, while Microsoft provides no supported consumer-Copilot OAuth/API flow for this non-tenant setup. A dedicated controlled profile makes the requested manual-login flow technically possible without pasting tokens or granting an extension access to the user's everyday browsing profile. The isolation also satisfies Chrome 136+'s requirement that remote debugging use a non-default user-data directory. Accepted risk: the upstream protocol remains undocumented and may break; prompts and retrieved excerpts still leave the device.
-
-### 2026-07-27 — Prefer Microsoft Edge for the dedicated Copilot browser
-
-**Decision:** The Copilot browser bridge auto-detects Microsoft Edge, Google Chrome, and Chromium on macOS, Windows, and Linux. Edge is preferred when more than one supported browser is installed because Copilot is a Microsoft service; `chat.copilot.browser-executable` remains the deterministic override.
-
-**Why:** Edge and Chrome expose the same Chromium DevTools Protocol used by the isolated manual-login bridge. First-class Edge discovery removes platform-specific setup while retaining the same localhost-only debugging endpoint and dedicated-profile isolation.
-**Status:** active (local-only compatibility bridge; replace with the official Microsoft 365 Copilot API if a licensed tenant becomes available)
-**Refs:** `plugins/CopilotChatPlugin.java`; `copilot/CopilotBrowserBridge.java`; `copilot/CopilotBrowserController.java`; `copilot/CopilotCredentialStore.java`; `webui/src/components/PluginsPage.tsx`; `DEPLOYMENT.md`
-
 ### 2026-07-27 — Chat uses multi-conversation history and progressive evidence disclosure
 
-**Decision:** The Web UI keeps up to 25 independently selectable conversations in `localStorage`, capped at 50 turns each. Each conversation owns its Copilot continuation id, derives its title from the first user message, and appears in a persistent desktop history rail or compact-screen history panel. RAG and web evidence stays collapsed under every answer—including error fallbacks—with distinct document/result counts; expanding the evidence reveals the source list, and expanding an individual RAG file reveals its matching chunks. Consumed topbar query parameters are removed after submission so refreshing the page never resubmits the last prompt.
+**Decision:** The Web UI keeps up to 25 independently selectable conversations in `localStorage`, capped at 50 turns each. Each conversation derives its title from the first user message, and appears in a persistent desktop history rail or compact-screen history panel. RAG and web evidence stays collapsed under every answer—including error fallbacks—with distinct document/result counts; expanding the evidence reveals the source list, and expanding an individual RAG file reveals its matching chunks. Consumed topbar query parameters are removed after submission so refreshing the page never resubmits the last prompt.
 
 **Why:** A flat transcript did not behave like a chat product, and expanded retrieval cards made the evidence visually louder than the answer. Client-side conversations add useful continuity without introducing the Phase-6 identity/ACL work needed for server-side history. Progressive disclosure keeps citations accessible while making the conversation the primary reading surface.
 
@@ -205,64 +187,24 @@ Format:
 
 **Refs:** `webui/src/components/ChatPage.tsx`; `webui/src/components.css`; `docs/plan.md`
 
-### 2026-07-27 — Copilot browser handoff separates normal sign-in from local session capture
+### 2026-07-27 — An external consumer-chat answer connector was built, then removed
 
-**Decision:** The isolated Copilot profile now uses two distinct browser launches. **Step 1** opens
-Edge/Chrome normally, with no DevTools or automation flags, so the user can complete Microsoft, Google,
-or federated authentication using the browser's standard security posture. **Step 2**, triggered only by
-the explicit **Connect signed-in session** action, closes that window and briefly relaunches the same
-isolated profile with a random localhost-only DevTools port. The bridge reads only storage and cookies
-applicable to `copilot.microsoft.com`, transfers them to the in-memory credential store, and immediately
-closes the debugging browser. The default browser profile is still never attached.
+**Decision:** A connector that answered Chat messages through an external consumer chat service was
+built and then removed in full — client, browser-profile session handoff, captured credentials,
+its plugin, and the `POST /api/chat` endpoint. No code, configuration key, or dependency for it
+remains. The Chat page is a persistent client-side conversation whose plain-text messages use the
+RAG search endpoint and render cited sources directly; `#`/`@` tool invocation is unchanged.
 
-**Why:** Google blocks account sign-in in remote-debugging browser sessions with “This browser or app
-may not be secure.” Keeping debugging enabled throughout manual sign-in made the original flow unusable
-for Google-backed accounts and unnecessarily extended the sensitive handoff window. Edge's visible
-Copilot can provide basic anonymous chat, but the reverse-engineered WebSocket used by this server has
-been observed to reject anonymous sessions; the plugin therefore still requires an authenticated
-Copilot session even though the standalone Edge experience may not.
+**Why:** Recorded so the direction is not re-proposed without knowing it was tried. Two things made
+it untenable: the upstream surface was undocumented and unsupported for automation, so a captured
+session could report success while the chat socket rejected it; and prompts plus retrieved excerpts
+had to leave the device for a third party. Keeping retrieval local avoids both and leaves a clean
+seam for a supported answer provider later. The earlier in-process LLM alternative was declined
+separately for its ~3-4GB memory cost (see the 2026-07-25 entry above).
 
-**Status:** active
+**Status:** active; no external answer provider is wired in.
 
-**Refs:** `copilot/CopilotBrowserBridge.java`; `copilot/CopilotBrowserController.java`;
-`webui/src/components/PluginsPage.tsx`; `DEPLOYMENT.md`
-
-### 2026-07-27 — “Connected” requires a completed Copilot protocol turn
-
-**Decision:** Capturing browser storage is no longer enough to mark the Copilot plugin active. The
-Connect action now validates the captured values through a short throwaway Copilot turn—including
-session warm-up, conversation creation, WebSocket handshake, challenge response, streamed answer, and
-the terminal `done` event—before publishing them to the shared chat client. Validation has a 30-second
-budget and reports the upstream failure inline. The WebSocket listener also publishes its opened socket
-from `onOpen` before requesting the first server frame, preventing an immediate challenge from racing
-the `buildAsync(...).get()` assignment and dereferencing a null socket.
-
-**Why:** A browser session could previously show **Connected** because it contained Copilot cookies even
-when the real chat exchange failed. Live diagnosis also exposed a concrete race: Copilot can send its
-challenge as soon as the socket opens, before the JDK completes the builder future on the caller thread.
-That failure produced no answer and left the UI waiting for the 180-second generation timeout.
-
-**Status:** active
-
-**Refs:** `copilot/CopilotWebSocket.java`; `copilot/CopilotClient.java`;
-`services/CopilotChatService.java`; `copilot/CopilotBrowserController.java`
-
-### 2026-07-27 — Remove the consumer Copilot answer connector
-
-**Decision:** Remove the reverse-engineered consumer-Copilot client, browser-profile handoff,
-session credentials, plugin, and `POST /api/chat` endpoint. The Chat page remains a persistent,
-client-side conversation interface, but plain text now uses the existing RAG search endpoint and
-renders cited sources directly. Imported `#`/`@` tool invocations are unchanged.
-
-**Why:** The consumer Copilot browser experience is not a supported automation surface. Browser-session
-handoff could report a captured session while the upstream chat socket rejected it, making the feature
-unreliable. Keeping retrieval local avoids sending prompts or files to that third-party service and
-leaves a clean seam for a future supported answer provider.
-
-**Status:** active; supersedes the consumer-Copilot decisions above.
-
-**Refs:** `webui/src/components/ChatPage.tsx`; `webui/src/components/PluginsPage.tsx`;
-`controllers/SearchController.java`; `DEPLOYMENT.md`
+**Refs:** `controllers/SearchController.java`; `DEPLOYMENT.md`
 
 ### 2026-07-27 — API dashboard vertical slice: RQL + `.rqd`
 
@@ -301,12 +243,12 @@ discover the workflow without vendor-specific hard-coded instructions.
 **Decision:** Add a Chat-page source picker that selects uploaded files and connected apps, then
 creates a local TXT export from only their already-indexed RAG chunks. Connector selections resolve
 through the existing `connectionId:externalId` chunk namespace; uploads resolve by exact file id.
-Exports include source/path/system/URL provenance, are capped at 25 MB, and do not contact Copilot or
+Exports include source/path/system/URL provenance, are capped at 25 MB, and do not contact any external
 another answer provider.
 
 **Why:** A single “export everything” action would make accidental disclosure easy and would obscure
 which source produced each passage. Explicit scope, a local artifact, and a size boundary create an
-auditable preparation step while preserving the decision to remove the unsupported consumer-Copilot
+auditable preparation step while preserving the decision to remove the unsupported external
 connector. A supported answer provider or separately approved browser handoff can consume the artifact
 later without coupling export correctness to third-party UI automation.
 
@@ -481,3 +423,68 @@ the 2026-07-29 dashboard/CodeMirror decision.
 
 **Refs:** `mcp-server/src/main/resources/static/`; `mcp-server/pom.xml`;
 `config/WebMvcConfig.java`; `.github/workflows/ci.yml`; `DEVELOPMENT.md`
+
+### 2026-07-29 — The browser-native Apps workspace retains request-runner parity
+
+**Decision:** The Node-free rewrite must preserve the complete request surface already implemented
+by the Java executor. The Apps workspace therefore exposes schema and ad-hoc query parameters,
+ad-hoc headers, schema/no-body/raw body modes, raw content type, persisted per-endpoint
+authentication, dry-run resolution, cURL/browser-fetch snippets, response headers, audit history
+with argument reuse, manual-request query/header definitions, and manual-request editing. Write
+requests continue through preview and explicit confirmation.
+
+Postman collection import now preserves raw JSON, raw text/XML, URL-encoded, and GraphQL bodies;
+the Java executor renders raw template variables and URL-encodes form fields. Postman's
+Node-based pre-request/test sandbox, collection runner, cookie jar, client certificates, and
+binary file bodies are not silently described as supported: they remain a separate compatibility
+runtime track because reproducing them changes the security and execution model rather than merely
+adding request-builder controls.
+
+**Why:** The first browser-native Apps page retained route and send-button functionality but
+stranded executor capabilities behind an oversimplified three-tab form. A tool imported from
+Postman was consequently much less operable in the UI than through the REST API. UI rewrites are
+required to preserve operational capability, not only navigation and appearance, while the
+approval boundary for external writes remains a deliberate product guardrail.
+
+**Status:** active
+
+**Refs:** `static/pages/apps.js`; `static/components.css`; `tools/ApiToolExecutor.java`;
+`tools/PostmanCollectionParser.java`; `ApiToolExecutorTests`; `PostmanCollectionParserTests`
+
+### 2026-07-29 — Outbound HTTPS combines Java trust with enterprise roots
+
+**Decision:** All connector/spec/tool HTTP clients that call enterprise systems use one TLS client
+factory. The factory always retains the JVM CA store, automatically adds Windows Trusted Root
+Certification Authorities when running on Windows, and can add explicitly configured PEM/DER CA
+files through `MCP_TLS_CA_CERTIFICATE_PATHS`. Hostname verification remains enabled and there is no
+trust-all or per-request "ignore certificate errors" switch.
+
+**Why:** Edge and Postman commonly trust an enterprise CA installed in Windows while Java uses its
+own `cacerts`, causing an internal HTTPS request to fail with `PKIX path building failed` even
+though the same request works elsewhere on the machine. Combining explicit trust sources fixes
+that platform mismatch without weakening TLS globally, modifying the JDK installation, or asking
+users to distribute a replacement truststore.
+
+**Status:** active
+
+**Refs:** `config/TlsHttpClientFactory.java`; `application.yml` (`http.tls`);
+`DEPLOYMENT.md` (internal HTTPS APIs); `TlsHttpClientFactoryTests`
+
+### 2026-07-29 — TLS verification bypass is explicit, global, and temporary
+
+**Decision:** Add an opt-in `MCP_TLS_DISABLE_VERIFY=true` emergency mode matching the existing
+automation runner's `DISABLE_SSL_VERIFY=true` behavior. The default remains strict verification,
+hostname verification remains enabled, and startup emits a security warning when bypass mode is
+active. The switch applies globally to outbound connector, spec-fetch, and imported-tool clients;
+there is no silent or persisted per-connection bypass.
+
+**Why:** Some controlled corporate troubleshooting environments cannot immediately export or
+install the internal issuing CA, while the same Postman collection is already operated with
+certificate verification disabled. Making the exception explicit and process-scoped preserves a
+visible security boundary and a straightforward return to the preferred Windows-root or explicit
+CA configuration.
+
+**Status:** active; narrowly supersedes the prior decision's prohibition on a trust-all switch.
+
+**Refs:** `config/TlsHttpClientFactory.java`; `application.yml` (`http.tls`);
+`DEPLOYMENT.md` (internal HTTPS APIs); `TlsHttpClientFactoryTests`

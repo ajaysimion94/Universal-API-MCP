@@ -49,6 +49,10 @@ export async function mount(outlet) {
     requestPreview: null,
     requestError: "",
     requestTab: "params",
+    requestDrafts: new Map(),
+    previewTimer: null,
+    manualEditToolId: null,
+    manualDrafts: new Map(),
   };
   const abort = new AbortController();
 
@@ -56,6 +60,115 @@ export async function mount(outlet) {
   const selectedTool = () => state.tools.find((tool) => tool.id === state.activeToolId);
   const connectionTools = (id) => state.tools.filter((tool) => tool.connectionId === id);
   const appSlug = (id) => connectionTools(id)[0]?.appSlug || "";
+
+  function newKvRow() {
+    return { key: "", value: "", enabled: true };
+  }
+
+  function requestDraft(tool) {
+    if (!state.requestDrafts.has(tool.id)) {
+      const values = {};
+      for (const [name, property] of Object.entries(tool.paramsSchema?.properties || {})) {
+        if (property.default !== undefined) values[name] = String(property.default);
+        else values[name] = property.type === "boolean" ? "false" : "";
+      }
+      state.requestDrafts.set(tool.id, {
+        values,
+        extraQuery: [newKvRow()],
+        extraHeaders: [newKvRow()],
+        bodyMode: "SCHEMA",
+        rawBody: tool.bodyTemplate || "",
+        rawContentType: "application/json",
+        authMode: tool.authMode || "INHERIT",
+        authUsername: tool.authUsername || "",
+        authSecret: "",
+        authNotice: "",
+        resolved: null,
+        previewLoading: false,
+        previewError: "",
+        showCode: false,
+        history: null,
+        historyLoading: false,
+      });
+    }
+    return state.requestDrafts.get(tool.id);
+  }
+
+  function paramsFromTool(tool) {
+    const properties = tool.paramsSchema?.properties || {};
+    const required = new Set(tool.paramsSchema?.required || []);
+    return Object.entries(properties).flatMap(([name, property]) => {
+      const location = tool.paramLocations?.[name];
+      if (!["query", "header"].includes(location)) return [];
+      return [{
+        name,
+        in: location,
+        required: required.has(name),
+        defaultValue: property.default === undefined ? "" : String(property.default),
+        description: property.description || "",
+      }];
+    });
+  }
+
+  function manualDraft(connectionId, tool = null) {
+    const key = tool ? `edit:${tool.id}` : `new:${connectionId}`;
+    if (!state.manualDrafts.has(key)) {
+      state.manualDrafts.set(key, {
+        connectionId,
+        displayName: tool?.displayName || "",
+        method: tool?.method || "GET",
+        path: tool?.urlTemplate || "/",
+        category: tool?.category || "Manual",
+        description: tool?.description || "",
+        params: tool ? paramsFromTool(tool) : [],
+        bodyTemplate: tool?.bodyTemplate || "",
+      });
+    }
+    return state.manualDrafts.get(key);
+  }
+
+  function coerce(raw, property) {
+    if (property?.type === "boolean") return raw === "true";
+    if (property?.type === "integer") {
+      const value = Number.parseInt(raw, 10);
+      return Number.isNaN(value) ? raw : value;
+    }
+    if (property?.type === "number") {
+      const value = Number.parseFloat(raw);
+      return Number.isNaN(value) ? raw : value;
+    }
+    if (["array", "object"].includes(property?.type)) {
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return raw;
+      }
+    }
+    return raw;
+  }
+
+  function requestArgs(tool, draft = requestDraft(tool)) {
+    const properties = tool.paramsSchema?.properties || {};
+    return Object.fromEntries(Object.entries(properties).flatMap(([name, property]) => {
+      const raw = draft.values[name];
+      return raw === "" || raw === undefined ? [] : [[name, coerce(raw, property)]];
+    }));
+  }
+
+  function rowsToMap(rows) {
+    return Object.fromEntries(rows.flatMap((row) =>
+      row.enabled && row.key.trim() ? [[row.key.trim(), row.value]] : []));
+  }
+
+  function requestOverrides(draft) {
+    return {
+      extraHeaders: rowsToMap(draft.extraHeaders),
+      extraQueryParams: rowsToMap(draft.extraQuery),
+      bodyMode: draft.bodyMode,
+      rawBody: draft.bodyMode === "RAW" ? draft.rawBody : undefined,
+      rawContentType: draft.bodyMode === "RAW" ? draft.rawContentType : undefined,
+    };
+  }
 
   function saveTabs() {
     localStorage.setItem(TABS_KEY, JSON.stringify({
@@ -139,12 +252,116 @@ export async function mount(outlet) {
     return `<div class="rb-tabstrip">${[...tabs, ...draft].map((tool) => `<button class="rb-tabstrip-tab ${state.activeToolId === tool.id || (tool.id === "draft" && !state.activeToolId) ? "is-active" : ""}" type="button" data-action="${tool.id === "draft" ? "activate-draft" : "open-tool"}" data-id="${escapeAttr(tool.id)}"><span class="method-badge mono rb-tabstrip-method ${tool.method === "GET" || tool.method === "NEW" ? "" : "method-write"}">${escapeHtml(tool.method)}</span><span class="rb-tabstrip-name">${escapeHtml(tool.displayName || tool.name)}</span><span class="rb-tabstrip-close" data-action="close-tab" data-id="${escapeAttr(tool.id)}">${icon("close", 11)}</span></button>`).join("")}</div>`;
   }
 
-  function schemaFields(tool) {
+  function schemaFields(tool, draft) {
     const properties = tool.paramsSchema?.properties || {};
     const required = new Set(tool.paramsSchema?.required || []);
-    return Object.entries(properties).map(([name, property]) => `<label class="tool-field"><span>${escapeHtml(name)}${required.has(name) ? " *" : ""}</span>${property.enum?.length
-      ? `<select class="form-input" name="${escapeAttr(name)}" ${required.has(name) ? "required" : ""}><option value="">Select…</option>${property.enum.map((value) => `<option value="${escapeAttr(value)}">${escapeHtml(value)}</option>`).join("")}</select>`
-      : `<input class="form-input" name="${escapeAttr(name)}" ${required.has(name) ? "required" : ""} ${["integer", "number"].includes(property.type) ? 'type="number"' : 'type="text"'}>`}${property.description ? `<small>${escapeHtml(property.description)}</small>` : ""}</label>`).join("");
+    return Object.entries(properties).map(([name, property]) => {
+      const value = draft.values[name] ?? "";
+      let control;
+      if (property.enum?.length) {
+        control = `<select class="form-input" name="${escapeAttr(name)}" data-request-value="${escapeAttr(name)}" ${required.has(name) ? "required" : ""}><option value="">Select…</option>${property.enum.map((option) => `<option value="${escapeAttr(option)}" ${String(option) === value ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select>`;
+      } else if (property.type === "boolean") {
+        control = `<select class="form-input" name="${escapeAttr(name)}" data-request-value="${escapeAttr(name)}"><option value="false" ${value === "false" ? "selected" : ""}>false</option><option value="true" ${value === "true" ? "selected" : ""}>true</option></select>`;
+      } else if (["array", "object"].includes(property.type)) {
+        control = `<textarea class="form-input tool-form-textarea mono" name="${escapeAttr(name)}" data-request-value="${escapeAttr(name)}" rows="3" ${required.has(name) ? "required" : ""} placeholder="${property.type === "array" ? "[…]" : "{…}"}">${escapeHtml(value)}</textarea>`;
+      } else {
+        control = `<input class="form-input" name="${escapeAttr(name)}" data-request-value="${escapeAttr(name)}" value="${escapeAttr(value)}" ${required.has(name) ? "required" : ""} ${["integer", "number"].includes(property.type) ? `type="number" step="${property.type === "integer" ? "1" : "any"}"` : 'type="text"'}>`;
+      }
+      return `<label class="tool-field"><span>${escapeHtml(name)}${required.has(name) ? ' <b class="tool-form-required">*</b>' : ""}<small class="tool-form-type mono">${escapeHtml(property.type || "string")}</small></span>${control}${property.description ? `<small>${escapeHtml(property.description)}</small>` : ""}</label>`;
+    }).join("");
+  }
+
+  function kvEditor(kind, rows, placeholder) {
+    return `<div class="rb-kv-table">${rows.map((row, index) => `<div class="rb-kv-row rb-kv-row-editable">
+      <input type="checkbox" data-kv-kind="${kind}" data-kv-index="${index}" data-kv-field="enabled" ${row.enabled ? "checked" : ""} aria-label="Row ${index + 1} enabled">
+      <input class="form-input" data-kv-kind="${kind}" data-kv-index="${index}" data-kv-field="key" value="${escapeAttr(row.key)}" placeholder="${escapeAttr(placeholder)}" aria-label="Row ${index + 1} name">
+      <input class="form-input" data-kv-kind="${kind}" data-kv-index="${index}" data-kv-field="value" value="${escapeAttr(row.value)}" placeholder="value" aria-label="Row ${index + 1} value">
+      <button class="btn btn-ghost rb-icon-btn" type="button" data-action="remove-kv" data-kind="${kind}" data-index="${index}" aria-label="Remove row">${icon("trash", 12)}</button>
+    </div>`).join("")}</div><button class="btn btn-ghost rb-add-row" type="button" data-action="add-kv" data-kind="${kind}">${icon("plus", 12)} Add row</button>`;
+  }
+
+  function previewCode(preview) {
+    const headers = Object.entries(preview.headers || {}).map(([name, value]) =>
+      `  -H ${JSON.stringify(`${name}: ${value}`)}`).join(" \\\n");
+    const body = preview.body === undefined ? "" : ` \\\n  --data-raw ${JSON.stringify(preview.body)}`;
+    const curl = `curl -X ${preview.method} ${JSON.stringify(preview.url)}${headers ? ` \\\n${headers}` : ""}${body}`;
+    const options = { method: preview.method };
+    if (Object.keys(preview.headers || {}).length) options.headers = preview.headers;
+    if (preview.body !== undefined) options.body = preview.body;
+    const fetchCode = `const response = await fetch(${JSON.stringify(preview.url)}, ${JSON.stringify(options, null, 2)});\nconst body = await response.text();`;
+    return `<section class="rb-code-panel"><div class="rb-code-head"><strong>cURL</strong><button class="btn btn-ghost btn-sm" type="button" data-action="copy-code" data-code="${escapeAttr(curl)}">Copy</button></div><pre class="tool-result-body rb-code-block"><code>${escapeHtml(curl)}</code></pre><div class="rb-code-head"><strong>Browser fetch</strong><button class="btn btn-ghost btn-sm" type="button" data-action="copy-code" data-code="${escapeAttr(fetchCode)}">Copy</button></div><pre class="tool-result-body rb-code-block"><code>${escapeHtml(fetchCode)}</code></pre></section>`;
+  }
+
+  function resolvedPanel(draft) {
+    if (draft.previewLoading) return '<section class="rb-resolved" id="request-resolved"><p class="rb-hint">Resolving request…</p></section>';
+    if (draft.previewError) return `<section class="rb-resolved" id="request-resolved">${banner(draft.previewError)}</section>`;
+    if (!draft.resolved) return '<section class="rb-resolved" id="request-resolved"><p class="rb-hint">Fill the request fields, then preview or send.</p></section>';
+    const preview = draft.resolved;
+    const headers = Object.entries(preview.headers || {});
+    return `<section class="rb-resolved" id="request-resolved">
+      <div class="rb-resolved-head"><span>Resolved request</span><button class="btn btn-ghost btn-sm" type="button" data-action="toggle-code">${draft.showCode ? "Hide code" : "Code"}</button></div>
+      <div class="rb-url-bar rb-url-bar-readout"><span class="method-badge mono ${preview.method === "GET" ? "" : "method-write"}">${escapeHtml(preview.method)}</span><code class="rb-url-readout">${escapeHtml(preview.url)}</code></div>
+      ${headers.length ? `<div class="rb-kv-table rb-kv-table-readonly">${headers.map(([name, value]) => `<div class="rb-kv-row"><span class="rb-kv-key mono">${escapeHtml(name)}</span><span class="rb-kv-value mono">${escapeHtml(value)}</span></div>`).join("")}</div>` : ""}
+      ${preview.body !== undefined ? `<pre class="tool-result-body rb-preview-body"><code>${escapeHtml(preview.body)}</code></pre>` : ""}
+      ${draft.showCode ? previewCode(preview) : ""}
+    </section>`;
+  }
+
+  function historyPanel(draft) {
+    if (draft.historyLoading) return '<p class="rb-hint">Loading invocation history…</p>';
+    if (!draft.history?.length) return '<p class="rb-hint">No prior invocations recorded for this endpoint.</p>';
+    return `<div class="rb-history-list">${draft.history.map((entry) => `<button class="rb-history-row" type="button" data-action="rerun-history" data-id="${escapeAttr(entry.id)}" ${entry.arguments ? "" : "disabled"}><span class="mono rb-history-event">${escapeHtml(entry.eventType)}</span><span class="rb-history-summary">${escapeHtml(entry.resultSummary || entry.error || "Request recorded")}</span><span class="mono rb-history-time">${escapeHtml(entry.createdAt ? new Date(entry.createdAt).toLocaleString() : "")}</span></button>`).join("")}</div>`;
+  }
+
+  function authPanel(tool, draft) {
+    const mode = draft.authMode;
+    return `<div class="rb-tab-body">
+      <p class="rb-hint">Saved for this endpoint. It overrides the connection authentication for every invocation; secrets are never displayed after saving.</p>
+      <select class="form-input" data-request-setting="authMode" aria-label="Request authentication mode">
+        <option value="INHERIT" ${mode === "INHERIT" ? "selected" : ""}>Inherit from connection</option>
+        <option value="NONE" ${mode === "NONE" ? "selected" : ""}>No authentication</option>
+        <option value="BASIC" ${mode === "BASIC" ? "selected" : ""}>Basic authentication</option>
+        <option value="BEARER" ${mode === "BEARER" ? "selected" : ""}>Bearer token</option>
+        <option value="API_KEY_HEADER" ${mode === "API_KEY_HEADER" ? "selected" : ""}>API key header</option>
+      </select>
+      ${["BASIC", "API_KEY_HEADER"].includes(mode) ? `<input class="form-input" data-request-setting="authUsername" value="${escapeAttr(draft.authUsername)}" placeholder="${mode === "BASIC" ? "Username" : "Header name (for example X-Api-Key)"}">` : ""}
+      ${["BASIC", "BEARER", "API_KEY_HEADER"].includes(mode) ? `<input class="form-input" type="password" data-request-setting="authSecret" value="${escapeAttr(draft.authSecret)}" placeholder="${tool.authMode === mode ? "Leave blank to keep the saved secret" : mode === "BASIC" ? "Password" : mode === "BEARER" ? "Token" : "API key"}">` : ""}
+      <div class="form-actions">${draft.authNotice ? `<span class="rb-auth-notice">${escapeHtml(draft.authNotice)}</span>` : ""}<button class="btn btn-primary" type="button" data-action="save-auth">Save auth</button></div>
+    </div>`;
+  }
+
+  function responsePanel(result) {
+    if (!result) return "";
+    const headers = Object.entries(result.headers || {});
+    return `<section class="tool-result-panel">
+      <header class="tool-result-header"><div><span class="status-pill ${result.status >= 200 && result.status < 300 ? "status-active" : "status-error"}">HTTP ${escapeHtml(result.status)}</span><span class="mono">${escapeHtml(result.latencyMs)} ms</span>${result.contentType ? `<span class="mono rb-response-meta">${escapeHtml(result.contentType)}</span>` : ""}</div><button class="btn btn-ghost btn-sm" type="button" data-action="clear-response">Clear</button></header>
+      ${headers.length ? `<details class="rb-response-headers"><summary>${headers.length} response headers</summary><div class="rb-kv-table rb-kv-table-readonly">${headers.map(([name, values]) => `<div class="rb-kv-row"><span class="rb-kv-key mono">${escapeHtml(name)}</span><span class="rb-kv-value mono">${escapeHtml(Array.isArray(values) ? values.join(", ") : values)}</span></div>`).join("")}</div></details>` : ""}
+      <pre class="tool-result-body"><code>${escapeHtml(result.body || "")}</code></pre>${result.truncated ? '<p class="rb-hint">Response display was truncated by the server.</p>' : ""}
+    </section>`;
+  }
+
+  function manualParamRows(draft) {
+    if (!draft.params.length) return '<p class="rb-hint">No query or header parameters. Path placeholders such as {id} are inferred automatically.</p>';
+    return draft.params.map((param, index) => `<div class="rb-kv-row rb-manual-param-row">
+      <input class="form-input" data-manual-param="${index}" data-param-field="name" value="${escapeAttr(param.name)}" placeholder="Parameter name">
+      <select class="form-input" data-manual-param="${index}" data-param-field="in"><option value="query" ${param.in === "query" ? "selected" : ""}>Query</option><option value="header" ${param.in === "header" ? "selected" : ""}>Header</option></select>
+      <input class="form-input" data-manual-param="${index}" data-param-field="defaultValue" value="${escapeAttr(param.defaultValue)}" placeholder="Default value">
+      <label class="rb-required-check"><input type="checkbox" data-manual-param="${index}" data-param-field="required" ${param.required ? "checked" : ""}> Required</label>
+      <button class="btn btn-ghost rb-icon-btn" type="button" data-action="remove-manual-param" data-index="${index}" aria-label="Remove parameter">${icon("trash", 12)}</button>
+    </div>`).join("");
+  }
+
+  function manualRequestForm(connectionId, tool = null) {
+    const draft = manualDraft(connectionId, tool);
+    return `<form class="rb-panel" id="manual-tool-form" data-edit-id="${escapeAttr(tool?.id || "")}">
+      <div class="rb-request-line"><select class="form-input rb-method-select" data-manual-field="method">${["GET", "POST", "PUT", "PATCH", "DELETE"].map((method) => `<option ${draft.method === method ? "selected" : ""}>${method}</option>`).join("")}</select><input class="form-input mono" data-manual-field="path" value="${escapeAttr(draft.path)}" placeholder="/path/to/resource" required><button class="btn btn-primary" type="submit">${tool ? "Save changes" : "Save request"}</button></div>
+      <div class="rb-tabs"><button class="rb-tab is-active" type="button">Request shape</button></div>
+      <div class="rb-tab-content"><div class="form-row"><label class="form-field"><span>Display name</span><input class="form-input" data-manual-field="displayName" value="${escapeAttr(draft.displayName)}" required></label><label class="form-field"><span>Category</span><input class="form-input" data-manual-field="category" value="${escapeAttr(draft.category)}"></label></div>
+      <label class="form-field"><span>Description</span><input class="form-input" data-manual-field="description" value="${escapeAttr(draft.description)}"></label>
+      <div class="rb-manual-params"><div class="rb-manual-params-head"><span>Query and header parameters</span><button class="btn btn-ghost" type="button" data-action="add-manual-param">${icon("plus", 12)} Add parameter</button></div>${manualParamRows(draft)}</div>
+      <label class="form-field"><span>Body template</span><textarea class="form-input mono" data-manual-field="bodyTemplate" rows="8" placeholder='{"name":"{name}"}'>${escapeHtml(draft.bodyTemplate)}</textarea></label></div>
+      ${tool ? '<div class="rb-footer-actions"><button class="btn btn-ghost" type="button" data-action="cancel-edit-tool">Cancel</button></div>' : ""}
+    </form>`;
   }
 
   function requestBuilder() {
@@ -152,23 +369,29 @@ export async function mount(outlet) {
     if (!tool && !state.draftConnectionId) {
       return emptyState("Choose an endpoint to start a request", "Expand an app in the sidebar, or use its + action to create a custom request.", '<a href="/guide" data-link class="empty-link">Read the app query guide</a>');
     }
-    if (!tool) {
-      return `<form class="rb-panel" id="manual-tool-form">
-        <div class="rb-request-line"><select class="form-input rb-method-select" name="method">${["GET", "POST", "PUT", "PATCH", "DELETE"].map((method) => `<option>${method}</option>`).join("")}</select><input class="form-input" name="path" placeholder="/path/to/resource" required><button class="btn btn-primary" type="submit">Save request</button></div>
-        <div class="rb-tabs"><button class="rb-tab is-active" type="button">Request</button></div>
-        <div class="rb-tab-content"><div class="form-row"><label class="form-field"><span>Display name</span><input class="form-input" name="displayName" required></label><label class="form-field"><span>Category</span><input class="form-input" name="category" value="Manual"></label></div><label class="form-field"><span>Description</span><textarea class="form-input" name="description"></textarea></label><label class="form-field"><span>JSON body template</span><textarea class="form-input mono" name="bodyTemplate" rows="8"></textarea></label></div>
-      </form>`;
-    }
+    if (!tool) return manualRequestForm(state.draftConnectionId);
+    if (state.manualEditToolId === tool.id) return manualRequestForm(tool.connectionId, tool);
+    const draft = requestDraft(tool);
+    const tabBody = state.requestTab === "params"
+      ? `<div class="rb-tab-body"><div class="tool-form">${schemaFields(tool, draft) || '<p class="tool-form-empty">This endpoint has no schema parameters.</p>'}</div><div class="rb-manual-params-head"><span>Ad-hoc query parameters</span></div>${kvEditor("extraQuery", draft.extraQuery, "Parameter name")}</div>`
+      : state.requestTab === "headers"
+        ? `<div class="rb-tab-body"><p class="rb-hint">These headers are layered on top of imported and schema-derived headers.</p>${kvEditor("extraHeaders", draft.extraHeaders, "Header name")}</div>`
+        : state.requestTab === "body"
+          ? `<div class="rb-tab-body"><div class="rb-body-mode">${["SCHEMA", "NONE", "RAW"].map((mode) => `<label class="rb-body-mode-option"><input type="radio" name="bodyMode" data-request-setting="bodyMode" value="${mode}" ${draft.bodyMode === mode ? "checked" : ""}>${mode === "SCHEMA" ? "Schema/default body" : mode === "NONE" ? "No body" : "Raw body"}</label>`).join("")}</div>${draft.bodyMode === "RAW" ? `<select class="form-input" data-request-setting="rawContentType"><option value="application/json" ${draft.rawContentType === "application/json" ? "selected" : ""}>application/json</option><option value="application/xml" ${draft.rawContentType === "application/xml" ? "selected" : ""}>application/xml</option><option value="text/plain" ${draft.rawContentType === "text/plain" ? "selected" : ""}>text/plain</option><option value="application/x-www-form-urlencoded" ${draft.rawContentType === "application/x-www-form-urlencoded" ? "selected" : ""}>application/x-www-form-urlencoded</option></select><textarea class="form-input tool-form-textarea mono" data-request-setting="rawBody" rows="10" placeholder="Raw request body">${escapeHtml(draft.rawBody)}</textarea>` : '<p class="rb-hint">Schema mode renders the imported body template. No-body mode suppresses it for this invocation.</p>'}</div>`
+          : state.requestTab === "auth"
+            ? authPanel(tool, draft)
+            : historyPanel(draft);
     return `<div class="rb-panel">
       <form id="request-form">
-        <div class="rb-request-line"><span class="method-badge mono ${tool.method === "GET" ? "" : "method-write"}">${escapeHtml(tool.method)}</span><code class="rb-url-template">${escapeHtml(tool.urlTemplate)}</code><button class="btn btn-primary" type="submit">${icon("play", 14)} ${tool.method === "GET" ? "Send" : "Review"}</button></div>
-        <div class="rb-tabs"><button class="rb-tab ${state.requestTab === "params" ? "is-active" : ""}" type="button" data-action="request-tab" data-id="params">Params</button><button class="rb-tab ${state.requestTab === "auth" ? "is-active" : ""}" type="button" data-action="request-tab" data-id="auth">Auth</button><button class="rb-tab ${state.requestTab === "history" ? "is-active" : ""}" type="button" data-action="request-tab" data-id="history">Details</button></div>
-        <div class="rb-tab-content">${state.requestTab === "params" ? `<div class="tool-form">${schemaFields(tool) || '<p class="tool-form-empty">This endpoint takes no schema parameters.</p>'}</div>` : state.requestTab === "auth" ? `<p class="rb-hint">Uses ${escapeHtml(tool.authMode || "connection")} authentication. Change persistent auth on the Connections page.</p>` : `<dl class="rb-details"><dt>Tool ID</dt><dd class="mono">${escapeHtml(tool.id)}</dd><dt>Origin</dt><dd>${escapeHtml(tool.origin)}</dd><dt>Category</dt><dd>${escapeHtml(tool.category)}</dd></dl>`}</div>
+        <div class="rb-request-line"><span class="method-badge mono ${tool.method === "GET" ? "" : "method-write"}">${escapeHtml(tool.method)}</span><code class="rb-url-template">${escapeHtml(tool.urlTemplate)}</code><button class="btn btn-ghost" type="button" data-action="preview-request">Preview</button><button class="btn btn-primary" type="submit" ${tool.enabled ? "" : "disabled"}>${icon("play", 14)} ${tool.method === "GET" ? "Send" : "Review"}</button></div>
+        <div class="rb-tabs">${["params", "headers", "body", "auth", "history"].map((tab) => `<button class="rb-tab ${state.requestTab === tab ? "is-active" : ""}" type="button" data-action="request-tab" data-id="${tab}">${tab === "history" ? "History" : tab[0].toUpperCase() + tab.slice(1)}</button>`).join("")}</div>
+        <div class="rb-tab-content">${tabBody}</div>
       </form>
-      <div class="rb-footer-actions">${toggle(tool.enabled, tool.enabled ? "Enabled" : "Disabled", "toggle-tool", tool.id)}${tool.origin === "MANUAL" ? `<button class="btn btn-ghost btn-danger" type="button" data-action="delete-tool" data-id="${escapeAttr(tool.id)}">${icon("trash", 13)} Delete</button>` : ""}</div>
+      ${resolvedPanel(draft)}
+      <div class="rb-footer-actions">${toggle(tool.enabled, tool.enabled ? "Enabled" : "Disabled", "toggle-tool", tool.id)}<span class="rb-endpoint-meta mono">${escapeHtml(tool.name)} · ${escapeHtml(tool.origin)} · ${escapeHtml(tool.category)}</span>${tool.origin === "MANUAL" ? `<button class="btn btn-ghost" type="button" data-action="edit-tool" data-id="${escapeAttr(tool.id)}">Edit shape</button><button class="btn btn-ghost btn-danger" type="button" data-action="delete-tool" data-id="${escapeAttr(tool.id)}">${icon("trash", 13)} Delete</button>` : ""}</div>
       ${state.requestError ? banner(state.requestError) : ""}
-      ${state.requestPreview ? `<section class="tool-confirm-panel"><h2>Confirm write request</h2><div class="tool-preview"><span class="method-badge mono method-write">${escapeHtml(state.requestPreview.preview?.method)}</span><code>${escapeHtml(state.requestPreview.preview?.url)}</code>${state.requestPreview.preview?.body ? `<pre><code>${escapeHtml(state.requestPreview.preview.body)}</code></pre>` : ""}</div><div class="form-actions"><button class="btn btn-ghost" type="button" data-action="reject-preview">Reject</button><button class="btn btn-primary" type="button" data-action="confirm-preview">Confirm and send</button></div></section>` : ""}
-      ${state.requestResult ? `<section class="tool-result-panel"><header class="tool-result-header"><span class="status-pill ${state.requestResult.status >= 200 && state.requestResult.status < 300 ? "status-active" : "status-error"}">HTTP ${state.requestResult.status}</span><span class="mono">${state.requestResult.latencyMs} ms</span></header><pre class="tool-result-body"><code>${escapeHtml(state.requestResult.body || "")}</code></pre></section>` : ""}
+      ${state.requestPreview ? `<section class="tool-confirm-panel"><div class="tool-confirm-heading"><div><h2>Confirm write request</h2><p class="rb-hint">Review the exact destination and payload before allowing the external change.</p></div></div><div class="tool-preview"><div class="rb-url-bar"><span class="method-badge mono method-write">${escapeHtml(state.requestPreview.preview?.method)}</span><code>${escapeHtml(state.requestPreview.preview?.url)}</code></div>${Object.keys(state.requestPreview.preview?.headers || {}).length ? `<div class="rb-kv-table rb-kv-table-readonly">${Object.entries(state.requestPreview.preview.headers).map(([name, value]) => `<div class="rb-kv-row"><span class="rb-kv-key mono">${escapeHtml(name)}</span><span class="rb-kv-value mono">${escapeHtml(value)}</span></div>`).join("")}</div>` : ""}${state.requestPreview.preview?.body !== undefined ? `<pre class="tool-result-body"><code>${escapeHtml(state.requestPreview.preview.body)}</code></pre>` : ""}</div><div class="form-actions"><button class="btn btn-ghost" type="button" data-action="reject-preview">Reject</button><button class="btn btn-primary" type="button" data-action="confirm-preview">Confirm and send</button></div></section>` : ""}
+      ${responsePanel(state.requestResult)}
     </div>`;
   }
 
@@ -220,16 +443,48 @@ export async function mount(outlet) {
     }
   }
 
-  function formArgs(form, tool) {
-    const data = new FormData(form);
-    const properties = tool.paramsSchema?.properties || {};
-    return Object.fromEntries(Object.entries(properties).flatMap(([name, schema]) => {
-      const raw = data.get(name);
-      if (raw === "" || raw === null) return [];
-      if (schema.type === "boolean") return [[name, raw === "true"]];
-      if (["integer", "number"].includes(schema.type)) return [[name, Number(raw)]];
-      return [[name, raw]];
-    }));
+  function updateResolvedPanel(draft) {
+    const current = outlet.querySelector("#request-resolved");
+    if (current) current.outerHTML = resolvedPanel(draft);
+  }
+
+  async function previewRequest(tool, quiet = false) {
+    if (!tool) return;
+    const draft = requestDraft(tool);
+    draft.previewLoading = true;
+    draft.previewError = "";
+    if (!quiet) updateResolvedPanel(draft);
+    try {
+      draft.resolved = await api.previewTool(tool.id, requestArgs(tool, draft), requestOverrides(draft));
+    } catch (error) {
+      draft.resolved = null;
+      draft.previewError = message(error, "Could not resolve request");
+    } finally {
+      draft.previewLoading = false;
+      updateResolvedPanel(draft);
+    }
+  }
+
+  function schedulePreview() {
+    const tool = selectedTool();
+    if (!tool || state.manualEditToolId) return;
+    clearTimeout(state.previewTimer);
+    state.previewTimer = setTimeout(() => previewRequest(tool, true), 350);
+  }
+
+  async function loadHistory(tool) {
+    const draft = requestDraft(tool);
+    draft.historyLoading = true;
+    render();
+    try {
+      const response = await api.fetchAuditLog({ toolName: tool.name, size: 20 });
+      draft.history = response.items || [];
+    } catch {
+      draft.history = [];
+    } finally {
+      draft.historyLoading = false;
+      render();
+    }
   }
 
   on(outlet, "click", "[data-action]", async (event, target) => {
@@ -237,6 +492,8 @@ export async function mount(outlet) {
     if (action === "dismiss-banner") {
       state.error = "";
       state.requestError = "";
+      const tool = selectedTool();
+      if (tool) requestDraft(tool).previewError = "";
       render();
     } else if (action === "toggle-group-form") {
       state.groupForm = !state.groupForm;
@@ -254,12 +511,16 @@ export async function mount(outlet) {
       render();
     } else if (action === "open-tool") {
       state.draftConnectionId = "";
+      state.manualEditToolId = null;
       state.activeToolId = id;
       if (!state.tabs.includes(id)) state.tabs.push(id);
       state.requestResult = null;
       state.requestPreview = null;
+      state.requestError = "";
+      state.requestTab = "params";
       saveTabs();
       render();
+      schedulePreview();
     } else if (action === "activate-draft") {
       state.activeToolId = null;
       render();
@@ -274,6 +535,83 @@ export async function mount(outlet) {
       render();
     } else if (action === "request-tab") {
       state.requestTab = id;
+      render();
+      if (id === "history") {
+        const tool = selectedTool();
+        if (tool && requestDraft(tool).history === null) await loadHistory(tool);
+      }
+    } else if (action === "preview-request") {
+      await previewRequest(selectedTool());
+    } else if (action === "add-kv") {
+      const draft = requestDraft(selectedTool());
+      draft[target.dataset.kind].push(newKvRow());
+      render();
+    } else if (action === "remove-kv") {
+      const draft = requestDraft(selectedTool());
+      const rows = draft[target.dataset.kind];
+      rows.splice(Number(target.dataset.index), 1);
+      if (!rows.length) rows.push(newKvRow());
+      render();
+      schedulePreview();
+    } else if (action === "toggle-code") {
+      const draft = requestDraft(selectedTool());
+      draft.showCode = !draft.showCode;
+      updateResolvedPanel(draft);
+    } else if (action === "copy-code") {
+      await navigator.clipboard.writeText(target.dataset.code || "");
+      const label = target.textContent;
+      target.textContent = "Copied";
+      setTimeout(() => { target.textContent = label; }, 1200);
+    } else if (action === "clear-response") {
+      state.requestResult = null;
+      render();
+    } else if (action === "save-auth") {
+      const tool = selectedTool();
+      const draft = requestDraft(tool);
+      try {
+        const updated = await api.updateToolAuth(tool.id, {
+          mode: draft.authMode === "INHERIT" ? undefined : draft.authMode,
+          username: draft.authUsername || undefined,
+          secret: draft.authSecret || undefined,
+        });
+        state.tools = state.tools.map((item) => item.id === updated.id ? updated : item);
+        draft.authSecret = "";
+        draft.authNotice = draft.authMode === "INHERIT" ? "Now inheriting connection auth" : "Authentication saved";
+        render();
+        schedulePreview();
+      } catch (error) {
+        draft.authNotice = message(error, "Could not save authentication");
+        render();
+      }
+    } else if (action === "rerun-history") {
+      const tool = selectedTool();
+      const draft = requestDraft(tool);
+      const entry = draft.history?.find((item) => String(item.id) === String(id));
+      if (entry?.arguments && typeof entry.arguments === "object") {
+        for (const [name, value] of Object.entries(entry.arguments)) {
+          if (Object.hasOwn(draft.values, name)) {
+            draft.values[name] = typeof value === "string" ? value : JSON.stringify(value);
+          }
+        }
+        state.requestTab = "params";
+        render();
+        schedulePreview();
+      }
+    } else if (action === "edit-tool") {
+      state.manualEditToolId = id;
+      render();
+    } else if (action === "cancel-edit-tool") {
+      state.manualEditToolId = null;
+      render();
+    } else if (action === "add-manual-param") {
+      const tool = selectedTool();
+      const draft = manualDraft(tool?.connectionId || state.draftConnectionId, state.manualEditToolId ? tool : null);
+      draft.params.push({ name: "", in: "query", required: false, defaultValue: "", description: "" });
+      render();
+    } else if (action === "remove-manual-param") {
+      const tool = selectedTool();
+      const draft = manualDraft(tool?.connectionId || state.draftConnectionId, state.manualEditToolId ? tool : null);
+      draft.params.splice(Number(target.dataset.index), 1);
       render();
     } else if (action === "toggle-tool") {
       const tool = state.tools.find((item) => item.id === id);
@@ -363,6 +701,26 @@ export async function mount(outlet) {
       const input = outlet.querySelector("#apps-filter");
       input.focus();
       input.setSelectionRange(cursor, cursor);
+      return;
+    }
+    const tool = selectedTool();
+    if (event.target.dataset.requestValue && tool) {
+      requestDraft(tool).values[event.target.dataset.requestValue] = event.target.value;
+      schedulePreview();
+    } else if (event.target.dataset.requestSetting && tool) {
+      requestDraft(tool)[event.target.dataset.requestSetting] = event.target.value;
+      schedulePreview();
+    } else if (event.target.dataset.kvKind && tool) {
+      const row = requestDraft(tool)[event.target.dataset.kvKind][Number(event.target.dataset.kvIndex)];
+      if (row) row[event.target.dataset.kvField] = event.target.value;
+      schedulePreview();
+    } else if (event.target.dataset.manualField) {
+      const editing = state.manualEditToolId ? tool : null;
+      manualDraft(editing?.connectionId || state.draftConnectionId, editing)[event.target.dataset.manualField] = event.target.value;
+    } else if (event.target.dataset.manualParam !== undefined) {
+      const editing = state.manualEditToolId ? tool : null;
+      const row = manualDraft(editing?.connectionId || state.draftConnectionId, editing).params[Number(event.target.dataset.manualParam)];
+      if (row) row[event.target.dataset.paramField] = event.target.value;
     }
   }, { signal: abort.signal });
   outlet.addEventListener("change", (event) => {
@@ -373,36 +731,68 @@ export async function mount(outlet) {
     } else if (event.target.dataset.memberTool) {
       if (event.target.checked) state.editTools.add(event.target.dataset.memberTool);
       else state.editTools.delete(event.target.dataset.memberTool);
+    } else {
+      const tool = selectedTool();
+      if (event.target.dataset.requestValue && tool) {
+        requestDraft(tool).values[event.target.dataset.requestValue] = event.target.value;
+        schedulePreview();
+      } else if (event.target.dataset.requestSetting && tool) {
+        const setting = event.target.dataset.requestSetting;
+        requestDraft(tool)[setting] = event.target.value;
+        if (["bodyMode", "authMode"].includes(setting)) render();
+        schedulePreview();
+      } else if (event.target.dataset.kvKind && tool) {
+        const row = requestDraft(tool)[event.target.dataset.kvKind][Number(event.target.dataset.kvIndex)];
+        if (row) row[event.target.dataset.kvField] = event.target.type === "checkbox" ? event.target.checked : event.target.value;
+        schedulePreview();
+      } else if (event.target.dataset.manualField) {
+        const editing = state.manualEditToolId ? tool : null;
+        manualDraft(editing?.connectionId || state.draftConnectionId, editing)[event.target.dataset.manualField] = event.target.value;
+      } else if (event.target.dataset.manualParam !== undefined) {
+        const editing = state.manualEditToolId ? tool : null;
+        const row = manualDraft(editing?.connectionId || state.draftConnectionId, editing).params[Number(event.target.dataset.manualParam)];
+        if (row) row[event.target.dataset.paramField] = event.target.type === "checkbox" ? event.target.checked : event.target.value;
+      }
     }
   }, { signal: abort.signal });
   outlet.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.target;
-    const data = Object.fromEntries(new FormData(form));
     try {
       if (form.id === "new-group-form") {
+        const data = Object.fromEntries(new FormData(form));
         const group = await api.createGroup(data.name, data.description || undefined);
         state.groupForm = false;
         await load();
         await selectGroup(group.id);
       } else if (form.id === "manual-tool-form") {
-        const tool = await api.createManualTool({
-          connectionId: state.draftConnectionId,
-          displayName: data.displayName,
-          method: data.method,
-          path: data.path,
-          category: data.category,
-          description: data.description,
-          bodyTemplate: data.bodyTemplate || undefined,
-          params: [],
-        });
+        const existing = state.manualEditToolId ? selectedTool() : null;
+        const draft = manualDraft(existing?.connectionId || state.draftConnectionId, existing);
+        if (!draft.displayName.trim() || !draft.path.trim()) throw new Error("Display name and request path are required");
+        const input = {
+          connectionId: existing?.connectionId || state.draftConnectionId,
+          displayName: draft.displayName.trim(),
+          method: draft.method,
+          path: draft.path.trim(),
+          category: draft.category.trim() || "Manual",
+          description: draft.description.trim() || undefined,
+          bodyTemplate: draft.bodyTemplate.trim() || undefined,
+          params: draft.params.filter((param) => param.name.trim()).map((param) => ({ ...param, name: param.name.trim() })),
+        };
+        const saved = existing
+          ? await api.updateManualTool(existing.id, input)
+          : await api.createManualTool(input);
         state.draftConnectionId = "";
-        state.activeToolId = tool.id;
-        state.tabs.push(tool.id);
+        state.manualEditToolId = null;
+        state.activeToolId = saved.id;
+        if (!state.tabs.includes(saved.id)) state.tabs.push(saved.id);
+        state.requestDrafts.delete(saved.id);
+        state.manualDrafts.delete(existing ? `edit:${existing.id}` : `new:${input.connectionId}`);
         await load();
       } else if (form.id === "request-form") {
         const tool = selectedTool();
-        const result = await api.invokeTool(tool.id, formArgs(form, tool));
+        const draft = requestDraft(tool);
+        const result = await api.invokeTool(tool.id, requestArgs(tool, draft), requestOverrides(draft));
         if ("confirmationToken" in result) state.requestPreview = result;
         else state.requestResult = result;
         state.requestError = "";
@@ -417,5 +807,8 @@ export async function mount(outlet) {
 
   render();
   await load();
-  return () => abort.abort();
+  return () => {
+    clearTimeout(state.previewTimer);
+    abort.abort();
+  };
 }

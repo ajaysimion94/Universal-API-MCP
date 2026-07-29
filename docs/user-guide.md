@@ -230,7 +230,7 @@ endpoints, or route the component if you want the UI.
 
 ## 9. Connecting an MCP client
 
-Point any MCP-compatible client (Claude Desktop, ChatGPT, Copilot, or your own) at the Streamable HTTP
+Point any MCP-compatible client (Claude Desktop, Claude Code, ChatGPT, or your own) at the Streamable HTTP
 endpoint:
 
 ~~~text

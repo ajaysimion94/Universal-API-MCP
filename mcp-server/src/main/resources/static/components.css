@@ -5970,6 +5970,103 @@
   font-size: var(--text-sm);
 }
 
+.rb-add-row {
+  align-self: flex-start;
+  margin-top: var(--space-2xs);
+}
+
+.rb-resolved {
+  display: grid;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border-top: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+
+.rb-resolved-head,
+.rb-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.rb-preview-body {
+  max-height: 240px;
+  margin-top: 0;
+}
+
+.rb-code-panel {
+  display: grid;
+  gap: var(--space-2xs);
+  padding-top: var(--space-2xs);
+  border-top: 1px solid var(--border);
+}
+
+.rb-code-panel .tool-result-body {
+  margin-top: 0;
+}
+
+.rb-response-meta,
+.rb-endpoint-meta {
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}
+
+.rb-endpoint-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rb-response-headers {
+  margin-top: var(--space-xs);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.rb-response-headers summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.rb-response-headers .rb-kv-table {
+  margin-top: var(--space-2xs);
+  padding: var(--space-2xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+}
+
+.tool-result-header > div {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+@media (max-width: 760px) {
+  .rb-manual-param-row {
+    grid-template-columns: minmax(0, 1fr) 88px auto;
+  }
+
+  .rb-manual-param-row > input:nth-child(3) {
+    grid-column: 1 / -1;
+  }
+
+  .rb-request-line {
+    flex-wrap: wrap;
+  }
+
+  .rb-url-template,
+  .rb-request-line > input {
+    flex-basis: calc(100% - 126px);
+  }
+}
+
 .rb-details {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);

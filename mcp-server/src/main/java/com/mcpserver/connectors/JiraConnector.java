@@ -2,6 +2,7 @@ package com.mcpserver.connectors;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mcpserver.config.TlsHttpClientFactory;
 import com.mcpserver.services.IngestionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -63,12 +64,15 @@ public class JiraConnector implements SourceConnector {
     public JiraConnector(IngestionService ingestionService,
                           ConnectionRepository connectionRepository,
                           CredentialCipher credentialCipher,
+                          TlsHttpClientFactory tlsHttpClientFactory,
                           @Value("${connectors.webhook-base-url:}") String webhookBaseUrl) {
         this.ingestionService = ingestionService;
         this.connectionRepository = connectionRepository;
         this.credentialCipher = credentialCipher;
         this.webhookBaseUrl = webhookBaseUrl;
-        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+        this.httpClient = tlsHttpClientFactory.builder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .build();
     }
 
     @Override

@@ -336,28 +336,105 @@ public class PostmanCollectionParser implements SpecParser {
 
     private String parseBody(JsonNode body, ObjectNode properties, ArrayNode required,
                              Map<String, String> locations, Map<String, String> staticHeaders) {
-        if (!"raw".equals(body.path("mode").asText(""))) return null;
-        String raw = body.path("raw").asText("");
+        String mode = body.path("mode").asText("");
+        if ("urlencoded".equals(mode)) {
+            return parseUrlEncodedBody(body.path("urlencoded"), properties, required, locations, staticHeaders);
+        }
+        if ("graphql".equals(mode)) {
+            ObjectNode payload = mapper.createObjectNode();
+            JsonNode graphql = body.path("graphql");
+            payload.put("query", graphql.path("query").asText(""));
+            String variables = graphql.path("variables").asText("");
+            if (!variables.isBlank()) {
+                try {
+                    payload.set("variables", mapper.readTree(variables));
+                } catch (Exception ignored) {
+                    payload.put("variables", variables);
+                }
+            }
+            return parseRawBody(payload.toString(), "application/json",
+                    properties, required, locations, staticHeaders);
+        }
+        if (!"raw".equals(mode)) return null;
+        String language = body.path("options").path("raw").path("language").asText("");
+        String contentType = switch (language) {
+            case "json" -> "application/json";
+            case "xml" -> "application/xml";
+            case "javascript" -> "application/javascript";
+            case "html" -> "text/html";
+            default -> "text/plain";
+        };
+        return parseRawBody(body.path("raw").asText(""), contentType,
+                properties, required, locations, staticHeaders);
+    }
+
+    private String parseRawBody(String raw, String contentType, ObjectNode properties,
+                                ArrayNode required, Map<String, String> locations,
+                                Map<String, String> staticHeaders) {
         if (raw.isBlank()) return null;
+
+        String template = replaceTemplateVars(raw);
 
         JsonNode example;
         try {
-            example = mapper.readTree(replaceTemplateVars(raw));
+            example = mapper.readTree(template);
         } catch (Exception e) {
-            return null; // non-JSON raw body — no inferable parameters
+            staticHeaders.putIfAbsent("Content-Type", contentType);
+            addRawTemplateParams(raw, properties, required, locations);
+            return template;
         }
-        if (!example.isObject()) return null;
+        staticHeaders.putIfAbsent("Content-Type",
+                example.isContainerNode() && "text/plain".equals(contentType)
+                        ? "application/json" : contentType);
+        if (!example.isObject()) {
+            addRawTemplateParams(raw, properties, required, locations);
+            return template;
+        }
 
-        staticHeaders.putIfAbsent("Content-Type", "application/json");
         example.properties().forEach(e -> {
             String key = e.getKey();
             JsonNode value = e.getValue();
-            ObjectNode prop = properties.putObject(key);
-            prop.put("type", inferType(value));
-            locations.put(key, "body");
-            required.add(key); // example bodies show what the endpoint expects — treat as required
+            if (!properties.has(key)) {
+                ObjectNode prop = properties.putObject(key);
+                prop.put("type", inferType(value));
+                locations.put(key, "body");
+                required.add(key); // example bodies show what the endpoint expects — treat as required
+            }
         });
         return example.toString();
+    }
+
+    private void addRawTemplateParams(String raw, ObjectNode properties, ArrayNode required,
+                                      Map<String, String> locations) {
+        Matcher variables = TEMPLATE_VAR.matcher(raw);
+        while (variables.find()) {
+            addParam(Slugifier.slug(variables.group(1)), "body", false, properties, required, locations);
+        }
+    }
+
+    private String parseUrlEncodedBody(JsonNode fields, ObjectNode properties, ArrayNode required,
+                                       Map<String, String> locations, Map<String, String> staticHeaders) {
+        if (!fields.isArray()) return null;
+        List<String> pairs = new ArrayList<>();
+        for (JsonNode field : fields) {
+            if (field.path("disabled").asBoolean(false)) continue;
+            String key = field.path("key").asText("");
+            if (key.isBlank()) continue;
+            String paramName = Slugifier.slug(key);
+            addParam(paramName, "body", false, properties, required, locations);
+            String value = field.path("value").asText("");
+            if (!value.isBlank() && !TEMPLATE_VAR.matcher(value).find()) {
+                ((ObjectNode) properties.get(paramName)).put("default", value);
+            }
+            String description = field.path("description").asText("");
+            if (!description.isBlank()) {
+                ((ObjectNode) properties.get(paramName)).put("description", description);
+            }
+            pairs.add(key + "={" + paramName + "}");
+        }
+        if (pairs.isEmpty()) return null;
+        staticHeaders.put("Content-Type", "application/x-www-form-urlencoded");
+        return String.join("&", pairs);
     }
 
     private void addParam(String name, String location, boolean isRequired,

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.mcpserver.config.TlsHttpClientFactory;
 import com.mcpserver.connectors.Connection;
 import com.mcpserver.connectors.CredentialCipher;
 import org.slf4j.Logger;
@@ -11,6 +12,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import javax.net.ssl.SSLHandshakeException;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -23,6 +25,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Executes one imported tool against its connection's API: validates args against the generated
@@ -42,18 +46,20 @@ public class ApiToolExecutor {
     private final CredentialCipher credentialCipher;
     private final int rateLimitPerMinute;
     private final ObjectMapper mapper = new ObjectMapper();
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(10))
-            .followRedirects(HttpClient.Redirect.NORMAL)
-            .build();
+    private final HttpClient httpClient;
 
     /** toolId → window start millis + count; a coarse fixed-window limiter is enough here. */
     private final Map<String, long[]> rateWindows = new ConcurrentHashMap<>();
 
     public ApiToolExecutor(CredentialCipher credentialCipher,
+                           TlsHttpClientFactory tlsHttpClientFactory,
                            @Value("${tools.rate-limit-per-minute:10}") int rateLimitPerMinute) {
         this.credentialCipher = credentialCipher;
         this.rateLimitPerMinute = rateLimitPerMinute;
+        this.httpClient = tlsHttpClientFactory.builder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .build();
     }
 
     /**
@@ -154,6 +160,11 @@ public class ApiToolExecutor {
         } catch (java.net.ConnectException e) {
             throw new ToolExecutionException("Could not connect to " + originOf(target)
                     + " — is the service running?", e);
+        } catch (SSLHandshakeException e) {
+            throw new ToolExecutionException("TLS certificate for " + target.getHost()
+                    + " is not trusted. On Windows, install the corporate CA in Trusted Root "
+                    + "Certification Authorities; otherwise set MCP_TLS_CA_CERTIFICATE_PATHS "
+                    + "to the corporate CA PEM/DER file and restart the server.", e);
         } catch (java.io.IOException e) {
             throw new ToolExecutionException("Network error calling " + target + ": "
                     + e.getMessage(), e);
@@ -224,14 +235,43 @@ public class ApiToolExecutor {
         boolean hasBodyArg = args.keySet().stream().anyMatch(k -> "body".equals(locations.get(k)));
         if (!hasBodyArg && tool.bodyTemplate() == null) return null;
 
-        ObjectNode body = tool.bodyTemplate() != null && !tool.bodyTemplate().isBlank()
-                ? (ObjectNode) mapper.readTree(tool.bodyTemplate())
-                : mapper.createObjectNode();
+        JsonNode parsedTemplate;
+        try {
+            parsedTemplate = tool.bodyTemplate() != null && !tool.bodyTemplate().isBlank()
+                    ? mapper.readTree(tool.bodyTemplate())
+                    : mapper.createObjectNode();
+        } catch (Exception ignored) {
+            return renderRawTemplate(tool, tool.bodyTemplate(), args, locations);
+        }
+        if (!parsedTemplate.isObject()) {
+            return renderRawTemplate(tool, parsedTemplate.toString(), args, locations);
+        }
+        ObjectNode body = (ObjectNode) parsedTemplate;
         for (var e : args.entrySet()) {
             if (!"body".equals(locations.get(e.getKey())) || e.getValue() == null) continue;
             body.set(e.getKey(), mapper.valueToTree(coerce(e.getValue())));
         }
         return body.toString();
+    }
+
+    private String renderRawTemplate(ApiTool tool, String parsedTemplate, Map<String, Object> args,
+                                     Map<String, String> locations) throws Exception {
+        String template = tool.bodyTemplate();
+        if (template == null) return parsedTemplate;
+        boolean formEncoded = "application/x-www-form-urlencoded".equalsIgnoreCase(
+                readStringMap(tool.headers()).get("Content-Type"));
+        Pattern placeholder = Pattern.compile("\\{([A-Za-z_][A-Za-z0-9_]*)}");
+        Matcher matcher = placeholder.matcher(template);
+        StringBuffer rendered = new StringBuffer();
+        while (matcher.find()) {
+            String name = matcher.group(1);
+            Object value = "body".equals(locations.get(name)) ? args.get(name) : null;
+            String replacement = value == null ? "" : String.valueOf(coerce(value));
+            if (formEncoded) replacement = URLEncoder.encode(replacement, StandardCharsets.UTF_8);
+            matcher.appendReplacement(rendered, Matcher.quoteReplacement(replacement));
+        }
+        matcher.appendTail(rendered);
+        return rendered.toString();
     }
 
     /**

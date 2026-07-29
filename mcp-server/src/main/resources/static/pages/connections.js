@@ -152,6 +152,14 @@ export async function mount(outlet) {
     </div>`;
   }
 
+  // Native select popups are owned by the browser. Replacing their element while
+  // the popup is open dismisses it immediately (especially visibly in Edge).
+  // Background refreshes can wait until this short-lived editor is closed; form
+  // interactions still call render() directly when their dependent fields change.
+  function renderBackground() {
+    if (!state.formOpen) render();
+  }
+
   async function load() {
     try {
       state.connections = await api.listConnections();
@@ -160,13 +168,13 @@ export async function mount(outlet) {
       state.error = message(error, "Failed to load connections");
     } finally {
       state.loading = false;
-      render();
+      renderBackground();
     }
   }
 
   async function watchJob(connectionId, jobId) {
     state.jobs.set(connectionId, { jobId, status: "running" });
-    render();
+    renderBackground();
     if (!pollTimer) {
       pollTimer = window.setInterval(async () => {
         for (const [id, current] of [...state.jobs]) {
@@ -186,7 +194,7 @@ export async function mount(outlet) {
           clearInterval(pollTimer);
           pollTimer = 0;
         }
-        render();
+        renderBackground();
       }, 1200);
     }
   }
@@ -197,7 +205,7 @@ export async function mount(outlet) {
     } catch (error) {
       state.error = message(error, "Failed to load tools");
     }
-    render();
+    renderBackground();
   }
 
   on(outlet, "click", "[data-action]", async (_event, target) => {

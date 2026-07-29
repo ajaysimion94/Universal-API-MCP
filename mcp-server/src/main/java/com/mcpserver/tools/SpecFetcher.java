@@ -3,8 +3,10 @@ package com.mcpserver.tools;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
+import com.mcpserver.config.TlsHttpClientFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.net.URI;
@@ -41,16 +43,27 @@ public class SpecFetcher {
             Pattern.compile("spec-url\\s*=\\s*[\"']([^\"']+)[\"']"),
             Pattern.compile("data-url\\s*=\\s*[\"']([^\"']+)[\"']"));
 
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(10))
-            .followRedirects(HttpClient.Redirect.NORMAL)
-            .build();
+    private final HttpClient httpClient;
     private final ObjectMapper jsonMapper = new ObjectMapper();
     private final ObjectMapper yamlMapper = new YAMLMapper();
     private final List<SpecParser> parsers;
 
-    public SpecFetcher(List<SpecParser> parsers) {
+    @Autowired
+    public SpecFetcher(List<SpecParser> parsers, TlsHttpClientFactory tlsHttpClientFactory) {
         this.parsers = parsers;
+        this.httpClient = tlsHttpClientFactory.builder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .build();
+    }
+
+    /** Pure parser tests do not need application TLS configuration. */
+    SpecFetcher(List<SpecParser> parsers) {
+        this.parsers = parsers;
+        this.httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .build();
     }
 
     public record FetchedSpec(String content, JsonNode parsed, SpecParser parser, String resolvedUrl) {}

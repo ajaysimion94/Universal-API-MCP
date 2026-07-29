@@ -3,8 +3,8 @@
 ## 1. Vision
 
 An **enterprise MCP (Model Context Protocol) server** that turns fragmented enterprise knowledge and
-application APIs into a single, governed context layer for any AI client — GitHub Copilot CLI, VS Code
-Copilot, Microsoft Copilot Studio, ChatGPT, Claude Desktop, or any MCP-compatible client.
+application APIs into a single, governed context layer for any AI client — Claude Desktop, Claude Code,
+ChatGPT, IDE MCP extensions, or any MCP-compatible client.
 
 The server is a Java 17+ / Spring Boot 3 service that speaks the MCP protocol directly. AI clients connect
 to it and get three kinds of capabilities:
@@ -48,11 +48,11 @@ Three principles drive the design:
 ```
                 AI Clients                      Web UI (first-party)
     ┌─────────────────────────────────┐   ┌───────────────────────────────┐
-    │ GitHub Copilot CLI              │   │ Chat  (RAG, #keywords)         │
-    │ VS Code Copilot                 │   │ Files & Folders   (SharePoint-│
-    │ Microsoft Copilot Studio        │   │                    like)      │
-    │ ChatGPT                         │   │ Connectors        (Postman /  │
-    │ Claude Desktop                  │   │                    OpenAPI)   │
+    │ Claude Desktop                  │   │ Chat  (RAG, #keywords)         │
+    │ Claude Code                     │   │ Files & Folders   (SharePoint-│
+    │ ChatGPT                         │   │                    like)      │
+    │ IDE MCP extensions              │   │ Connectors        (Postman /  │
+    │ Agent frameworks                │   │                    OpenAPI)   │
     │ Any MCP Client                  │   └──────────────┬────────────────┘
     └──────────────┬──────────────────┘                  │
                    │                                     │
@@ -185,7 +185,7 @@ separate from business logic (`services/`, `repositories/`) so services can be r
   integrations.
 - **MCP authorization spec** — OAuth 2.1 with PKCE, protected-resource metadata (RFC 9728),
   authorization-server discovery, and dynamic client registration, so off-the-shelf AI clients (Claude,
-  ChatGPT, Copilot Studio) connect without custom configuration.
+  ChatGPT, IDE MCP extensions) connect without custom configuration.
 - **JWT** — validated on every MCP request; carries the user identity used for ACL-filtered retrieval and
   per-user authorization.
 - **API Keys** — for service-to-service and headless AI-client integrations.
@@ -531,7 +531,7 @@ checklist per phase lives in `plan.md`.
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Client as AI Client (Copilot / ChatGPT / Claude / …)
+    actor Client as AI Client (Claude / ChatGPT / IDE extension / …)
     participant MCP as Java MCP Server (Spring Boot 3)
     participant AUTH as Auth & Authorization
     participant RAG as RAG Engine (pgvector + BM25 + reranker)

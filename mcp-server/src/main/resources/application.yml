@@ -59,6 +59,17 @@ connectors:
   # means webhook registration is skipped and every connection relies on delta polling only.
   webhook-base-url: ""
 
+# Outbound HTTPS trust for internal APIs.
+# Java normally uses its bundled CA store, not Windows Trusted Root Certification Authorities.
+# On Windows the OS root store is added automatically. For a CA that is not installed there,
+# set MCP_TLS_CA_CERTIFICATE_PATHS to one or more comma-separated PEM/DER certificate files.
+# MCP_TLS_DISABLE_VERIFY=true is an emergency Postman-style bypass; never use it in production.
+http:
+  tls:
+    use-windows-root-store: true
+    ca-certificate-paths: ${MCP_TLS_CA_CERTIFICATE_PATHS:}
+    disable-certificate-validation: ${MCP_TLS_DISABLE_VERIFY:false}
+
 logging:
   level:
     com.mcpserver: INFO
