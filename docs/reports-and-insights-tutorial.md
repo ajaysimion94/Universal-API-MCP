@@ -18,11 +18,10 @@ mvn package && java -jar target/mcp-server.jar
 # then open http://127.0.0.1:8080
 ~~~
 
-During development use two terminals and open http://localhost:5173 instead:
+During development run the single Spring Boot process and open http://127.0.0.1:8080:
 
 ~~~sh
-cd mcp-server && mvn spring-boot:run -Dskip.frontend=true
-cd mcp-server/webui && npm run dev
+cd mcp-server && mvn spring-boot:run
 ~~~
 
 You do **not** need the vector store, embedding model, or SearXNG for insights — those are for

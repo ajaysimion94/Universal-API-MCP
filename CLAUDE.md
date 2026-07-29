@@ -4,8 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-An enterprise MCP (Model Context Protocol) server — Java 21 / Spring Boot 3.3.4 backend with a
-first-party React + TypeScript SPA. Currently implements: a SharePoint-like files & folders
+An enterprise MCP (Model Context Protocol) server — Java 17+ / Spring Boot 3.3.4 backend with a
+browser-native HTML/CSS/JavaScript Web UI. Currently implements: a SharePoint-like files & folders
 manager, RAG search over ingested content (embedded SQLite + sqlite-vec + in-process ONNX
 embeddings), a Confluence/Jira ingestion connectors subsystem, and an optional web-search toggle
 (SearXNG). `mcp-server/` is the only buildable module — one Maven build produces backend + frontend
@@ -30,22 +30,15 @@ current phase status before starting new feature work.
 # build + run everything (one JAR, serves SPA + API on :8080)
 cd mcp-server && mvn package && java -jar target/mcp-server.jar
 
-# dev mode — two terminals, open http://localhost:5173 (NOT :8080)
-cd mcp-server && mvn spring-boot:run -Dskip.frontend=true     # terminal 1: backend on :8080
-cd mcp-server/webui && npm install && npm run dev             # terminal 2: Vite HMR on :5173
+# dev mode — one process, open http://127.0.0.1:8080
+cd mcp-server && mvn spring-boot:run
 
 # backend tests
 cd mcp-server && mvn test
 cd mcp-server && mvn test -Dtest=FileServiceTests                                     # one class
 cd mcp-server && mvn test -Dtest=FileServiceTests#canUploadFileAndItAppearsAsAChild    # one method
-cd mcp-server && mvn -Dskip.frontend=true -q compile           # fastest compile-only check
-
-# frontend
-cd mcp-server/webui && npm run typecheck    # tsc -b --noEmit — the only frontend gate, no test runner configured
-cd mcp-server/webui && npm run build        # tsc -b && vite build
-
-# fast backend-only loop (skip SPA rebuild — there is no static/index.html without it, UI 404s)
-cd mcp-server && mvn package -Dskip.frontend=true
+cd mcp-server && mvn -q compile
+cd mcp-server && mvn package -Dskip.bundle=true
 ```
 
 Notes:
@@ -56,8 +49,8 @@ Notes:
   unique per run (e.g. embed a UUID in the content) rather than assuming a clean DB — accumulated
   data across runs can push a test's own rows out of a small `topK` result window. For a genuinely
   clean slate: `rm -f mcp-server/data/mcpserver.db`.
-- TypeScript is strict (`noUnusedLocals`, `noUnusedParameters`, `noFallthroughCasesInSwitch`) —
-  unused imports/vars fail the build. Fix them; don't disable the rule.
+- The UI has no framework or build step. Keep API calls in `static/api.js`, shared DOM safety and
+  icons in `static/ui.js`, and route controllers under `static/pages/`.
 
 ## Architecture
 
@@ -149,22 +142,21 @@ reserves a `SHAREPOINT` slot, not implemented). Key pieces:
   returns 202 immediately — actual processing happens on `EventQueueWorker`'s thread, which is what
   keeps intake within a 3-second ack SLA regardless of processing time.
 
-### Frontend (`mcp-server/webui/`)
+### Frontend (`mcp-server/src/main/resources/static/`)
 
-- Single-fetch-layer convention: all API calls in `src/api.ts`, all icons (inline SVG, 16px,
-  `currentColor`) in `src/icons.tsx` — don't `fetch()` directly in components or pull an icon
+- Single-fetch-layer convention: all API calls in `api.js`, all icons and HTML escaping in
+  `ui.js` — don't `fetch()` directly in page modules or pull an icon
   library.
 - CSS split: `styles.css` (OKLCH design tokens, dark theme, amber accent) + `components.css`
   (component styles) — use the tokens, don't hardcode colors. Design direction is refined
   utilitarian / anti-AI-slop (no glow, no gradient text, no glassmorphism) — `.impeccable.md` has
   the full context.
-- Routing is client-side (`react-router-dom`) but **every route also needs a server-side forward**
+- Routing uses the browser History API, but **every route also needs a server-side forward**
   in `WebMvcConfig` (see above) for direct navigation/refresh to work — a real bug from this exact
   gap: `/connections` 404'd on direct load until added there, despite working fine via in-app
   navigation.
-- The SPA ships inside the JAR: `mvn package` runs `frontend-maven-plugin` (Node/npm install +
-  `npm run build` in `webui/`), then copies `webui/dist/` into
-  `src/main/resources/static/` → `BOOT-INF/classes/static/` in the final JAR.
+- Maven includes `src/main/resources/static/` directly in `BOOT-INF/classes/static/`; there is no
+  Node/npm install, transpile, bundle, or resource-copy phase.
 
 ## Hard constraints (don't violate without an explicit phase change)
 

@@ -17,8 +17,8 @@ cd mcp-server
 mvn package && java -jar target/mcp-server.jar     # http://127.0.0.1:8080
 ~~~
 
-One JAR serves the API, the MCP endpoint, and the SPA. In development, run the backend and Vite
-separately and use http://localhost:5173 (see [`developer-guide.md`](developer-guide.md)).
+One JAR serves the API, MCP endpoint, and browser-native Web UI. In development, run Spring Boot
+and use http://127.0.0.1:8080 (see [`developer-guide.md`](developer-guide.md)).
 
 The server binds to `127.0.0.1` on purpose. There is no authentication yet — it lands in Phase 6
 together with ACL enforcement — so treat the app as a single-trust-boundary local tool and do not
@@ -263,7 +263,7 @@ Two prompts are published for orientation and task execution: `orient-to-enterpr
 | A write executes nothing | It is waiting on confirmation | Approve the preview; tokens are single-use and expire. |
 | An MCP client sees a stale tool | Tool list cached client-side | Call `tools/list` again. |
 | A deep route 404s from the JAR | SPA route has no server-side forward | Add it to `WebMvcConfig` and rebuild the frontend. |
-| Vite UI shows "connecting" forever | Backend not running on 127.0.0.1:8080 | Start `mvn spring-boot:run`. |
+| UI shows "connecting" forever | Backend not running on 127.0.0.1:8080 | Start `mvn spring-boot:run`. |
 
 ---
 

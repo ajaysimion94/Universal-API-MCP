@@ -14,7 +14,7 @@ High-signal notes for AI coding sessions in this repo. Read this before modifyin
 
 ## Project overview
 
-An enterprise MCP (Model Context Protocol) server with a first-party React/TypeScript Web UI.
+An enterprise MCP (Model Context Protocol) server with a browser-native HTML/CSS/JavaScript Web UI.
 It exposes:
 
 - A **files & folders manager** (SharePoint-like upload + folder tree).
@@ -29,7 +29,7 @@ The project is currently in **Phase 1** per `README.md`, with Phase 2 knowledge/
 ## Technology stack
 
 - **Backend:** Java 17+ bytecode/API baseline, Spring Boot 3.3.4, Maven 3.9+
-- **Frontend:** React 18, TypeScript 5.6, Vite 5.4, Node 20+ (built on Node 24 / npm 11)
+- **Frontend:** semantic HTML, CSS, and browser-native JavaScript ES modules; no Node/npm toolchain
 - **Database:** embedded SQLite via `org.xerial:sqlite-jdbc:3.46.1.3`, WAL mode, `SingleConnectionDataSource`
 - **Vector search:** sqlite-vec 0.1.9 (loadable extension)
 - **Lexical search:** SQLite FTS5 (built in)
@@ -46,43 +46,27 @@ No external database, Docker, or Kubernetes is required for the current phase.
 From `mcp-server/`:
 
 ```sh
-# Full build: backend + SPA + bundled model/native libs/searxng source (~390MB JAR)
+# Full build: backend + static UI + bundled model/native libs/searxng source (~390MB JAR)
 mvn package
 
 # Run the single runnable JAR (serves SPA + API on http://127.0.0.1:8080)
 java -jar target/mcp-server.jar
 
-# Fast backend-only loop (skip frontend build; UI 404s unless static/ was built once)
-mvn package -Dskip.frontend=true
-mvn spring-boot:run -Dskip.frontend=true
+# Development server (API + UI on the same origin)
+mvn spring-boot:run
 
 # Skip downloading/bundling model + sqlite-vec + searxng source (uses already-extracted files)
 mvn package -Dskip.bundle=true
 
 # Compile check only
-mvn -Dskip.frontend=true -q compile
+mvn -q compile
 
 # Backend tests
 mvn test
 mvn test -Dtest=FileServiceTests#canUploadFileAndItAppearsAsAChild
 ```
 
-From `mcp-server/webui/`:
-
-```sh
-npm install
-npm run dev        # Vite dev server on http://localhost:5173, proxies /api → 127.0.0.1:8080
-npm run build      # tsc -b && vite build → dist/
-npm run typecheck  # tsc -b --noEmit
-npm run preview    # preview the production build
-```
-
-Dev mode uses **two terminals:**
-
-1. `cd mcp-server && mvn spring-boot:run -Dskip.frontend=true`
-2. `cd mcp-server/webui && npm run dev`
-
-Open **http://localhost:5173** (not 8080) in dev mode.
+Open **http://127.0.0.1:8080**. Static UI changes appear after a browser refresh.
 
 ## Project layout
 
@@ -113,25 +97,13 @@ Open **http://localhost:5173** (not 8080) in dev mode.
 │   ├── src/main/resources/
 │   │   ├── application.yml
 │   │   ├── schema.sql            # chunks, connections, ingestion_events, api_tools
-│   │   └── static/               # SPA build output (populated by Maven)
-│   ├── src/test/java/com/mcpserver/
-│   └── webui/                    # React + TypeScript SPA
-│       ├── package.json
-│       ├── vite.config.ts
-│       ├── tsconfig.json
-│       └── src/
-│           ├── main.tsx          # imports styles.css + components.css
-│           ├── api.ts            # all fetch logic
-│           ├── icons.tsx         # inline SVG icons
-│           ├── App.tsx           # routes
-│           ├── styles.css        # design tokens
-│           ├── components.css    # component styles
-│           └── components/       # SearchPage, FilesPage, PluginsPage, ConnectionsPage, etc.
+│   │   └── static/               # UI source: index, ES modules, CSS, page controllers
+│   └── src/test/java/com/mcpserver/
 ```
 
 ## Main modules and responsibilities
 
-- **`config/`** — Spring configuration. `DatasourceConfig` creates an embedded SQLite `SingleConnectionDataSource` with extensions enabled and WAL mode; `WebMvcConfig` forwards SPA routes and allows the Vite dev origin.
+- **`config/`** — Spring configuration. `DatasourceConfig` creates an embedded SQLite `SingleConnectionDataSource` with extensions enabled and WAL mode; `WebMvcConfig` forwards browser routes.
 - **`controllers/`** — REST adapters only; no business logic. `FileController` (`/api/files`), `SearchController` (`/api/search`).
 - **`services/`** — Reusable business logic: `FileService`, `IngestionService`, `SearchService`, `IngestionProgressTracker`.
 - **`repositories/`** — `InMemoryFileRepository` (file tree, resets on restart), `ChunkRepository` (SQLite JDBC for chunks/FTS/vector).
@@ -153,12 +125,12 @@ Open **http://localhost:5173** (not 8080) in dev mode.
 
 ## Frontend conventions
 
-- **TypeScript is strict.** `noUnusedLocals`, `noUnusedParameters`, `noFallthroughCasesInSwitch`, and `noUncheckedSideEffectImports` are enabled. Unused imports/vars **fail the build**.
-- **API calls live in `src/api.ts`.** Components import functions; do not call `fetch` directly from components.
-- **Icons live in `src/icons.tsx`.** Inline SVG, 16px default, `currentColor`. Do not add an icon library.
+- **API calls live in `static/api.js`.** Page modules use it; do not call `fetch` directly from pages.
+- **Shared DOM utilities and icons live in `static/ui.js`.** Escape dynamic text before inserting it into HTML templates.
+- **Routes live in `static/app.js`; pages export `mount()` from `static/pages/`.** Return cleanup functions for timers/listeners.
 - **CSS is split:** `styles.css` holds OKLCH design tokens + base reset; `components.css` holds component styles. Use the tokens; do not hardcode colors.
 - **Design direction:** refined utilitarian, dark theme, amber accent. Fonts: Hanken Grotesk (UI) and JetBrains Mono (paths/IDs/metadata). See `.impeccable.md` for the full anti-reference list (no gradient text, glassmorphism, glow, side-stripe borders).
-- **Routes (`App.tsx`):** `/` search, `/files` files & folders, `/plugins` plugins, `/connections` connectors console, `/apps` app directory + custom groups. Deep routes are forwarded to `index.html` by `WebMvcConfig`.
+- **Routes (`static/app.js`):** `/` search, `/files`, `/plugins`, `/connections`, `/apps`, `/insights`, `/guide`. Deep routes are forwarded by `WebMvcConfig`.
 
 ## Testing
 
@@ -166,12 +138,12 @@ Open **http://localhost:5173** (not 8080) in dev mode.
 cd mcp-server && mvn test
 cd mcp-server && mvn test -Dtest=FileServiceTests#canUploadFileAndItAppearsAsAChild
 ./scripts/run-eval.sh
-cd mcp-server/webui && npm run typecheck
+cd mcp-server && mvn package -Dskip.bundle=true
 ```
 
 - Backend: JUnit 5 + Spring Boot Test + AssertJ. `@SpringBootTest` boots the full context (ONNX + SQLite) and takes ~7s per test class.
 - Tests use an isolated in-memory SQLite database and do not modify `mcp-server/data/mcpserver.db`.
-- Frontend: no test runner is configured yet; `npm run typecheck` is the only gate.
+- Frontend: no generated bundle; verify packaged resources and smoke the served routes.
 
 Key backend test classes:
 
@@ -183,7 +155,7 @@ Key backend test classes:
 
 ## Runtime architecture and deployment
 
-- **Single runnable JAR.** `mvn package` bundles the React SPA into `BOOT-INF/classes/static/` and downloads/extracts the embedding + cross-encoder ONNX models, per-platform sqlite-vec libs, and SearXNG source snapshot into the JAR (sha256-verified, cached under `~/.m2/.cache/mcp-server-bundle`).
+- **Single runnable JAR.** `mvn package` includes browser-native static resources directly and downloads/extracts the embedding + cross-encoder ONNX models, per-platform sqlite-vec libs, and SearXNG source snapshot into the JAR.
 - **Embedded SQLite** at `./data/mcpserver.db`; no external database is required.
 - **Plugins page (`/plugins`)** installs/enables local infrastructure: vector store, embedding model, and optional SearXNG. The app boots in degraded mode (file management works, search/ingestion report "not ready") when plugins are missing.
 - **Default bind:** `server.address=127.0.0.1`, `server.port=8080` — trusted internal network only until Phase 6.
@@ -222,8 +194,8 @@ Do not violate these without an explicit project decision recorded in `DECISIONS
 ## Common gotchas
 
 - If the dev UI hangs on "connecting…", the backend is not running on `127.0.0.1:8080`.
-- A 404 on a deep UI route means the SPA was not bundled (you likely ran with `-Dskip.frontend=true` and `static/index.html` does not exist). Run `mvn package` once or use the Vite dev server.
-- TypeScript build failures on unused imports are intentional — remove the symbol; do not disable the rule.
+- A 404 on a deep UI route means its explicit `WebMvcConfig` forward is missing.
+- A module 404 means its import path or file under `resources/static` is wrong.
 - If the local app has stale chunks, stop it and delete `mcp-server/data/mcpserver.db` only when you intentionally want to reset all local app data.
 - Orphaned chunks may remain across restarts because `InMemoryFileRepository` resets while SQLite persists; delete the DB if needed.
 

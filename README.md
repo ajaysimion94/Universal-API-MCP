@@ -1,7 +1,7 @@
 # MCP Server
 
 An enterprise MCP (Model Context Protocol) server — Java 17+ / Spring Boot 3 backend with a first-party
-React + TypeScript Web UI. Files & folders manager, RAG search over uploaded documents (embedded
+browser-native HTML/CSS/JavaScript Web UI. Files & folders manager, RAG search over uploaded documents (embedded
 SQLite + sqlite-vec + in-process ONNX embeddings and cross-encoder reranking), and contextual
 web research through an optional SearXNG toggle.
 Currently in **Phase 1** per [`docs/plan.md`](docs/plan.md).
@@ -18,18 +18,16 @@ Currently in **Phase 1** per [`docs/plan.md`](docs/plan.md).
 # build + run everything (one JAR, serves SPA + API on :8080)
 cd mcp-server && mvn package && java -jar target/mcp-server.jar
 
-# dev mode — two terminals (open http://localhost:5173, not 8080)
-cd mcp-server && mvn spring-boot:run -Dskip.frontend=true     # terminal 1: backend
-cd mcp-server/webui && npm install && npm run dev             # terminal 2: frontend (HMR)
+# dev mode — one process; static UI changes are available after a browser refresh
+cd mcp-server && mvn spring-boot:run
 
-# fast loops
+# verification
 cd mcp-server && mvn test                                     # backend tests
 ./scripts/run-eval.sh                                         # 50-query P@1/MRR/nDCG gate
-cd mcp-server && mvn package -Dskip.frontend=true             # build JAR, skip SPA rebuild
-cd mcp-server/webui && npm run typecheck                      # frontend type check
+cd mcp-server && mvn -q compile                               # fast compile + static resource copy
 ```
 
-Open **http://127.0.0.1:8080** (JAR) or **http://localhost:5173** (dev mode). Search is the landing
+Open **http://127.0.0.1:8080**. Search is the landing
 page; files & folders is at `/files`; plugins is at `/plugins`.
 
 ---
@@ -64,12 +62,12 @@ All dependencies are embedded in the JAR or downloaded on demand via the **Plugi
 
 | Component | How it works |
 | --- | --- |
-| **Java 17+ / Maven / Node 20+ / npm** | Java 17 is the compiled baseline; JDK 17, 20, 21, and newer can build and run the same JAR. Install via your preferred method (Homebrew / apt / dnf / winget / SDKMAN / nvm). |
+| **Java 17+ / Maven 3.9+** | Java 17 is the compiled baseline; JDK 17, 20, 21, and newer can build and run the same JAR. No Node.js or npm installation is required. |
 | **SQLite + sqlite-vec** | Embedded in the JAR via `org.xerial:sqlite-jdbc`. The sqlite-vec native extension (~1-2MB) is downloaded by the Plugins page per OS/arch. |
 | **Nomic embedding + MiniLM reranker ONNX models** | Bundled into the JAR with verified hashes, extracted locally on first boot, and run in-process. ONNX Runtime auto-loads the right native library per platform. |
 | **SearXNG (web toggle)** | Native Python process managed by the Plugins page. Requires Python 3.10+ installed on the system. |
 | **Shell syntax** | macOS/Linux: bash. Windows: PowerShell or cmd. The app commands are identical. |
 | **`application.yml` / `schema.sql` / REST API / SPA** | Identical on every OS. |
 
-**Rule of thumb:** install Java/Maven/Node, then `mvn package && java -jar target/mcp-server.jar`
+**Rule of thumb:** install Java and Maven, then `mvn package && java -jar target/mcp-server.jar`
 works the same everywhere. Go to `/plugins` to install what you need.

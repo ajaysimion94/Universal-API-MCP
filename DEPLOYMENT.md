@@ -34,8 +34,6 @@ The server binds to `127.0.0.1` only — trusted internal network, no auth yet (
 | --- | --- | --- |
 | Java (JDK) | 17+ (17, 20, and 21 supported) | `java -version` |
 | Maven | 3.9+ | `mvn -version` |
-| Node.js | 20+ (built and tested on 24) | `node -v` |
-| npm | 10+ | `npm -v` |
 | Python | 3.10+ | `python3 --version` (only for SearXNG / web toggle) |
 | Visual C++ x64 Redistributable | Latest v14 (Windows only) | Required by ONNX Runtime for semantic search |
 
@@ -83,7 +81,7 @@ swapping and very slow ingestion. On such machines:
 
 ```sh
 cd mcp-server
-mvn package                          # builds JAR + SPA + bundles model/native libs/searxng source (~390MB jar)
+mvn package                          # builds JAR + static UI + bundles model/native libs/searxng source (~390MB jar)
 java -jar target/mcp-server.jar      # serves SPA + API on http://127.0.0.1:8080
 ```
 
@@ -94,13 +92,8 @@ bundling for fast dev loops (the app then relies on already-extracted `models/` 
 Open **http://127.0.0.1:8080** — the universal search page (landing). Files & folders is at **/files**.
 Plugins is at **/plugins**.
 
-To run the backend without rebuilding the SPA (fast):
-
-```sh
-cd mcp-server
-mvn package -Dskip.frontend=true
-java -jar target/mcp-server.jar      # API works; UI 404s unless SPA was built once before
-```
+The browser-native frontend lives in `src/main/resources/static`; Maven includes it through normal
+resource processing. There is no separate frontend build and no `-Dskip.frontend` mode.
 
 ---
 
@@ -237,9 +230,8 @@ Use `#tool_name` or `@app #tool_name` in the composer to invoke imported tools d
   `--server.port=8081`.
 - **Web toggle shows "web results unavailable"** — SearXNG isn't running on `127.0.0.1:8888`. Start
   it from the Plugins page.
-- **404 on a deep UI route** — only happens if the SPA wasn't bundled (you ran with
-  `-Dskip.frontend=true` and there's no `static/index.html`). Build the frontend once with
-  `mvn package`, or use the Vite dev server (see [`DEVELOPMENT.md`](DEVELOPMENT.md)).
+- **404 on a deep UI route** — verify that the route has an explicit forward in
+  `WebMvcConfig` and that `src/main/resources/static/index.html` is present.
 - **Tests leave stale chunks in the DB** — `@SpringBootTest` writes to the SQLite DB. Delete
   `mcp-server/data/mcpserver.db` for a clean run.
 

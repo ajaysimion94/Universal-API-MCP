@@ -136,7 +136,7 @@ is revisited in Phase 5 only if the constraint is lifted.
 | Monitoring | OpenTelemetry + Prometheus + Grafana | Tracing + metrics for routing, retrieval, reranking, workflow steps, and MCP calls. |
 | Logging | Loki or ELK | Centralized structured logs correlated with traces. |
 | API docs | OpenAPI / Swagger | Generated REST surface docs for admin/management endpoints. |
-| Web UI | React + TypeScript SPA, built to static assets and served from the Spring Boot JAR | Files & folders manager, connectors console, universal search with `#keyword` actions — no separate web server process (native-only constraint). |
+| Web UI | Browser-native HTML/CSS/JavaScript ES modules served directly from the Spring Boot JAR | Files & folders manager, connectors console, universal search with `#keyword` actions — no frontend toolchain or separate web server process. |
 | Transport | MCP over Streamable HTTP | Open standard; runtime tool mutation. (SSE transport is deprecated in the MCP spec.) |
 
 ## 4. Project Structure
@@ -165,7 +165,7 @@ mcp-server/
 ├── audit/
 ├── cache/
 ├── monitoring/
-└── webui/          (React SPA source — built into the JAR's static resources)
+└── src/main/resources/static/  (browser-native Web UI source — included directly in the JAR)
 ```
 
 Each top-level directory is an independently testable module. MCP protocol handling (`mcp/`) is kept

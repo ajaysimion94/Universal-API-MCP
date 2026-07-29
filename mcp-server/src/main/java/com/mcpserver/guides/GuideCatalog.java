@@ -182,16 +182,17 @@ public class GuideCatalog {
                     "The everyday build, test, and troubleshooting commands for maintainers.",
                     "Developers",
                     List.of(
-                            section("Run in development", "Use two terminals: Spring Boot for the API and Vite for the SPA. "
-                                            + "Open the Vite address during UI work so changes hot-reload.",
-                                    List.of("Start the backend on port 8080.", "Start Vite on port 5173.",
-                                            "Open http://localhost:5173."),
-                                    "cd mcp-server && mvn spring-boot:run -Dskip.frontend=true\ncd mcp-server/webui && npm run dev", null),
-                            section("Verify before handoff", "The backend test suite and frontend typecheck are the required baseline. "
-                                            + "Build the JAR when static assets or packaging changed.",
-                                    List.of("Run mvn test.", "Run npm run typecheck.",
-                                            "Run mvn package for a complete artifact check."),
-                                    "cd mcp-server && mvn test\ncd mcp-server/webui && npm run typecheck", null),
+                            section("Run in development", "Spring Boot serves the API, MCP endpoint, and browser-native Web UI "
+                                            + "from one process. Static HTML, CSS, and JavaScript changes appear after a browser refresh.",
+                                    List.of("Start Spring Boot on port 8080.",
+                                            "Open http://127.0.0.1:8080.",
+                                            "Refresh the browser after a static UI edit."),
+                                    "cd mcp-server && mvn spring-boot:run", null),
+                            section("Verify before handoff", "The Maven test suite and complete JAR build are the required baseline. "
+                                            + "The frontend has no generated bundle or Node dependency.",
+                                    List.of("Run mvn test.", "Run mvn package -Dskip.bundle=true for a fast artifact check.",
+                                            "Smoke the served routes in a browser."),
+                                    "cd mcp-server && mvn test\ncd mcp-server && mvn package -Dskip.bundle=true", null),
                             section("Keep guides current", "The long-form developer and MCP-client guides live in docs/. The in-app guide and "
                                             + "MCP resources are generated from this catalog so people and MCP clients receive the same active workflow.",
                                     List.of("Update the relevant Markdown guide for durable detail.",

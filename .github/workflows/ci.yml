@@ -17,7 +17,10 @@ jobs:
           cache: maven
       - name: Backend tests and retrieval quality gate
         working-directory: mcp-server
-        run: mvn -Dskip.frontend=true -Deval.run.id=ci-${{ github.run_id }} test
+        run: mvn -Deval.run.id=ci-${{ github.run_id }} test
+      - name: Package browser-native UI and server
+        working-directory: mcp-server
+        run: mvn -Dskip.bundle=true -DskipTests package
       - name: Upload golden-set report
         if: always()
         uses: actions/upload-artifact@v4
@@ -25,18 +28,3 @@ jobs:
           name: retrieval-evaluation
           path: eval-runs/
           if-no-files-found: error
-
-  frontend:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: mcp-server/webui/package-lock.json
-      - working-directory: mcp-server/webui
-        run: npm ci --include=dev
-      - working-directory: mcp-server/webui
-        run: npm run typecheck

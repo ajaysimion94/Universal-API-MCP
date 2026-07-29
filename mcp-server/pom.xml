@@ -21,10 +21,6 @@
         <!-- Compile to the Java 17 LTS bytecode/API baseline. The resulting JAR runs on
              Java 17 and newer runtimes, including Java 20 and Java 21. -->
         <java.version>17</java.version>
-        <node.version>v24.12.0</node.version>
-        <npm.version>11.16.0</npm.version>
-        <frontend.dir>${project.basedir}/webui</frontend.dir>
-        <frontend.build.dir>${frontend.dir}/dist</frontend.build.dir>
         <!-- Skip downloading/bundling model + native libs + searxng source (-Dskip.bundle=true).
              The jar then relies on files already extracted on disk (dev loops only). -->
         <skip.bundle>false</skip.bundle>
@@ -153,92 +149,10 @@
 
     <build>
         <finalName>mcp-server</finalName>
-        <pluginManagement>
-            <plugins>
-                <!-- Eclipse m2e (also used by VS Code's Java tooling) must not run the
-                     production Node/npm pipeline during incremental Java workspace builds.
-                     This mapping is IDE-only; command-line Maven still runs every frontend
-                     execution during `mvn package`. -->
-                <plugin>
-                    <groupId>org.eclipse.m2e</groupId>
-                    <artifactId>lifecycle-mapping</artifactId>
-                    <version>1.0.0</version>
-                    <configuration>
-                        <lifecycleMappingMetadata>
-                            <pluginExecutions>
-                                <pluginExecution>
-                                    <pluginExecutionFilter>
-                                        <groupId>com.github.eirslett</groupId>
-                                        <artifactId>frontend-maven-plugin</artifactId>
-                                        <versionRange>[1.15.1,1.16.0)</versionRange>
-                                        <goals>
-                                            <goal>install-node-and-npm</goal>
-                                            <goal>npm</goal>
-                                        </goals>
-                                    </pluginExecutionFilter>
-                                    <action>
-                                        <ignore/>
-                                    </action>
-                                </pluginExecution>
-                            </pluginExecutions>
-                        </lifecycleMappingMetadata>
-                    </configuration>
-                </plugin>
-            </plugins>
-        </pluginManagement>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
-            </plugin>
-
-            <!-- Build the React SPA and copy its dist/ into the JAR's static resources.
-                 Skippable with -Dskip.frontend=true for fast backend loops. -->
-            <plugin>
-                <groupId>com.github.eirslett</groupId>
-                <artifactId>frontend-maven-plugin</artifactId>
-                <version>1.15.1</version>
-                <configuration>
-                    <workingDirectory>${frontend.dir}</workingDirectory>
-                    <!-- Keep node out of target/ so `mvn clean` doesn't force a re-download -->
-                    <installDirectory>${frontend.dir}</installDirectory>
-                </configuration>
-                <executions>
-                    <execution>
-                        <id>install-node-and-npm</id>
-                        <goals>
-                            <goal>install-node-and-npm</goal>
-                        </goals>
-                        <configuration>
-                            <nodeVersion>${node.version}</nodeVersion>
-                            <npmVersion>${npm.version}</npmVersion>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>npm-install</id>
-                        <goals>
-                            <goal>npm</goal>
-                        </goals>
-                        <configuration>
-                            <arguments>ci --include=dev</arguments>
-                            <!-- devDependencies (vite, tsc) are required to build; override any
-                                 machine-level NODE_ENV=production that would prune them -->
-                            <environmentVariables>
-                                <NODE_ENV>development</NODE_ENV>
-                            </environmentVariables>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>npm-build</id>
-                        <goals>
-                            <goal>npm</goal>
-                        </goals>
-                        <phase>generate-resources</phase>
-                        <configuration>
-                            <arguments>run build</arguments>
-                        </configuration>
-                    </execution>
-                </executions>
             </plugin>
 
             <!-- Bundle the embedding model, per-platform sqlite-vec libs, and the SearXNG
@@ -367,71 +281,6 @@
                 </executions>
             </plugin>
 
-            <!-- Copy the built SPA into static resources so it ships inside the runnable JAR. -->
-            <plugin>
-                <artifactId>maven-resources-plugin</artifactId>
-                <executions>
-                    <execution>
-                        <id>copy-frontend</id>
-                        <phase>process-resources</phase>
-                        <goals>
-                            <goal>copy-resources</goal>
-                        </goals>
-                        <configuration>
-                            <outputDirectory>${project.build.outputDirectory}/static</outputDirectory>
-                            <resources>
-                                <resource>
-                                    <directory>${frontend.build.dir}</directory>
-                                    <filtering>false</filtering>
-                                </resource>
-                            </resources>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
         </plugins>
     </build>
-
-    <profiles>
-        <profile>
-            <id>skip-frontend</id>
-            <activation>
-                <property>
-                    <name>skip.frontend</name>
-                    <value>true</value>
-                </property>
-            </activation>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>com.github.eirslett</groupId>
-                        <artifactId>frontend-maven-plugin</artifactId>
-                        <executions>
-                            <execution>
-                                <id>install-node-and-npm</id>
-                                <phase>none</phase>
-                            </execution>
-                            <execution>
-                                <id>npm-install</id>
-                                <phase>none</phase>
-                            </execution>
-                            <execution>
-                                <id>npm-build</id>
-                                <phase>none</phase>
-                            </execution>
-                        </executions>
-                    </plugin>
-                    <plugin>
-                        <artifactId>maven-resources-plugin</artifactId>
-                        <executions>
-                            <execution>
-                                <id>copy-frontend</id>
-                                <phase>none</phase>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-    </profiles>
 </project>

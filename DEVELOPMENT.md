@@ -1,183 +1,135 @@
 # Development
 
-How to develop the MCP Server — hot reload, project layout, testing, and build internals. For setup
-and running the built JAR, see [`DEPLOYMENT.md`](DEPLOYMENT.md).
+How to develop the MCP Server. For deployment and configuration, see
+[`DEPLOYMENT.md`](DEPLOYMENT.md).
 
-> **Cross-platform:** the commands below work identically on macOS, Linux, and Windows. No
-> OS-specific setup is needed — all dependencies are embedded or downloaded via the Plugins page.
+The project has one build toolchain: Java and Maven. The Web UI is browser-native HTML, CSS, and
+JavaScript under Spring Boot's static resources; Node.js, npm, a transpiler, and a frontend dev
+server are not required.
 
----
-
-## Frequently used dev commands
+## Frequently used commands
 
 ```sh
-# dev mode — two terminals, open http://localhost:5173
-cd mcp-server && mvn spring-boot:run -Dskip.frontend=true     # terminal 1: backend on :8080
-cd mcp-server/webui && npm install && npm run dev             # terminal 2: Vite HMR on :5173
+# run API, MCP endpoint, background workers, and Web UI on :8080
+cd mcp-server
+mvn spring-boot:run
 
-# tests
-cd mcp-server && mvn test                                     # backend JUnit tests
-cd mcp-server/webui && npm run typecheck                      # frontend tsc --noEmit
+# verification
+mvn test
+mvn -q compile
+mvn package -Dskip.bundle=true
 
-# fast backend loop (skip the SPA rebuild)
-cd mcp-server && mvn package -Dskip.frontend=true             # build JAR only
-cd mcp-server && mvn test -Dtest=FileServiceTests#canUploadFileAndItAppearsAsAChild   # single test
+# one backend test
+mvn test -Dtest=FileServiceTests#canUploadFileAndItAppearsAsAChild
 ```
 
----
+Open **http://127.0.0.1:8080**. Static source edits are visible after a browser refresh. Java
+changes are picked up when Spring Boot is restarted.
 
 ## Project layout
 
-```
+```text
 mcp-server/
-├── pom.xml                  # Maven build — backend + frontend bundled into one JAR
-├── models/                  # nomic-embed-text-v1.5 ONNX model + tokenizer (gitignored, ~131MB)
-├── data/                    # SQLite database (gitignored)
-├── lib/                     # sqlite-vec native extension (gitignored, downloaded by plugin)
-├── src/
-│   ├── main/
-│   │   ├── java/com/mcpserver/
-│   │   │   ├── McpServerApplication.java    # Spring Boot entrypoint
-│   │   │   ├── config/                      # WebMvcConfig, DatasourceConfig (SQLite)
-│   │   │   ├── controllers/                 # FileController, SearchController (REST)
-│   │   │   ├── services/                    # FileService, IngestionService, SearchService
-│   │   │   ├── repositories/                # InMemoryFileRepository, ChunkRepository (SQLite)
-│   │   │   ├── models/                      # FileNode, Chunk, BulkUploadResult
-│   │   │   ├── plugins/                     # Plugin system (SqliteVecStore, Nomic, SearXNG)
-│   │   │   └── rag/                         # RAG pipeline (swappable seams)
-│   │   │       ├── chunking/                #   Chunker + StructureAwareChunker
-│   │   │       ├── embedding/               #   EmbeddingClient + OnnxEmbeddingClient (nomic)
-│   │   │       ├── retrieval/               #   SearchPipeline, HybridSearcher, RrfFusion
-│   │   │       ├── reranker/                #   ONNX cross-encoder + semantic fallback
-│   │   │       └── web/                     #   query planner, SearXNG, page fetch, semantic ranking
-│   │   └── resources/
-│   │       ├── application.yml              # config
-│   │       ├── schema.sql                   # chunks table + FTS5 (vec0 created by plugin)
-│   │       └── static/                      # SPA build output lands here (populated by Maven)
-│   └── test/java/com/mcpserver/             # JUnit tests
-└── webui/                  # React + TypeScript SPA (Vite)
-    ├── package.json
-    ├── vite.config.ts      # dev proxy /api → 127.0.0.1:8080
-    └── src/
-        ├── main.tsx        # imports styles.css (tokens) + components.css
-        ├── api.ts          # all fetch logic lives here
-        ├── icons.tsx       # inline SVG icons (16px, currentColor)
-        └── components/     # Topbar, Sidebar, SearchPage, FilesPage, PluginsPage, etc.
+├── pom.xml
+├── models/                         # extracted ONNX models (gitignored)
+├── data/                           # embedded SQLite database (gitignored)
+├── lib/                            # extracted sqlite-vec extension (gitignored)
+└── src/
+    ├── main/
+    │   ├── java/com/mcpserver/
+    │   │   ├── config/             # Spring configuration and SPA route forwards
+    │   │   ├── controllers/        # REST adapters
+    │   │   ├── services/           # reusable application logic
+    │   │   ├── repositories/       # SQLite/in-memory persistence
+    │   │   ├── plugins/            # infrastructure plugins
+    │   │   ├── rag/                # retrieval and web research
+    │   │   ├── connectors/         # Confluence/Jira/API collections
+    │   │   ├── tools/              # imported API tools
+    │   │   └── mcp/                # MCP SDK boundary
+    │   └── resources/
+    │       ├── application.yml
+    │       ├── schema.sql
+    │       └── static/
+    │           ├── index.html      # semantic application shell
+    │           ├── app.js          # History API router and top bar
+    │           ├── api.js          # all browser API calls
+    │           ├── ui.js           # escaping, formatting, SVG icons
+    │           ├── styles.css      # design tokens and reset
+    │           ├── components.css  # component/page styles
+    │           └── pages/          # one ES module per route
+    └── test/java/com/mcpserver/
 ```
 
-Conventions (full detail in [`AGENTS.md`](AGENTS.md)):
-- **Backend:** `services/`/`repositories/` hold reusable business logic; `controllers/` only adapt
-  to REST. Errors: `IllegalArgumentException` → 400, `IllegalStateException` → 409.
-- **Frontend:** TypeScript is strict — unused imports/vars **fail the build**. API calls go in
-  `src/api.ts`, icons in `src/icons.tsx`, colors in `styles.css` (OKLCH tokens, don't hardcode).
-- **Design:** refined utilitarian, dark, amber accent. See [`.impeccable.md`](.impeccable.md).
+## Conventions
 
----
+- Keep business logic in services/repositories and protocol handling in controllers or `mcp/`.
+- Browser API calls belong in `static/api.js`; page modules should not call `fetch` directly.
+- Shared DOM safety, formatting, event delegation, and icons belong in `static/ui.js`.
+- Each route exports `mount(outlet, context)` and returns an optional cleanup function.
+- Dynamic text must pass through `escapeHtml`/`escapeAttr` before entering an HTML template.
+- Use semantic HTML and delegated events. Do not add a framework or a browser-side dependency
+  without an explicit architecture decision.
+- Use the OKLCH tokens in `styles.css`; do not hardcode component colors.
+- Read [`.impeccable.md`](.impeccable.md) before UI work.
 
-## Development mode (hot reload on both sides)
+## Frontend validation
 
-Run the Spring Boot backend and the Vite dev server side by side. The Vite dev server proxies
-`/api/*` to the backend, so you get hot module reload on the UI and live API calls in one window.
-
-### Eclipse and VS Code Java auto-builds
-
-Eclipse m2e, which also powers VS Code's Java project importer, treats workspace builds differently
-from command-line Maven. The POM marks the Node/npm executions as ignored for m2e incremental builds
-so editing Java does not run `npm ci` and a production Vite build. This does not skip the frontend for
-`mvn package`; run that command in a terminal for the complete distributable JAR. After changing or
-pulling the POM, use **Maven: Update Project** in Eclipse or **Java: Clean Java Language Server
-Workspace** in VS Code once to refresh the imported lifecycle.
+The browser executes ES modules directly, so there is no generated bundle or typecheck phase.
+Use the following proportional checks:
 
 ```sh
-# terminal 1 — backend (skips the frontend build so it starts fast)
-cd mcp-server
-mvn spring-boot:run -Dskip.frontend=true
+# optional local syntax check when Node happens to be installed; Node is not a project prerequisite
+find src/main/resources/static -name '*.js' -print0 | xargs -0 -n1 node --check
 
-# terminal 2 — frontend (Vite dev server with HMR)
-cd mcp-server/webui
-npm install
-npm run dev
+# required artifact check; validates resource copying without downloading the large model bundle
+mvn package -Dskip.bundle=true
+
+# then smoke the served UI
+java -jar target/mcp-server.jar
+curl -I http://127.0.0.1:8080/
+curl -I http://127.0.0.1:8080/files
+curl -I http://127.0.0.1:8080/app.js
 ```
 
-Open **http://localhost:5173** (the Vite URL, not 8080). If the UI hangs on "connecting…", the
-backend isn't up on 8080.
+Browser smoke checks should cover every route, the absence of console errors, API error states, and
+at least one mutation flow (for example create/delete a folder). The normal Maven test suite remains
+the backend gate.
 
-> `-Dskip.frontend=true` skips Node/npm install and the Vite build, so the backend loop is seconds
-> instead of tens of seconds. Use it whenever you're iterating on Java only.
+## How the UI ships
 
----
+Spring Boot includes `src/main/resources/static/**` in `BOOT-INF/classes/static/` through Maven's
+normal resource phase. `index.html` is the welcome page. `WebMvcConfig` forwards known browser
+routes such as `/files` and `/connections` to that file, while JavaScript modules and API paths are
+served normally.
 
-## Frontend-only commands
-
-```sh
-cd mcp-server/webui
-npm install        # install deps
-npm run dev        # Vite dev server on :5173
-npm run build      # tsc -b && vite build → webui/dist/
-npm run typecheck  # tsc -b --noEmit (note: script is "typecheck", not "tsc")
-```
-
-No frontend test runner is configured yet — `npm run typecheck` is the only gate.
-
----
-
-## Backend-only commands
+There is no frontend Maven plugin, resource-copy execution, `webui/dist`, or
+`-Dskip.frontend` profile. A clean checkout can build the complete application with only:
 
 ```sh
 cd mcp-server
-mvn test                                     # run all JUnit tests
-mvn test -Dtest=FileServiceTests             # run one test class
-mvn test -Dtest=FileServiceTests#canUploadFileAndItAppearsAsAChild   # run one test method
-mvn package -Dskip.frontend=true             # build JAR without rebuilding the SPA (fast)
-mvn spring-boot:run -Dskip.frontend=true     # run backend without the frontend build
-mvn -Dskip.frontend=true -q compile          # compile only, no tests/package — fastest check
+mvn package
 ```
-
----
 
 ## Testing
 
 ```sh
-cd mcp-server && mvn test              # backend unit/integration tests
-./scripts/run-eval.sh                   # real-model P@1, MRR, nDCG@10 regression gate
-cd mcp-server/webui && npm run typecheck   # frontend type check
+cd mcp-server && mvn test
+./scripts/run-eval.sh
 ```
 
-- Backend: JUnit 5 + Spring Boot Test + AssertJ. `@SpringBootTest` in `FileServiceTests` boots the
-  full context (ONNX model load + SQLite) — tests take ~7s.
-- **Tests use an isolated in-memory SQLite database.** Test fixtures do not touch the developer
-  database at `data/mcpserver.db`.
-- Frontend: no test runner yet; `npm run typecheck` is the only gate.
-- Retrieval: `scripts/run-eval.sh [run-id]` evaluates 50 judged queries through the real Nomic
-  embedding model, vector/lexical ordering, RRF, and the bundled cross-encoder. It writes
-  `eval-runs/<run-id>/report.json` and fails when P@1, MRR, or nDCG@10 falls below the versioned
-  baseline in `eval-harness/golden-set/baseline.json`.
+- `@SpringBootTest` classes boot SQLite and the in-process ML seams and can take several seconds.
+- Tests use isolated SQLite configuration and do not intentionally modify
+  `mcp-server/data/mcpserver.db`.
+- `scripts/run-eval.sh` is the judged retrieval regression gate.
 
----
+## Troubleshooting
 
-## How the SPA ships inside the JAR
-
-`mvn package` runs `frontend-maven-plugin` (installs Node/npm into `target/`, runs `npm ci` +
-`npm run build` in `webui/`), then `maven-resources-plugin` copies `webui/dist/` into
-`src/main/resources/static/` so it lands at `BOOT-INF/classes/static/` in the JAR. Spring Boot serves
-`index.html` as the welcome page; `WebMvcConfig` forwards unknown non-API paths to `index.html` for
-client-side routing.
-
-**If you skip the frontend build** (`-Dskip.frontend=true`), there is no `static/index.html` and the
-UI 404s — either run `mvn package` once, or use the Vite dev server in dev mode.
-
----
-
-## Dev troubleshooting
-
-- **UI hangs on "connecting…" forever in dev mode** — the backend isn't running on `127.0.0.1:8080`,
-  or the Vite proxy in `vite.config.ts` points at the wrong host.
-- **404 on a deep UI route** — only happens if the SPA wasn't bundled (you ran with
-  `-Dskip.frontend=true` and there's no `static/index.html`). Build the frontend once, or use the
-  Vite dev server.
-- **`mvn package` fails on the frontend step** — make sure `node -v` is 20+. The plugin downloads its
-  own Node/npm into `target/` by default, so a system install is only needed for `npm run dev`.
-- **TypeScript build fails on unused imports** — strict mode (`noUnusedLocals`,
-  `noUnusedParameters`) is intentional. Remove the unused symbol; don't disable the rule.
-- **The local app has stale chunks** — stop the app and delete `mcp-server/data/mcpserver.db`
-  only when you intentionally want to reset all local app data.
+- **UI stays on “connecting…”** — Spring Boot is not available at `127.0.0.1:8080`, or the relevant
+  API endpoint failed. Check the server log and browser console.
+- **A deep route returns 404** — add an explicit forward in `WebMvcConfig`.
+- **A module returns 404** — ensure the import uses an absolute or correct relative path and the
+  file exists under `src/main/resources/static`.
+- **A browser reports a syntax error** — run `node --check` when available, then inspect the exact
+  module in the browser console.
+- **Local search contains stale chunks** — stop the app and delete
+  `mcp-server/data/mcpserver.db` only when an intentional full reset is acceptable.

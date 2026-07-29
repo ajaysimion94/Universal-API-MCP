@@ -453,3 +453,31 @@ page-fetch/semantic-ranking contract of the 2026-07-04 web-search decision.
 **Refs:** `rag/reranker/OnnxCrossEncoderReranker.java`; `rag/web/WebSearchService.java`;
 `rag/web/WebQueryPlanner.java`; `plugins/SearXngPlugin.java`; `eval-harness/`;
 `scripts/run-eval.sh`; `.github/workflows/ci.yml`
+
+### 2026-07-29 — Browser-native UI removes the Node toolchain
+
+**Decision:** Replace the React/TypeScript/Vite frontend with semantic HTML, CSS, and browser-native
+JavaScript ES modules under `mcp-server/src/main/resources/static`. Spring Boot serves the source
+files directly. The client uses a small History API router (`app.js`), one API boundary (`api.js`),
+shared escaping/event/icon utilities (`ui.js`), and one controller module per page. Remove the
+`webui/` tree, `frontend-maven-plugin`, frontend resource-copy execution, `-Dskip.frontend` profile,
+Vite-only CORS rule, Node/npm CI job, and Node/npm prerequisites.
+
+The existing refined-utilitarian design tokens and component stylesheet remain the visual source of
+truth. Search history, files and ingestion progress, plugin lifecycle, connectors, API tools and
+groups, request confirmation, saved insights, and the Guide remain first-party browser features.
+The insight editor becomes a native monospace textarea; server-side RQL analysis still supplies
+diagnostics and parameters.
+
+**Why:** The frontend toolchain was the only reason a clean Java build downloaded and ran Node,
+installed a second dependency graph, generated an intermediate bundle, copied that bundle, and
+needed a two-process development loop. The UI does not require server-side rendering or third-party
+component semantics. Modern browsers already provide modules, fetch, the History API, templates,
+forms, SVG, and local storage. Keeping source as shipped resources makes `mvn package` the complete
+build, removes supply-chain and cache surface, and makes local development match the runnable JAR.
+
+**Status:** active; supersedes the 2026-07-04 React/Vite build decision and the frontend portions of
+the 2026-07-29 dashboard/CodeMirror decision.
+
+**Refs:** `mcp-server/src/main/resources/static/`; `mcp-server/pom.xml`;
+`config/WebMvcConfig.java`; `.github/workflows/ci.yml`; `DEVELOPMENT.md`

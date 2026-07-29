@@ -126,7 +126,7 @@ Build checklist:
   - [x] Retrieval slice: 50 judged search queries, P@1/MRR/nDCG@10 report, versioned thresholds, and
     a failing regression gate (`scripts/run-eval.sh`)
   - [ ] Action-query/tool-parameter slice
-- [x] CI pipeline: backend tests + retrieval golden-set regression gate and frontend typecheck on every
+- [x] CI pipeline: backend tests + retrieval golden-set regression gate and browser-native frontend syntax/smoke checks on every
   change (GitHub Actions, no Docker)
 - [ ] Maven build producing a single runnable JAR; scripted **native local stack** — natively installed
   PostgreSQL + pgvector and Jaeger/OTEL collector binaries — with start/stop scripts
@@ -211,8 +211,8 @@ Build checklist:
   (`localStorage`), capped at 25 conversations and 50 turns per conversation, individually
   selectable/deletable, so prior searches stay available instead of being replaced. RAG and web evidence is
   collapsed by default into separate counts; users can expand the evidence and then individual RAG files.
-  `#`/`@` tool invocations remain the pure deterministic action path. React + TypeScript SPA built into
-  the JAR's static resources (no separate web server).
+  `#`/`@` tool invocations remain the pure deterministic action path. Browser-native HTML/CSS/JS
+  lives directly in the JAR's static resources (no Node toolchain or separate web server).
 - [x] Update/delete sync: edits replace chunks in place (same `source_file_id`); deletes purge via
   cascade. True for upload, Confluence, and Jira; SharePoint pending
 - [ ] PII-redaction and retention policies per source, applied before embedding
