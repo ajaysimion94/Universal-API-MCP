@@ -33,8 +33,9 @@ expose it beyond a trusted internal network.
 | Plugins | `/plugins` | Install and run the local search infrastructure. |
 | Connections | `/connections` | Confluence/Jira ingestion and API collection imports. |
 | Apps | `/apps` | Every imported request: enable, test, group, override auth. |
-| Insights | `/insights` | The insight workspace: library, RQL/RQD editor, live view (`/reports` and `/dashboards` redirect here). |
-| Guide | `/guide` | The in-app operating guide, shared with MCP clients. |
+| Insights | `/insights` | The insight workspace: saved-insight library and the last run's view, with the RQL/RQD editor behind **Edit** (`/reports` and `/dashboards` redirect here). |
+| Help | `/help` | Reference topics, shared with MCP clients, plus links to the walkthroughs. Reached from the **?** button in the top bar rather than the main nav; `/guide` redirects here. |
+| Tutorial | `/tutorial` | Step-by-step walkthroughs with a route link and a check for every step. Progress is ticked off locally. |
 
 ---
 
@@ -96,20 +97,50 @@ One input does two different things, and the distinction is syntactic, not a gue
 Only a query **starting** with `@` or `#` is a tool query — a `#` mid-sentence is ordinary text and
 falls through to search untouched. Autocomplete appears as you type either sigil.
 
-### 4.1 What search returns
+### 4.1 Sessions and consecutive requests
+
+A session is a working transcript, not a saved single query. Every search or tool call appends a
+turn and leaves earlier requests and responses visible. This supports flows such as listing todos
+with a GET, inspecting the result, then opening an update tool and sending a PUT without losing the
+list that supplied the ID.
+
+Tool responses have two views:
+
+- **Preview** formats the body according to its content type:
+  - **JSON** — objects become field lists, arrays of objects become tables.
+  - **CSV** — parsed into a table, honouring quoted fields and embedded commas or newlines.
+  - **XML** — re-indented and shown as source.
+  - **HTML** — shown as **source, not rendered**, with the page title and an expandable text
+    extract. An upstream API's markup is never executed inside this page.
+  - **Anything else** — shown verbatim with its line structure intact.
+- **Raw response** preserves the exact response body for copying or debugging.
+
+A body whose content type claims JSON but does not parse falls back to the plain view rather than
+failing. Response bodies are always escaped, whatever the format.
+
+Note that **RQL/Insights reads JSON only** — an XML or CSV endpoint can be called and previewed from
+a session, but cannot back an insight dataset. Ingestion is separate again: a GET marked as a
+knowledge source extracts text from HTML and XML as well as JSON.
+
+When a write tool needs arguments, **Form** uses its imported schema and **Raw body** sends a
+verbatim payload with the selected content type. Path, query, and header arguments remain available
+in raw-body mode. **Preview request** resolves the exact URL, headers, and body without sending it.
+Sessions and their ordered turns persist in this browser until deleted.
+
+### 4.2 What search returns
 
 Cited context, not a generated answer. No prompt, file, or search result is sent to an external
 answer provider; results keep source name, path, excerpt, and score so you can judge the evidence
 yourself. If the excerpts do not answer the question, narrow it with exact terms from the documents.
 
-### 4.2 Web augmentation
+### 4.3 Web augmentation
 
 The **Web** toggle in the composer merges results from the local SearXNG plugin into the current
 query only — web content is never added to the knowledge store. The toggle is disabled until SearXNG
 is installed and running, and a query with web enabled degrades to local evidence if it stops.
 Open the source URL before relying on any web claim.
 
-### 4.3 Approval for write actions
+### 4.4 Approval for write actions
 
 Read requests (GET) execute immediately and return their result. Write requests do not:
 
@@ -121,7 +152,7 @@ Read requests (GET) execute immediately and return their result. Write requests 
 Never reuse a token, and never treat an earlier approval as approval for changed arguments. This rule
 is identical for the web UI and MCP clients — it is the application's core safety contract.
 
-### 4.4 Knowledge export
+### 4.5 Knowledge export
 
 The **export** action in the chat header opens a source picker: choose indexed files and connected
 apps, and the server returns a plain-text export of their chunks
@@ -187,13 +218,24 @@ The Apps page is where imported requests become a governed tool surface.
 Tool availability is live: imports and enablement change the tool list while the server runs, so MCP
 clients should call `tools/list` again rather than trusting a cached list.
 
+In the Search composer, type `@` to open every available app and group, then keep typing to filter
+the list. Selecting a scope advances the composer to `@scope #`; the request list is then limited to
+that app or group's requests and filters with every character typed after `#`. Starting directly
+with `#` searches requests across all apps. Use the arrow keys and Enter to select without leaving
+the keyboard.
+
 ## 7. Insights and reports
 
 Covered in full by the [tutorial](reports-and-insights-tutorial.md) and the
 [reference](query-language-reference.md). The short version:
 
-- The Insights page is a library, an editor, and a live preview. Save as many insights as you want;
-  each stores its document source and reopens ready to re-run.
+- The Insights page opens as a **library on the left and the last result on the right**. It reopens
+  whichever insight you last had open, showing the result of its previous run — so the page starts
+  on answers, not an empty panel. **Edit** reveals the document; **Run insight** fetches fresh data
+  and saves the new result with the insight.
+- A restored result is labelled `Saved result · ran <time>`, and says `Document edited since this
+  run` once you change the source, so old numbers are never mistaken for current ones. Opening an
+  insight never re-runs it on its own.
 - **One insight can span several apps.** Qualify a request with its app (`request "CRM: List
   customers"`), scope a section with `use collection "CRM";`, or leave names bare and let them
   resolve across every connected collection. A name that exists in two apps is reported, not guessed.

@@ -2,8 +2,21 @@ import { api } from "../api.js";
 import { escapeAttr, escapeHtml, icon, message, on } from "../ui.js";
 
 export async function mount(outlet) {
-  const state = { guides: [], selectedId: "start", article: null, loading: true, error: "" };
+  const state = { guides: [], tutorials: [], selectedId: "start", article: null, loading: true, error: "" };
   const abort = new AbortController();
+
+  /** Hands-on walkthroughs are the first thing offered: reference is less useful than a first run. */
+  function tutorialCards() {
+    if (!state.tutorials.length) return "";
+    return `<section class="help-tutorials" aria-labelledby="help-tutorials-title">
+      <h2 id="help-tutorials-title">${icon("route", 15)} Start with a walkthrough</h2>
+      <div class="help-tutorial-grid">${state.tutorials.map((tutorial) => `<a class="help-tutorial-card" href="/tutorial?id=${encodeURIComponent(tutorial.id)}" data-link>
+        <strong>${escapeHtml(tutorial.title)}</strong>
+        <p>${escapeHtml(tutorial.summary)}</p>
+        <span class="help-tutorial-meta mono">${tutorial.steps} steps · ${escapeHtml(tutorial.duration)}</span>
+      </a>`).join("")}</div>
+    </section>`;
+  }
 
   function article() {
     if (!state.article) return '<div class="guide-article-skeleton" aria-label="Loading guide article"><span></span><span></span><span></span><span></span><span></span></div>';
@@ -13,8 +26,9 @@ export async function mount(outlet) {
 
   function render() {
     outlet.innerHTML = `<section class="guide-page" aria-labelledby="guide-page-title">
-      <header class="guide-page-header"><div><p class="guide-eyebrow">${icon("book", 15)} Working guide</p><h1 id="guide-page-title">Use the workspace with confidence.</h1><p>Short, current instructions for people using the app and clients connecting through MCP.</p></div><div class="guide-header-note">${icon("file", 15)}<span>Protocol guidance is also available through MCP resources and prompts.</span></div></header>
+      <header class="guide-page-header"><div><p class="guide-eyebrow">${icon("help", 15)} Help</p><h1 id="guide-page-title">Use the workspace with confidence.</h1><p>Short, current instructions for people using the app and clients connecting through MCP.</p></div><div class="guide-header-note">${icon("file", 15)}<span>Protocol guidance is also available through MCP resources and prompts.</span></div></header>
       ${state.error ? `<div class="guide-error" role="alert">${icon("alert", 15)} ${escapeHtml(state.error)}</div>` : ""}
+      ${tutorialCards()}
       <div class="guide-layout"><nav class="guide-rail" aria-label="Guide topics"><p class="guide-rail-label">Topics</p>${state.loading ? '<div class="guide-rail-skeleton"><span></span><span></span><span></span><span></span></div>' : state.guides.map((guide) => `<button class="guide-rail-item ${guide.id === state.selectedId ? "is-active" : ""}" type="button" data-action="select-guide" data-id="${escapeAttr(guide.id)}" ${guide.id === state.selectedId ? 'aria-current="page"' : ""}><span class="guide-rail-copy"><strong>${escapeHtml(guide.title)}</strong><small>${escapeHtml(guide.audience)}</small></span>${icon("chevron", 15)}</button>`).join("")}<div class="guide-rail-footnote"><strong>For client authors</strong><p>Connect to <code>/mcp</code>, then read the operating guide resource before using live tools.</p></div></nav><section class="guide-article" aria-live="polite">${article()}</section></div>
     </section>`;
   }
@@ -34,6 +48,11 @@ export async function mount(outlet) {
 
   on(outlet, "click", "[data-action='select-guide']", async (_event, target) => loadArticle(target.dataset.id));
   render();
+  // A tutorial listing failure must not take the reference content down with it.
+  api.listTutorials().then((tutorials) => {
+    state.tutorials = tutorials;
+    render();
+  }).catch(() => {});
   try {
     state.guides = await api.listGuides();
     if (state.guides.length && !state.guides.some((guide) => guide.id === state.selectedId)) state.selectedId = state.guides[0].id;

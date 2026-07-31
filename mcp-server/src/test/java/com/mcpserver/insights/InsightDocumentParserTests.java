@@ -32,8 +32,11 @@ class InsightDocumentParserTests {
             assertThat(param.type()).isEqualTo("number");
         });
         assertThat(document.rql()).contains("let posts");
+        // The '# API Health' heading is prose, and prose is a rendered block in document order —
+        // it used to be parsed into a field nothing read, so headings vanished from the page.
         assertThat(document.components()).extracting(InsightModel.Component::type)
-                .containsExactly("Stat", "BarChart");
+                .containsExactly("Prose", "Stat", "BarChart");
+        assertThat(document.components().get(0).props().get("value")).isEqualTo("# API Health");
         assertThat(document.diagnostics()).isEmpty();
     }
 

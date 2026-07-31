@@ -64,6 +64,16 @@ public class InsightController {
         return insightService.data(request.source, request.connectionId, request.parameters);
     }
 
+    /**
+     * Runs a saved insight and keeps the result on it. Distinct from {@code /data}, which stays a
+     * pure evaluation for unsaved drafts: putting the id in the path makes "the insight must exist"
+     * unconditional, and means the only result that can be stored is one the server just computed.
+     */
+    @PostMapping("/{id}/run")
+    public InsightModel.RunResult run(@PathVariable String id, @RequestBody DataRequest request) {
+        return insightService.run(id, request.source, request.connectionId, request.parameters);
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, String>> handleIllegalArgument(IllegalArgumentException exception) {
         return ResponseEntity.badRequest().body(Map.of("error", exception.getMessage()));

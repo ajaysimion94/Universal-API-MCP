@@ -166,10 +166,14 @@ export const api = {
   listInsights: () => send("/api/insights"),
   getInsight: (id) => send(`/api/insights/${id}`),
   createInsight: (input) => send("/api/insights", "POST", input),
+  // Runs a saved insight and keeps the result on it; /api/insights/data stays the draft path.
+  runInsight: (id, input) => send(`/api/insights/${id}/run`, "POST", input),
   updateInsight: (id, input) => send(`/api/insights/${id}`, "PUT", input),
   deleteInsight: async (id) =>
     noContent(await fetch(`/api/insights/${id}`, { method: "DELETE" }), "Delete failed"),
 
   listGuides: () => send("/api/guides"),
   getGuide: (id) => send(`/api/guides/${encodeURIComponent(id)}`),
+  listTutorials: () => send("/api/tutorials"),
+  getTutorial: (id) => send(`/api/tutorials/${encodeURIComponent(id)}`),
 };

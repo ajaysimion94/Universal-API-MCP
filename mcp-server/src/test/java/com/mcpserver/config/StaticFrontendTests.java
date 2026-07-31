@@ -64,4 +64,33 @@ class StaticFrontendTests {
                 .doesNotContain("react")
                 .doesNotContain("vite");
     }
+
+    @Test
+    void searchSessionsKeepConsecutiveTurnsAndExposeRequestAndResponseModes() throws IOException {
+        String search = Files.readString(STATIC.resolve("pages/search.js"));
+
+        assertThat(search)
+                .contains("mcp.search.sessions.v2")
+                .contains("session.turns.push(turn)")
+                .contains("Raw response")
+                .contains("Raw body")
+                .contains("bodyMode: \"RAW\"")
+                .contains("api.previewTool")
+                .doesNotContain("if (!reuse && session.query)");
+    }
+
+    @Test
+    void searchAutocompleteDiscoversAppsGroupsAndScopedRequests() throws IOException {
+        String search = Files.readString(STATIC.resolve("pages/search.js"));
+
+        assertThat(search)
+                .contains("api.listGroups()")
+                .contains("api.getGroup(group.id)")
+                .contains("Apps and groups")
+                .contains("Requests in @")
+                .contains("state.groupTools[scope]")
+                .contains("requestSlug")
+                .contains("event.key === \"ArrowDown\"")
+                .contains("role=\"listbox\"");
+    }
 }

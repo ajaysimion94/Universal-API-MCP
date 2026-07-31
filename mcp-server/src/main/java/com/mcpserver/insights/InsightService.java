@@ -1,11 +1,14 @@
 package com.mcpserver.insights;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mcpserver.connectors.Connection;
 import com.mcpserver.connectors.ConnectionService;
 import com.mcpserver.reports.ReportQueryService;
 import com.mcpserver.reports.RqlModel;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -21,7 +24,15 @@ import static com.mcpserver.reports.RqlModel.*;
 @Service
 public class InsightService {
 
+    /**
+     * Ceiling on a stored run snapshot. SQLite handles this trivially (spec_document already holds
+     * whole OpenAPI specs) and it covers everything the UI can display several times over — tables
+     * render 100 rows, charts 24 bars — while keeping a single-insight GET bounded.
+     */
+    static final int MAX_LAST_RUN_BYTES = 512 * 1024;
+
     private final InsightDocumentParser parser = new InsightDocumentParser();
+    private final ObjectMapper json = new ObjectMapper();
     private final ReportQueryService reportQueryService;
     private final ConnectionService connectionService;
     private final InsightRepository insightRepository;
@@ -48,17 +59,20 @@ public class InsightService {
         Instant now = Instant.now();
         SavedInsight insight = new SavedInsight(UUID.randomUUID().toString(), requireName(name),
                 description == null ? "" : description, source == null ? "" : source,
-                blankToNull(connectionId), now, now);
+                requireKnownConnection(connectionId), now, now);
         insightRepository.insert(insight);
         return insight;
     }
 
     public SavedInsight update(String id, String name, String description, String source, String connectionId) {
         SavedInsight existing = findById(id);
+        // The run snapshot is carried through: saving edits the document, and must not silently
+        // discard the result the workspace is currently showing.
         SavedInsight updated = new SavedInsight(existing.id(), requireName(name),
                 description == null ? existing.description() : description,
                 source == null ? existing.source() : source,
-                blankToNull(connectionId), existing.createdAt(), Instant.now());
+                requireKnownConnection(connectionId), existing.createdAt(), Instant.now(),
+                existing.lastRun(), existing.lastRunAt());
         insightRepository.update(updated);
         return updated;
     }
@@ -77,6 +91,19 @@ public class InsightService {
         return value == null || value.isBlank() ? null : value;
     }
 
+    /**
+     * The preferred-app id is optional, but a non-blank one must name a connection that exists —
+     * storing a dangling id saves cleanly and then fails opaquely at run time, long after the
+     * mistake was made.
+     */
+    private String requireKnownConnection(String connectionId) {
+        String id = blankToNull(connectionId);
+        if (id == null) return null;
+        boolean known = connectionService.findAll().stream().anyMatch(connection -> connection.id().equals(id));
+        if (!known) throw new IllegalArgumentException("Unknown connection: " + id);
+        return id;
+    }
+
     public InsightModel.Analysis analyze(String source, String connectionId, Integer cursorOffset) {
         Document document = parser.parse(source);
         String resolvedConnection = resolveConnection(connectionId, document.connection());
@@ -88,6 +115,47 @@ public class InsightService {
                 query.completions().stream().map(completion -> new RqlModel.Completion(completion.label(), completion.kind(),
                         completion.detail(), completion.insertText(), remap(completion.replaceSpan(), source, document.rqlStartOffset()))).toList(),
                 document.params(), document.components());
+    }
+
+    /**
+     * Runs a saved insight and keeps the result on it, so reopening the insight shows those numbers
+     * instead of an empty panel.
+     *
+     * <p>Two outcomes deliberately run but do not store. A result produced from edits that were
+     * never saved would leave a reopened insight showing numbers its stored RQL cannot account for.
+     * A result over {@link #MAX_LAST_RUN_BYTES} is dropped whole rather than truncated: the browser
+     * computes {@code count}/{@code sum}/{@code avg} over {@code dataset.rows}, so a shortened
+     * snapshot would render confidently wrong aggregates with nothing to mark them as partial.
+     * Neither case degrades the returned data — only whether it is persisted.
+     */
+    public InsightModel.RunResult run(String id, String source, String connectionId,
+                                      Map<String, Object> parameters) {
+        SavedInsight insight = findById(id);
+        String document = source == null ? insight.source() : source;
+        String connection = connectionId == null || connectionId.isBlank()
+                ? insight.connectionId() : connectionId;
+
+        Data result = data(document, connection, parameters);
+
+        if (!document.equals(insight.source())) {
+            return new InsightModel.RunResult(result, null, false,
+                    "Unsaved edits — save the insight to keep its result.");
+        }
+        String payload;
+        try {
+            payload = json.writeValueAsString(result);
+        } catch (JsonProcessingException exception) {
+            return new InsightModel.RunResult(result, null, false, "This result could not be saved.");
+        }
+        int bytes = payload.getBytes(StandardCharsets.UTF_8).length;
+        if (bytes > MAX_LAST_RUN_BYTES) {
+            return new InsightModel.RunResult(result, null, false,
+                    "Result too large to save (" + bytes / 1024 + " KB of "
+                            + MAX_LAST_RUN_BYTES / 1024 + " KB) — press Run to refresh it.");
+        }
+        Instant ranAt = Instant.now();
+        insightRepository.updateLastRun(id, payload, ranAt);
+        return new InsightModel.RunResult(result, ranAt, true, null);
     }
 
     public Data data(String source, String connectionId, Map<String, Object> parameters) {

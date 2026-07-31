@@ -215,3 +215,11 @@ ALTER TABLE api_tools ADD COLUMN origin TEXT NOT NULL DEFAULT 'IMPORTED';
 ALTER TABLE api_tools ADD COLUMN auth_mode TEXT;
 ALTER TABLE api_tools ADD COLUMN auth_username TEXT;
 ALTER TABLE api_tools ADD COLUMN auth_secret_encrypted TEXT;
+
+-- Last rendered result for a saved insight, so reopening it — on any browser — shows the previous
+-- run instead of an empty panel. JSON text, same precedent as connections.spec_document. Written
+-- only when the serialized payload is under InsightService.MAX_LAST_RUN_BYTES, so the column stays
+-- bounded; a run is a snapshot, never authoritative. Both nullable: an insight is saved long before
+-- it is ever run, so every pre-existing row reads back null here.
+ALTER TABLE insights ADD COLUMN last_run TEXT;
+ALTER TABLE insights ADD COLUMN last_run_at TEXT;

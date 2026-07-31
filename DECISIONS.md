@@ -470,6 +470,23 @@ users to distribute a replacement truststore.
 **Refs:** `config/TlsHttpClientFactory.java`; `application.yml` (`http.tls`);
 `DEPLOYMENT.md` (internal HTTPS APIs); `TlsHttpClientFactoryTests`
 
+### 2026-07-30 — Search sessions are ordered working transcripts
+
+**Decision:** A Search session owns an ordered list of query/tool turns rather than one replaceable
+query and response. The composer always appends to the active session; only the explicit New action
+starts another. Each tool response retains both a structured Preview and exact Raw response view.
+Inline write-tool turns accept either schema-driven form values or a verbatim raw body, while
+preserving path/query/header fields and the existing preview/confirmation safety boundary.
+
+**Why:** Enterprise API work is consecutive: inspect a GET collection, identify a record, then issue
+a related PUT/PATCH/DELETE while keeping the evidence and identifiers visible. Treating every submit
+as a separate saved search destroyed that flow and made “sessions” little more than bookmarks.
+
+**Status:** active
+
+**Refs:** `static/pages/search.js`; `static/components.css`; `SearchController.java`;
+`StaticFrontendTests`; `docs/user-guide.md`
+
 ### 2026-07-29 — TLS verification bypass is explicit, global, and temporary
 
 **Decision:** Add an opt-in `MCP_TLS_DISABLE_VERIFY=true` emergency mode matching the existing
@@ -488,3 +505,232 @@ CA configuration.
 
 **Refs:** `config/TlsHttpClientFactory.java`; `application.yml` (`http.tls`);
 `DEPLOYMENT.md` (internal HTTPS APIs); `TlsHttpClientFactoryTests`
+
+### 2026-07-30 — The Insights renderer implements its documented surface; the reference was ahead of the code
+
+**Decision:** Close the gap between `docs/query-language-reference.md` §6.3 and what
+`static/pages/insights.js` actually rendered, rather than trimming the documentation to match the
+code. The browser value-expression language now implements what the reference already claimed:
+`avg`/`min`/`max` alongside `count`/`sum`, `dataset.field` first-row lookups, `+` concatenation,
+and nestable `if … then … else` with `and`/`or`/parentheses — evaluated by a small recursive-descent
+parser (precedence `if` → `or` → `and` → comparison → concat → primary) instead of the two regexes
+that were there. Comparisons compare numerically first and then case-insensitively, mirroring
+`RqlValues.compare` so a `<Stat>` condition and a `where` clause agree. `avg` carries its exact mean
+and formats to one decimal only at display, so `if avg(x) > 50` is not decided on a rounded value.
+`<QuickTable>`, `<LabelTable>`, and `<Metrics>` gained render branches (previously validated by
+`InsightDocumentParser` but silently dropped by the renderer), `<DataTable columns>` parses the
+documented `AS` rename, and `<BarChart>` emits the documented "Show chart data table" twin. Bar
+charts also now report their true category count and state the 24-bar axis cap instead of silently
+charting a subset. Two service-level corrections: a saved insight's `connectionId` must name an
+existing connection (400, not a stored dangling reference), and the library query is bounded
+(`LIMIT`, default 200) rather than unbounded.
+
+**Why:** The reference is the authority on shipped behaviour by the 2026-07-28 decision, and every
+claim in it was supposed to have been verified against a running server. These had drifted: a
+document could pass analysis clean and then render `avg(orders.total)` as literal text, or lose a
+`<DataTable>` column entirely because `id AS "Order"` matched no field. Roughly half the documented
+value-expression and component surface did not work as written — 12 of 15 render assertions fail
+against the pre-change file and pass after. Fixing the code rather than the docs was the right
+direction because the documented surface is coherent and small, and the parity it describes with
+the `.filter` engine (2026-07-29) was the point of that work. The chart twin additionally restores
+the "every chart has a table twin, not a prop, cannot be disabled" accessibility guarantee from
+`dashboard-design.md` §4.6. Verified end to end against a running server with an imported OpenAPI
+collection over a local JSON endpoint, driving the real `renderInsight()` against the real
+`/api/insights/data` payload — not a reimplementation of it.
+
+**Status:** active
+
+**Refs:** `static/pages/insights.js`; `insights/InsightService.java` (`requireKnownConnection`);
+`insights/InsightRepository.java` (`findAll(int)`); `InsightServiceTests`; `InsightRepositoryTests`;
+`docs/query-language-reference.md` §6.3, §9
+
+### 2026-07-31 — Grammar elements that parsed but did nothing are now reported or made real
+
+**Decision:** Audit the RQL/`.rqd` surface for constructs the grammar accepted without effect, and
+close each one rather than leave it accepted-and-inert.
+
+1. **Stage validation now matches full forms, not first words.** `RqlParser` compared only a stage's
+   first word against a keyword list while the executor matched multi-word prefixes
+   (`order by `, `group by `, `parse date `, `date config `). So `order id`, `group id`, and bare
+   `date`/`parse` — the latter two present in the list *only* as the openings of `date config` and
+   `parse date` — passed analysis clean and then failed at run time with `RQL014`. One `STAGE_FORMS`
+   table now drives validation, the did-you-mean hint, and editor completions, replacing three
+   separate copies. Matching stays as whitespace-strict as the executor: collapsing runs of spaces
+   before comparing would also rewrite string literals (`where name = "hello  world"`), which would
+   reintroduce the same disagreement in a subtler form.
+2. **Prose renders.** `Document.markdown()` was computed and never read by anything; neither
+   `Analysis` nor `Data` carried it, so every heading and sentence in a document was silently
+   dropped — including the `# API activity` heading in the editor's own default example. Prose is
+   now emitted as ordered `Prose` blocks interleaved with components, so a paragraph between two
+   charts stays there, and `{{ expression }}` interpolates using the same value-expression language
+   the components use. Substitution happens before the escaping Markdown renderer, so an
+   interpolated value cannot inject markup.
+3. **Unknown props are reported (`RQI014`, warning).** `delta` and `format` appear in this design
+   document's own examples and did nothing; a typo like `titel` was indistinguishable from `title`.
+4. **`RQI012` exists.** `dashboard-design.md` §4.5 called a filter nested in a chart a parse error,
+   but no such code existed and the flat tag scanner could not have detected it. The scanner now
+   tracks open/close tags on a stack. The component list stays flat, so the renderer's
+   consecutive-`<Stat>` grouping is untouched; nesting is used for validation only.
+5. **`<Filter>` reports itself inert (`RQI311`)** instead of being silently skipped.
+
+**Why:** Each of these made the editor lie in a different way — reporting clean and then failing at
+run time, accepting a prop that does nothing, or claiming a guardrail that was never implemented.
+The stage split is the most serious: fault-tolerant live feedback is the stated reason
+`report-query-design.md` chose a pipeline grammar at all, and it was defeated by a first-word
+comparison. `KpiRow` was left alone — it is documented as cosmetic and the renderer groups
+consecutive stats regardless, so there is nothing to correct.
+
+Verified against a running server with an imported OpenAPI collection: the rejected stages now
+surface at analysis through both `/api/reports/analyze` and `/api/insights/analyze`, and prose,
+interpolation, and the three new codes were confirmed on live payloads.
+
+**Status:** active
+
+**Refs:** `reports/ReportQueryService.java` (`STAGE_FORMS`, `isKnownStage`, `suggestedStage`,
+`stageSnippets`); `reports/RqlParser.java`; `insights/InsightDocumentParser.java` (`scan`,
+`withProse`, `KNOWN_PROPS`); `static/pages/insights.js` (`interpolate`, Prose branch);
+`RqlStageFormTests`; `InsightGrammarTests`; `docs/query-language-reference.md`;
+`docs/dashboard-design.md` §4.5
+
+### 2026-07-31 — Tool responses preview by content type; HTML is shown as source, never rendered
+
+**Decision:** The search session's response **Preview** now dispatches on content type instead of
+treating everything non-JSON as prose. CSV is parsed into a table (RFC 4180-ish: quoted fields,
+escaped `""`, embedded commas and newlines, CRLF), XML is re-indented, HTML gets a notice carrying
+the page title plus an expandable tag-stripped text extract, and anything else is shown verbatim.
+Every branch ends in escaped text inside a whitespace-preserving block. A bare `@app` browse also
+gained a `tool-catalog` mode listing an app's whole request catalogue as a table, split into GET and
+state-changing sections.
+
+**Why:** Non-JSON bodies were routed through the Markdown renderer, which joins consecutive lines
+into one paragraph — correct for retrieval excerpts, destructive for anything line-oriented. A CSV
+response rendered as `id,customer,total 1,Acme,10 2,Globex,25`: every row merged onto one line, the
+table structure gone. XML and plain text lost their line breaks the same way. The Raw tab was always
+correct, so the data was never lost, but the default view silently misrepresented it. Verified
+against a live server returning real XML, HTML, CSV, plain text, and a body that claims
+`application/json` while containing XML.
+
+**HTML is deliberately not rendered.** A response body is untrusted third-party content; rendering
+it would execute whatever an upstream API chose to return inside the application's own page. The
+previous behaviour was already safe by accident — Markdown escapes — and that property is now
+explicit and tested, with a probe asserting no live `<script>` or `onerror` survives any branch.
+Script and style contents are stripped before the text extract, so a token embedded in a script tag
+is not surfaced as page copy. The title is escaped rather than trusted.
+
+Frontend coverage is Java source assertions (`ResponsePreviewTests`), not behavioural tests: the
+browser application has no Node toolchain by decision (2026-07-29) and `StaticFrontendTests` asserts
+that, so adding a JS runner to test this would contradict a standing constraint. The guard was
+checked by reintroducing `markdown()` into a preview branch and confirming two tests fail.
+
+**Known scope limits, left as they are:** RQL/Insights parses JSON only (`rowsFromJson`), so an
+XML or CSV endpoint cannot back an insight dataset — documented rather than fixed, since dataset
+semantics for XML are a design question, not an oversight. Ingestion is a separate path and already
+handles HTML via Tika plus text/JSON/XML/YAML directly.
+
+**Status:** active
+
+**Refs:** `static/pages/search.js` (`responsePreview`, `csvPreview`, `xmlPreview`, `htmlPreview`,
+`textPreview`, `parseCsv`, `formatXml`, `toolCatalog`); `controllers/SearchController.java`
+(`tool-catalog` mode, `appName`); `static/components.css` (`.catalog-*`, `.response-notice`,
+`.response-text`); `ResponsePreviewTests`; `docs/user-guide.md`
+
+### 2026-07-31 — Insights open on their last result; the editor moves behind a toggle
+
+**Decision:** The Insights workspace defaults to two columns — saved-insight library on the left,
+last rendered result on the right — with the `.rqd` editor behind an **Edit** toggle. The last run
+is persisted **server-side on the insight** (`last_run` / `last_run_at` TEXT columns, same precedent
+as `connections.spec_document`), so reopening an insight on any browser shows its previous numbers
+instead of an empty panel. The page reopens whichever insight was last open, remembered in
+`localStorage` (`mcp.insights.workspace.v1`, holding only the id and the editor-visible flag),
+falling back to the most recently updated insight.
+
+Running a saved insight goes through a new `POST /api/insights/{id}/run`, which executes **and**
+stores. `POST /api/insights/data` is unchanged and stays the path for unsaved drafts.
+
+**Why:** The page read as an editor with a preview attached rather than a set of saved answers.
+Opening a saved insight explicitly discarded its result (`state.data = null`), so every visit
+started on "Run to fetch API data" — the numbers were the point, and they were the one thing not
+kept. This supersedes the "Insights save source, not results" limit recorded in
+`query-language-reference.md` §9.
+
+Four design points that carry the weight:
+
+1. **`findAll` must not select `last_run`.** The library loads every insight; returning up to 200
+   snapshots would dwarf the list. It selects `last_run_at` (cheap) but not the blob, which is why
+   opening an insight goes through `findById` rather than reusing the list entry — a guard test
+   asserts the frontend does not "optimise" that back to `state.saved.find(...)`.
+2. **Over-cap results are dropped whole, never truncated.** The browser computes
+   `count`/`sum`/`avg` over `dataset.rows`, so a shortened snapshot would render confidently wrong
+   aggregates with nothing marking them partial. At 512 KiB the run still returns in full; only
+   persistence is skipped, and the preview says so.
+3. **A result from unsaved edits is run but not stored**, so a reopened insight can never show
+   numbers its stored RQL cannot account for. This also makes staleness a plain client-side
+   comparison of `source` against the saved source.
+4. **A run is not an edit.** `updateLastRun` writes only the two snapshot columns — touching
+   `updated_at` would reorder the recency-sorted library every time someone pressed Run. Conversely
+   `InsightService.update` carries the snapshot through, or every save would silently wipe the
+   result on screen.
+
+Because the snapshot can be arbitrarily old and opening deliberately does **not** re-run (that would
+fire upstream API calls on page load), the preview always states when it ran, marks a restored
+result `Saved result`, and adds `Document edited since this run` when the source has moved on.
+
+**Accepted cost:** `last_run` stores upstream API response bodies unencrypted in SQLite. Confirmed
+acceptable for now — the server is localhost-bound and pre-Phase-6, and the same file already holds
+`spec_document` and workflow results. Revisit alongside the Phase 6 auth/ACL work.
+
+Verified end to end against a running server: migration applied to the existing database, run →
+reopen → snapshot returns, list omits the blob, unsaved edits and 512 KiB both decline to store
+without degrading the returned data, save preserves the snapshot, and `updated_at` does not move on
+a run. The stored snapshot renders **byte-identically** to a fresh run through the real
+`renderInsight`.
+
+**Status:** active; supersedes the "save source, not results" limit from 2026-07-28.
+
+**Refs:** `schema.sql` (insights `last_run`/`last_run_at`); `insights/SavedInsight.java`;
+`insights/InsightRepository.java` (`LIST_COLUMNS`/`FULL_COLUMNS`, `updateLastRun`);
+`insights/InsightService.java` (`run`, `MAX_LAST_RUN_BYTES`); `insights/InsightController.java`;
+`static/pages/insights.js`; `static/components.css` (`.insight-workspace.is-editing`);
+`InsightWorkspaceTests`; `InsightServiceTests`; `InsightRepositoryTests`
+
+### 2026-07-31 — The Guide becomes Help behind a `?` button, and gains hands-on tutorials
+
+**Decision:** The `/guide` page is now `/help`, reached from a **?** icon button in the top bar
+rather than a primary-nav link, and a new `/tutorial` page carries ordered, hands-on walkthroughs.
+`/guide` still resolves — the client router maps it to `/help` and the server forward stays — so old
+links and bookmarks keep working. `pages/guide.js` was renamed to `pages/help.js` (via `git mv`, so
+history follows).
+
+Tutorials live in a new `TutorialCatalog` beside `GuideCatalog`, projected over
+`GET /api/tutorials`. Two ship: *Ask your first grounded question* (3 steps) and *Build your first
+insight* (5 steps). Every step names the route it happens on, the concrete actions, and how to tell
+it worked; the page links straight to that route and ticks steps off, with progress in
+`localStorage` (`mcp.tutorial.progress.v1`).
+
+**Why:** Documentation was competing with the workspace for nav space — the primary nav should list
+places you work, and a permanent "Guide" link sits oddly beside Files and Connections. A `?` is the
+conventional, unobtrusive place to put help, and it frees the nav while making help reachable from
+every page. Splitting reference from walkthrough follows from what each is for: a guide article
+answers "what are the rules", a tutorial answers "how do I get my first result", and the second is
+what a new workspace actually needs. Help now leads with the walkthroughs for that reason.
+
+Two deliberate limits:
+
+1. **Tutorials are server-side but not exposed over MCP**, unlike guides (`McpGuideBridge`). The
+   2026-07-27 decision put guidance on the server so a person and an MCP client see identical rules;
+   that argument holds for reference, but a tutorial instructs someone driving the web UI — an agent
+   reading "Open Plugins and press Install" as an operating rule would be misled. They stay
+   server-side anyway so the content cannot drift from the app the way SPA-hardcoded copy would.
+2. **Progress is a convenience, not a record.** It is per-browser and unversioned; clearing storage
+   just empties the checkboxes.
+
+A guard test asserts every client route has a matching `WebMvcConfig` forward — the exact gap that
+previously made `/connections` 404 on direct load. It was verified by removing the `/tutorial`
+forward and confirming the test names it.
+
+**Status:** active
+
+**Refs:** `guides/TutorialCatalog.java`; `controllers/TutorialController.java`;
+`static/pages/help.js` (was `guide.js`); `static/pages/tutorial.js`; `static/app.js` (`?` button,
+`/guide` → `/help`); `static/ui.js` (`help`, `route` icons); `config/WebMvcConfig.java`;
+`TutorialCatalogTests`; `HelpNavigationTests`; `docs/user-guide.md`

@@ -52,6 +52,17 @@ public final class InsightModel {
         }
     }
 
+    /**
+     * A run of a saved insight, plus whether its result was kept on that insight.
+     *
+     * <p>{@code storeNote} explains a {@code stored=false} outcome (too large, unsaved edits). It is
+     * deliberately not a {@link RqlModel.Diagnostic}: diagnostics render in the editor footer, which
+     * is hidden in the default layout, so a storage outcome reported that way would be invisible.
+     * {@code data} always carries the full result — failing to store never degrades what is shown.
+     */
+    public record RunResult(Data data, java.time.Instant ranAt, boolean stored, String storeNote) {
+    }
+
     public record Data(Map<String, DatasetData> datasets, List<RqlModel.Diagnostic> diagnostics,
                        List<Parameter> params, List<Component> outline,
                        List<RqlModel.RequestExecution> requests) {

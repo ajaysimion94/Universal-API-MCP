@@ -7,9 +7,12 @@ const routes = {
   "/connections": () => import("./pages/connections.js?v=vanilla-3"),
   "/apps": () => import("./pages/apps.js?v=vanilla-4"),
   "/insights": () => import("./pages/insights.js"),
-  "/guide": () => import("./pages/guide.js"),
+  "/help": () => import("./pages/help.js"),
+  "/tutorial": () => import("./pages/tutorial.js"),
 };
 
+// Help and Tutorial are reached from the ? button rather than the primary nav: the nav lists places
+// you work, and a permanent link to documentation competes with them for attention.
 const navItems = [
   ["/", "Search"],
   ["/files", "Files"],
@@ -17,8 +20,9 @@ const navItems = [
   ["/connections", "Connections"],
   ["/apps", "Apps"],
   ["/insights", "Insights"],
-  ["/guide", "Guide"],
 ];
+
+const HELP_PATHS = ["/help", "/tutorial"];
 
 let cleanupPage = null;
 let routeVersion = 0;
@@ -27,6 +31,8 @@ function routeKey(pathname) {
   if (pathname.startsWith("/files")) return "/files";
   if (pathname.startsWith("/insights")) return "/insights";
   if (pathname.startsWith("/reports") || pathname.startsWith("/dashboards")) return "/insights";
+  // /guide was the page's earlier name; keep old links and bookmarks working.
+  if (pathname.startsWith("/guide")) return "/help";
   return routes[pathname] ? pathname : "/";
 }
 
@@ -43,12 +49,17 @@ function shell(activePath) {
           ${navItems.map(([path, label]) => `<a href="${path}" data-link class="nav-link ${path === activePath ? "is-active" : ""}" ${path === activePath ? 'aria-current="page"' : ""}>${label}</a>`).join("")}
         </nav>
       </div>
-      <form class="search-field ${activePath === "/" ? "search-field-on-home" : ""}" id="quick-search" role="search" aria-label="Quick knowledge search">
-        ${icon("search", 15, "search-icon")}
-        <input type="search" name="q" class="search-input" placeholder="Search — or type # for a tool"
-          aria-label="Universal search" value="${escapeHtml(query)}">
-        <span class="search-hint">${icon("hash", 12)} keyword</span>
-      </form>
+      <div class="topbar-right">
+        <form class="search-field ${activePath === "/" ? "search-field-on-home" : ""}" id="quick-search" role="search" aria-label="Quick knowledge search">
+          ${icon("search", 15, "search-icon")}
+          <input type="search" name="q" class="search-input" placeholder="Search — or type # for a tool"
+            aria-label="Universal search" value="${escapeHtml(query)}">
+          <span class="search-hint">${icon("hash", 12)} keyword</span>
+        </form>
+        <a href="/help" data-link class="topbar-help ${HELP_PATHS.includes(activePath) ? "is-active" : ""}"
+          aria-label="Help and tutorials" title="Help and tutorials"
+          ${HELP_PATHS.includes(activePath) ? 'aria-current="page"' : ""}>${icon("help", 18)}</a>
+      </div>
     </header>
     <main id="main-content" class="app-body">
       <div class="boot-loading" role="status">Loading workspace…</div>

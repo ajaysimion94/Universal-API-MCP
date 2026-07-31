@@ -72,9 +72,37 @@ public class ReportQueryService {
     private static final Pattern AGGREGATE = Pattern.compile(
             "(?is)^(count|sum|avg|min|max)\\s*\\(\\s*(\\*|[^)]+)\\s*\\)(?:\\s+as\\s+([A-Za-z_][A-Za-z0-9_]*))?$");
 
-    private static final List<String> STAGE_KEYWORDS = List.of(
-            "where", "select", "order", "limit", "offset", "distinct", "group", "expand",
-            "join", "lookup", "rename", "parse", "date", "having");
+    /**
+     * A stage form the language actually has. {@code standalone} marks a stage that may appear with
+     * no argument; every other form needs one.
+     *
+     * <p>Forms are matched in full rather than by first word. Validating on the first word alone let
+     * {@code order} (no {@code by}), {@code group} (no {@code by}), and bare {@code date}/{@code parse}
+     * — which exist only as the openings of {@code date config} and {@code parse date} — pass analysis
+     * clean and then fail at execution with RQL014. That analysis/execution split is exactly what the
+     * editor is supposed to prevent, so the two now read the same table.
+     */
+    private record StageForm(String form, boolean standalone, String snippet) {
+        StageForm(String form, boolean standalone) {
+            this(form, standalone, form);
+        }
+    }
+
+    private static final List<StageForm> STAGE_FORMS = List.of(
+            new StageForm("where", false),
+            new StageForm("select", false),
+            new StageForm("group by", false),
+            new StageForm("order by", false),
+            new StageForm("limit", false),
+            new StageForm("offset", false),
+            new StageForm("distinct", true),
+            new StageForm("expand", false),
+            new StageForm("rename", false),
+            new StageForm("parse date", false),
+            new StageForm("date config", false),
+            new StageForm("lookup", false, "lookup request"),
+            new StageForm("join", false),
+            new StageForm("having", false));
 
     private final ApiToolService apiToolService;
     private final ConnectionService connectionService;
@@ -360,8 +388,7 @@ public class ReportQueryService {
         Span replacement = Span.of(source, cursor, cursor);
         List<Completion> completions = new ArrayList<>();
         if (before.matches("(?s).*\\|>\\s*[A-Za-z_]*$")) {
-            for (String stage : List.of("where", "select", "group by", "order by", "limit", "offset", "distinct",
-                    "expand", "rename", "parse date", "lookup request", "join")) {
+            for (String stage : stageSnippets()) {
                 completions.add(new Completion(stage, "STAGE", "RQL pipeline stage", stage, replacement));
             }
         } else if (before.matches("(?s).*\\buse\\s+collection\\s+\\\"[^\\\"]*$")) {
@@ -1045,9 +1072,37 @@ public class ReportQueryService {
                 ? exception.getClass().getSimpleName() : exception.getMessage();
     }
 
-    /** Stage keywords the parser accepts; kept here so grammar and executor cannot drift apart. */
-    static List<String> stageKeywords() {
-        return STAGE_KEYWORDS;
+    /**
+     * True when the stage names a real form, carrying an argument where one is required. Matching is
+     * deliberately as whitespace-strict as {@link #applyStage} — a stage is never re-spaced before
+     * comparison, because collapsing runs of spaces would also rewrite string literals
+     * ({@code where name = "hello  world"}), so the two would disagree again in a subtler way.
+     */
+    static boolean isKnownStage(String stage) {
+        String lower = stage == null ? "" : stage.trim().toLowerCase(Locale.ROOT);
+        for (StageForm form : STAGE_FORMS) {
+            if (form.standalone() && lower.equals(form.form())) return true;
+            if (lower.startsWith(form.form() + " ") && lower.length() > form.form().length() + 1) return true;
+        }
+        return false;
+    }
+
+    /**
+     * The form an unknown stage was probably reaching for — {@code order id} suggests
+     * {@code order by}. Compares on the first word so the common "forgot `by`" slip is named.
+     */
+    static String suggestedStage(String stage) {
+        String first = (stage == null ? "" : stage.trim().toLowerCase(Locale.ROOT)).split("\\s+", 2)[0];
+        if (first.isEmpty()) return null;
+        for (StageForm form : STAGE_FORMS) {
+            if (!form.form().equals(first) && form.form().split(" ")[0].equals(first)) return form.form();
+        }
+        return null;
+    }
+
+    /** Stage forms offered after {@code |>}; kept here so grammar, editor, and executor cannot drift. */
+    static List<String> stageSnippets() {
+        return STAGE_FORMS.stream().map(StageForm::snippet).toList();
     }
 
     private record SortKey(String field, boolean descending) {

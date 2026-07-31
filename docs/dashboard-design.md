@@ -168,6 +168,12 @@ indistinguishable from an existing slot under CVD.
 component. One filter row scopes everything below it, and all charts re-render against the same
 slice. A filter nested in a chart card is a parse error (`RQD012`).
 
+> **As shipped (2026-07-31):** implemented as `RQI012`. This required giving the tag scanner a
+> nesting model — it previously had none, so containment could not be expressed at all and
+> `<BarChart>…<Filter/></BarChart>` parsed as two unrelated siblings. `<FilterRow>` is still not a
+> component, and `<Filter>` itself renders nothing (`RQI311`); parameter controls come from
+> front-matter `params`. See `docs/query-language-reference.md` for shipped behaviour.
+
 ### 4.6 Every chart has a table twin — runtime
 
 The renderer always emits an accessible table alongside each chart, reachable from the card header.

@@ -106,11 +106,12 @@ public class RqlParser {
                         Severity.ERROR, "RQL004", "Expected a stage after '|>'."));
                 continue;
             }
-            String keyword = stage.split("\\s+", 2)[0];
-            if (!ReportQueryService.stageKeywords().contains(keyword)) {
+            if (!ReportQueryService.isKnownStage(stage)) {
+                String suggestion = ReportQueryService.suggestedStage(stage);
                 diagnostics.add(new Diagnostic(Span.of(source, parts.get(i).offset(),
                         parts.get(i).offset() + parts.get(i).text().length()), Severity.ERROR, "RQL014",
-                        "Unknown pipeline stage '" + keyword + "'."));
+                        "Unknown pipeline stage '" + stage.split("\\s+", 2)[0] + "'."
+                                + (suggestion == null ? "" : " Did you mean '" + suggestion + "'?")));
             }
         }
     }

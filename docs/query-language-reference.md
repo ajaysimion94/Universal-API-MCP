@@ -418,7 +418,9 @@ editor underlines them live; execution returns the same list alongside whatever 
 | `RQI002` | Error | Front matter is not valid YAML. |
 | `RQI010` | Error | Unknown component. |
 | `RQI011` | Error | `y2` — dual y-axes are not supported; use two charts. |
+| `RQI012` | Error | `<Filter>` nested inside a chart. One filter row scopes the whole document. |
 | `RQI013` | Error | `color` — series colours come from the dashboard palette. |
+| `RQI014` | Warning | A prop the component does not read, so it has no effect (typo, or a design-doc prop such as `delta`/`format` that was never implemented). |
 | `RQI020` | Error | `<BarChart>` needs `data`, `x`, and `y`. |
 | `RQI021` | Error | `<DataTable>` needs `data`. |
 | `RQI022` | Error | `<Stat>` needs `value`. |
@@ -427,6 +429,7 @@ editor underlines them live; execution returns the same list alongside whatever 
 | `RQI025` | Error | `<QuickTable>` / `<LabelTable>` needs `rows`. |
 | `RQI101` | Error | A component references a dataset that no `let` defines. |
 | `RQI310` | Info | A bar chart with one bar — use `<Stat>` instead. |
+| `RQI311` | Info | `<Filter>` renders nothing; parameter controls come from front-matter `params`. |
 
 `RQI500` is produced by the web UI itself when the analyze request cannot reach the server.
 
@@ -448,7 +451,8 @@ params:
 
 # API activity
 
-Prose renders as Markdown.
+Prose renders as Markdown, in document order with the components. `{{ expression }}` interpolates a
+value into a sentence using the same expression language the components use.
 
 ```rql
 let posts = request "List all posts"
@@ -493,7 +497,7 @@ Props are written `name={expression}` or `name="text"`.
 | Component | Required props | Notes |
 | --- | --- | --- |
 | `<Stat value={…} label="…" />` | `value` | One number. Consecutive stats collapse into a KPI row. |
-| `<BarChart data={ds} x="field" y="field" title="…" />` | `data`, `x`, `y` | SVG bars with a collapsible "Show chart data table" twin. Non-numeric `y` values are dropped. |
+| `<BarChart data={ds} x="field" y="field" title="…" />` | `data`, `x`, `y` | SVG bars with a collapsible "Show chart data table" twin. Non-numeric `y` values are dropped. The axis charts the first 24 categories and says so when there are more; the twin carries up to 100 rows. |
 | `<DataTable data={ds} title="…" columns={["id AS \"Order\"", "total"]} />` | `data` | First 100 rows. `columns` is optional; `AS` renames the header without changing the field read. |
 | `<Text value={…} />` | `value` | A line of prose or a computed sentence. |
 | `<KeyValue label="…" value={…} />` | `label`, `value` | Label/value row with a bold label. |
@@ -503,13 +507,18 @@ Props are written `name={expression}` or `name="text"`.
 | `<Status />` | — | One row per request this run issued: name, method, status code, success, duration. |
 | `<Metrics />` | — | Aggregate execution stats: requests, succeeded, failed, rows returned, total duration. |
 | `<KpiRow>` | — | Accepted; grouping is automatic, so wrapping is cosmetic. |
-| `<Filter>` | — | Accepted by the parser but **not rendered**. Parameter inputs come from front-matter `params`. |
+| `<Filter>` | — | Accepted but **not rendered**, and reported as inert (`RQI311`). Parameter inputs come from front-matter `params`. Nesting one inside a chart is an error (`RQI012`). |
 
-Components render in document order, so the page reads the way the source reads.
+Components render in document order, so the page reads the way the source reads. Prose between them
+keeps its place in that order.
+
+A prop a component does not read is reported (`RQI014`) rather than ignored, so a typo like `titel`
+is visible instead of silently doing nothing.
 
 #### Value expressions
 
-`value` props and `rows` cells accept the same small expression language, evaluated in the browser:
+`value` props, `rows` cells, and `{{ … }}` interpolations in prose accept the same small expression
+language, evaluated in the browser:
 
 | Expression | Result |
 | --- | --- |
@@ -627,9 +636,17 @@ Worth knowing before you plan around a capability:
 - **No workbook export yet.** The `.xlsx` projection (Summary / Index / Results sheets) is the next
   step, not shipped.
 - **No scheduled runs.** An insight runs when you run it; there is no timer or alerting.
-- **Insights save source, not results.** Opening a saved insight re-runs it; previous numbers are not
-  snapshotted.
+- **A saved insight keeps its last result.** Reopening one shows the previous run, labelled
+  `Saved result · ran <time>`, rather than an empty panel — the snapshot lives on the insight, so it
+  follows the document to any browser. Opening never re-runs (that would fire upstream API calls on
+  page load), so the numbers can be arbitrarily old; press **Run insight** to refresh. A result is
+  not kept when it came from unsaved edits, or when it exceeds 512 KB — in both cases the run still
+  displays in full and the preview says why it was not saved.
 - **One chart type.** `<BarChart>` is the only chart; line, area, and scatter forms in the design doc
   are not implemented.
 - **Cross-filtering is not implemented.** Parameters are the only interactive control.
 - **`/reports` redirects to `/insights`** in the SPA; there is no separate report workspace yet.
+- **The library lists the 200 most recently updated insights.** Older ones stay saved and open by
+  id, but do not appear in the panel.
+- **A saved insight's default app must exist.** Saving with an unknown `connectionId` is rejected
+  (400) rather than stored as a dangling reference.

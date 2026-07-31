@@ -159,12 +159,20 @@ public class SearchController {
             response.put("suggestions", suggestions(parsed.appSlug(), parsed.toolKeyword(), group));
             return response;
         }
+        // A bare "@app" is a browse, not an ambiguous invocation: answer it with the app's whole
+        // catalogue rather than the first eight guesses, so the page can table it.
+        if (parsed.toolKeyword().isBlank()) {
+            response.put("mode", "tool-catalog");
+            response.put("scope", group != null ? group.slug() : parsed.appSlug());
+            response.put("scopeName", group != null ? group.name() : appName(parsed.appSlug()));
+            response.put("scopeKind", group != null ? "group" : "app");
+            response.put("tools", matches.stream().map(this::toolSummary).toList());
+            return response;
+        }
         if (matches.size() > 1) {
             response.put("mode", "tool");
             response.put("tool", parsed.toolKeyword());
-            response.put("message", parsed.toolKeyword().isBlank()
-                    ? "Tools available for @" + parsed.appSlug() + ":"
-                    : "'" + parsed.toolKeyword() + "' matches several tools — pick one:");
+            response.put("message", "'" + parsed.toolKeyword() + "' matches several tools — pick one:");
             response.put("suggestions", matches.stream().limit(8).map(this::toolSummary).toList());
             return response;
         }
@@ -208,7 +216,8 @@ public class SearchController {
                         "contentType", result.contentType() == null ? "" : result.contentType(),
                         "body", result.body(),
                         "truncated", result.truncated(),
-                        "request", result.requestSummary()));
+                        "request", result.requestSummary(),
+                        "headers", result.headers()));
             } else {
                 // State-changing tools → workflow engine → preview + confirmation token (§7.2)
                 auditService.logToolInvoked(tool.id(), tool.name(), null, "web-user", built.args());
@@ -293,6 +302,22 @@ public class SearchController {
                 .toList();
     }
 
+    /** The connection's display name for a slug, falling back to the slug when nothing matches. */
+    private String appName(String appSlug) {
+        if (appSlug == null) return null;
+        return apiToolService.search(null, null).stream()
+                .filter(tool -> tool.appSlug().equals(appSlug))
+                .findFirst()
+                .map(tool -> {
+                    try {
+                        return connectionService.findById(tool.connectionId()).name();
+                    } catch (RuntimeException exception) {
+                        return appSlug;
+                    }
+                })
+                .orElse(appSlug);
+    }
+
     private Map<String, Object> toolSummary(ApiTool t) {
         Map<String, Object> map = new HashMap<>();
         map.put("id", t.id());
@@ -304,10 +329,17 @@ public class SearchController {
         map.put("enabled", t.enabled());
         map.put("pending", t.pending());
         map.put("primaryParam", t.primaryParam());
+        map.put("urlTemplate", t.urlTemplate());
+        map.put("bodyTemplate", t.bodyTemplate() == null ? "" : t.bodyTemplate());
         try {
             map.put("paramsSchema", mapper.readTree(t.paramsSchema()));
         } catch (Exception e) {
             map.put("paramsSchema", Map.of("type", "object"));
+        }
+        try {
+            map.put("paramLocations", mapper.readTree(t.paramLocations()));
+        } catch (Exception e) {
+            map.put("paramLocations", Map.of());
         }
         return map;
     }

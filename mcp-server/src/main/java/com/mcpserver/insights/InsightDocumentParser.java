@@ -5,7 +5,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.mcpserver.reports.RqlModel;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,12 +23,37 @@ import static com.mcpserver.reports.RqlModel.*;
 public class InsightDocumentParser {
 
     private static final Pattern RQL_BLOCK = Pattern.compile("(?is)```rql\\s*(.*?)```");
-    private static final Pattern TAG_START = Pattern.compile("<([A-Z][A-Za-z0-9]*)");
+    private static final Pattern TAG_START = Pattern.compile("<(/?)([A-Z][A-Za-z0-9]*)");
     private static final Pattern PROPERTY = Pattern.compile("([A-Za-z][A-Za-z0-9]*)\\s*=\\s*(?:\\{([^{}]*)}|\\\"([^\\\"]*)\\\")");
     private static final Set<String> SUPPORTED = Set.of(
             "Filter", "KpiRow", "Stat", "BarChart", "DataTable",
             // Summary blocks, ported from the report automation engine's Summary sheet.
             "Text", "KeyValue", "LabelValue", "QuickTable", "LabelTable", "Metrics", "Status");
+
+    /** Components that own a plotted axis; a filter nested inside one is rejected (RQI012). */
+    private static final Set<String> CHARTS = Set.of("BarChart");
+
+    /**
+     * The props each component reads. Anything else is silently inert, so it is reported (RQI014)
+     * rather than accepted — {@code delta} and {@code format} appear in the design document's own
+     * examples and did nothing, and a typo like {@code titel} was indistinguishable from a title.
+     */
+    private static final Map<String, Set<String>> KNOWN_PROPS = Map.ofEntries(
+            Map.entry("Stat", Set.of("value", "label")),
+            Map.entry("BarChart", Set.of("data", "x", "y", "title")),
+            Map.entry("DataTable", Set.of("data", "title", "columns")),
+            Map.entry("Text", Set.of("value")),
+            Map.entry("KeyValue", Set.of("label", "value")),
+            Map.entry("LabelValue", Set.of("label", "value")),
+            Map.entry("QuickTable", Set.of("title", "headers", "rows")),
+            Map.entry("LabelTable", Set.of("title", "headers", "rows")),
+            Map.entry("Metrics", Set.of()),
+            Map.entry("Status", Set.of()),
+            Map.entry("KpiRow", Set.of()),
+            Map.entry("Filter", Set.of("param")));
+
+    /** Reported on their own, so they must not also be counted as unknown props. */
+    private static final Set<String> REJECTED_PROPS = Set.of("y2", "color");
 
     private final ObjectMapper yaml = new ObjectMapper(new YAMLFactory());
 
@@ -36,7 +64,8 @@ public class InsightDocumentParser {
         List<Parameter> parameters = parameters(frontmatter.get("params"));
         String title = string(frontmatter.get("title"));
         String connection = string(frontmatter.get("connection"));
-        List<Component> components = components(text, diagnostics);
+        Scan scan = scan(text);
+        List<Component> components = withProse(text, components(text, scan, diagnostics), scan.spans());
         StringBuilder rql = new StringBuilder();
         int rqlStartOffset = 0;
         boolean firstRqlBlock = true;
@@ -50,7 +79,7 @@ public class InsightDocumentParser {
             rql.append(blocks.group(1));
         }
         return new Document(title, connection, parameters, rql.toString(), rqlStartOffset,
-                markdown(text), components, diagnostics);
+                markdown(text, scan.spans()), components, diagnostics);
     }
 
     private Map<String, Object> readFrontmatter(String source, List<Diagnostic> diagnostics) {
@@ -88,9 +117,9 @@ public class InsightDocumentParser {
         return parameters;
     }
 
-    private List<Component> components(String source, List<Diagnostic> diagnostics) {
+    private List<Component> components(String source, Scan scan, List<Diagnostic> diagnostics) {
         List<Component> components = new ArrayList<>();
-        for (Tag tag : tags(source)) {
+        for (Tag tag : scan.components()) {
             String type = tag.type();
             Map<String, String> props = new LinkedHashMap<>();
             Matcher propsMatcher = PROPERTY.matcher(tag.attributes());
@@ -109,6 +138,22 @@ public class InsightDocumentParser {
             if (props.containsKey("color")) {
                 diagnostics.add(new Diagnostic(span, Severity.ERROR, "RQI013",
                         "Series colors are assigned by the insight palette; 'color' is not supported."));
+            }
+            if (type.equals("Filter") && tag.parent() != null && CHARTS.contains(tag.parent())) {
+                diagnostics.add(new Diagnostic(span, Severity.ERROR, "RQI012",
+                        "<Filter> cannot sit inside <" + tag.parent() + ">. One filter row scopes the "
+                                + "whole document; per-chart filters are not supported."));
+            } else if (type.equals("Filter")) {
+                diagnostics.add(new Diagnostic(span, Severity.INFO, "RQI311",
+                        "<Filter> renders nothing — parameter controls come from front-matter 'params'."));
+            }
+            Set<String> known = KNOWN_PROPS.get(type);
+            if (known != null) {
+                for (String prop : props.keySet()) {
+                    if (known.contains(prop) || REJECTED_PROPS.contains(prop)) continue;
+                    diagnostics.add(new Diagnostic(span, Severity.WARNING, "RQI014",
+                            "<" + type + "> does not read '" + prop + "'; it has no effect."));
+                }
             }
             if (type.equals("BarChart") && (!props.containsKey("data") || !props.containsKey("x") || !props.containsKey("y"))) {
                 diagnostics.add(new Diagnostic(span, Severity.ERROR, "RQI020",
@@ -139,28 +184,94 @@ public class InsightDocumentParser {
         return components;
     }
 
-    private String markdown(String source) {
-        StringBuilder text = new StringBuilder(source);
-        List<Tag> tags = tags(source);
-        for (int i = tags.size() - 1; i >= 0; i--) {
-            text.replace(tags.get(i).start(), tags.get(i).end(), "");
+    private String markdown(String source, List<int[]> tagSpans) {
+        boolean[] hidden = hiddenRegions(source, tagSpans);
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < source.length(); i++) {
+            if (!hidden[i]) text.append(source.charAt(i));
         }
-        String withoutFrontmatter = text.toString().replaceFirst("(?s)^---.*?\\n---\\s*", "");
-        return RQL_BLOCK.matcher(withoutFrontmatter).replaceAll("").trim();
+        return text.toString().trim();
     }
 
-    private record Tag(String type, String attributes, int start, int end) {
+    /**
+     * Everything that is not prose: front matter, every {@code ```rql} block, and every tag — opening
+     * and closing alike, so a container's closer never leaks into the text around it.
+     */
+    private boolean[] hiddenRegions(String source, List<int[]> tagSpans) {
+        boolean[] hidden = new boolean[source.length()];
+        if (source.startsWith("---")) {
+            int firstBreak = source.indexOf('\n');
+            int end = firstBreak < 0 ? -1 : source.indexOf("\n---", firstBreak);
+            if (end >= 0) {
+                int close = source.indexOf('\n', end + 1);
+                Arrays.fill(hidden, 0, close < 0 ? source.length() : Math.min(close + 1, source.length()), true);
+            }
+        }
+        Matcher blocks = RQL_BLOCK.matcher(source);
+        while (blocks.find()) Arrays.fill(hidden, blocks.start(), blocks.end(), true);
+        for (int[] span : tagSpans) {
+            Arrays.fill(hidden, Math.max(0, span[0]), Math.min(span[1], source.length()), true);
+        }
+        return hidden;
+    }
+
+    /**
+     * Interleaves prose with components in document order, as {@code Prose} blocks. The renderer walks
+     * this one ordered list, which is what lets a paragraph sit between two charts and stay there —
+     * prose was previously parsed into a field nothing ever read, so every heading and sentence in a
+     * document was silently dropped.
+     */
+    private List<Component> withProse(String source, List<Component> components, List<int[]> tagSpans) {
+        boolean[] hidden = hiddenRegions(source, tagSpans);
+        List<Component> ordered = new ArrayList<>();
+        int cursor = 0;
+        for (Component component : components) {
+            addProse(source, hidden, cursor, component.span().startOffset(), ordered);
+            ordered.add(component);
+            cursor = Math.max(cursor, component.span().endOffset());
+        }
+        addProse(source, hidden, cursor, source.length(), ordered);
+        return ordered;
+    }
+
+    private void addProse(String source, boolean[] hidden, int from, int to, List<Component> into) {
+        StringBuilder text = new StringBuilder();
+        for (int i = Math.max(0, from); i < Math.min(to, source.length()); i++) {
+            if (!hidden[i]) text.append(source.charAt(i));
+        }
+        String prose = text.toString().strip();
+        if (prose.isEmpty()) return;
+        into.add(new Component("Prose", Map.of("value", prose), Span.of(source, from, Math.min(to, source.length()))));
+    }
+
+    /** {@code parent} is the enclosing component's type, or null at document level. */
+    private record Tag(String type, String attributes, int start, int end, String parent) {
+    }
+
+    /**
+     * Component tags plus every tag span — including closing tags, which are not components but must
+     * still be cut out of the prose.
+     */
+    private record Scan(List<Tag> components, List<int[]> spans) {
     }
 
     /**
      * Scans component tags without a regex, because a prop value can legitimately contain '>' —
      * {@code value={if count(open) > 0 then "yes" else "no"}} is a conditional, not a closing angle.
+     *
+     * <p>Open/close tags are tracked on a stack so each component knows what encloses it. Without
+     * that, containment rules cannot be expressed at all: nesting was previously invisible, so
+     * {@code <BarChart>…<Filter/></BarChart>} parsed as two unrelated siblings.
      */
-    private List<Tag> tags(String source) {
-        List<Tag> tags = new ArrayList<>();
-        Matcher opening = TAG_START.matcher(source);
-        while (opening.find()) {
-            int cursor = opening.end();
+    private Scan scan(String source) {
+        List<Tag> components = new ArrayList<>();
+        List<int[]> spans = new ArrayList<>();
+        Deque<String> open = new ArrayDeque<>();
+        Matcher matcher = TAG_START.matcher(source);
+        while (matcher.find()) {
+            boolean closing = !matcher.group(1).isEmpty();
+            String type = matcher.group(2);
+            int cursor = matcher.end();
             int depth = 0;
             boolean quote = false;
             char quoteChar = '"';
@@ -181,12 +292,24 @@ public class InsightDocumentParser {
                 cursor++;
             }
             if (cursor >= source.length()) break;
-            String attributes = source.substring(opening.end(), cursor);
-            if (attributes.endsWith("/")) attributes = attributes.substring(0, attributes.length() - 1);
-            tags.add(new Tag(opening.group(1), attributes, opening.start(), cursor + 1));
-            opening.region(cursor + 1, source.length());
+            spans.add(new int[] { matcher.start(), cursor + 1 });
+            if (closing) {
+                // Guarded so a stray closer cannot unwind the whole stack.
+                if (open.contains(type)) {
+                    while (!open.isEmpty() && !open.pop().equals(type)) {
+                        // discard unclosed inner tags
+                    }
+                }
+            } else {
+                String attributes = source.substring(matcher.end(), cursor);
+                boolean selfClosing = attributes.endsWith("/");
+                if (selfClosing) attributes = attributes.substring(0, attributes.length() - 1);
+                components.add(new Tag(type, attributes, matcher.start(), cursor + 1, open.peek()));
+                if (!selfClosing) open.push(type);
+            }
+            matcher.region(cursor + 1, source.length());
         }
-        return tags;
+        return new Scan(components, spans);
     }
 
     private static String string(Object value) {

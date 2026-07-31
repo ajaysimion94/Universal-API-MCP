@@ -67,6 +67,11 @@ enabled, contextual SearXNG web results. Imported API requests become determinis
 Read tools execute after validation. Write tools return a preview and single-use confirmation token;
 the UI must show the preview and obtain explicit approval before confirmation.
 
+Search sessions are browser-persisted ordered turn transcripts. Submitting from the composer appends
+to the active session; only the explicit **New** action starts another session. Tool results expose
+a formatted Preview and exact Raw response. Inline tool forms support schema-driven and raw-body
+invocation modes through the existing `/api/tools/{id}/preview` and `/invoke` endpoints.
+
 Insights execute enabled GET tools only. `.rqd` documents contain fenced RQL blocks and supported
 view components. Arbitrary HTML or code execution is not supported.
 

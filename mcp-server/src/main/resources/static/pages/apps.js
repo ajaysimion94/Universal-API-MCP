@@ -367,7 +367,7 @@ export async function mount(outlet) {
   function requestBuilder() {
     const tool = selectedTool();
     if (!tool && !state.draftConnectionId) {
-      return emptyState("Choose an endpoint to start a request", "Expand an app in the sidebar, or use its + action to create a custom request.", '<a href="/guide" data-link class="empty-link">Read the app query guide</a>');
+      return emptyState("Choose an endpoint to start a request", "Expand an app in the sidebar, or use its + action to create a custom request.", '<a href="/help" data-link class="empty-link">Read the app query guide</a>');
     }
     if (!tool) return manualRequestForm(state.draftConnectionId);
     if (state.manualEditToolId === tool.id) return manualRequestForm(tool.connectionId, tool);

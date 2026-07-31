@@ -16,6 +16,9 @@ public class WebMvcConfig implements WebMvcConfigurer {
         registry.addViewController("/plugins").setViewName("forward:/index.html");
         registry.addViewController("/connections").setViewName("forward:/index.html");
         registry.addViewController("/apps").setViewName("forward:/index.html");
+        registry.addViewController("/help").setViewName("forward:/index.html");
+        registry.addViewController("/tutorial").setViewName("forward:/index.html");
+        // Earlier name for the help page; the client router redirects it to /help.
         registry.addViewController("/guide").setViewName("forward:/index.html");
         registry.addViewController("/insights").setViewName("forward:/index.html");
         registry.addViewController("/insights/**").setViewName("forward:/index.html");
