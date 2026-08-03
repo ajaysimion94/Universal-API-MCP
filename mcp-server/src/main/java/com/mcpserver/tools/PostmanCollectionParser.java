@@ -50,8 +50,13 @@ public class PostmanCollectionParser implements SpecParser {
 
     @Override
     public List<ApiToolDefinition> parse(JsonNode root) {
+        return parse(root, false);
+    }
+
+    @Override
+    public List<ApiToolDefinition> parse(JsonNode root, boolean preserveSourceUrls) {
         List<ApiToolDefinition> out = new ArrayList<>();
-        walk(root.path("item"), "", collectVariables(root), out);
+        walk(root.path("item"), "", collectVariables(root), preserveSourceUrls, out);
         return out;
     }
 
@@ -208,21 +213,23 @@ public class PostmanCollectionParser implements SpecParser {
     }
 
     private void walk(JsonNode items, String folderPath, Map<String, String> variables,
+                      boolean preserveSourceUrls,
                       List<ApiToolDefinition> out) {
         if (!items.isArray()) return;
         for (JsonNode item : items) {
             String name = item.path("name").asText("unnamed");
             if (item.has("item")) {
                 String childPath = folderPath.isEmpty() ? name : folderPath + "/" + name;
-                walk(item.path("item"), childPath, variables, out);
+                walk(item.path("item"), childPath, variables, preserveSourceUrls, out);
             } else if (item.has("request")) {
-                out.add(toDefinition(item, name, folderPath, variables));
+                out.add(toDefinition(item, name, folderPath, variables, preserveSourceUrls));
             }
         }
     }
 
     private ApiToolDefinition toDefinition(JsonNode item, String name, String folderPath,
-                                           Map<String, String> variables) {
+                                           Map<String, String> variables,
+                                           boolean preserveSourceUrls) {
         JsonNode request = item.path("request");
         String method = request.path("method").asText("GET").toUpperCase();
         String description = request.path("description").isObject()
@@ -236,7 +243,8 @@ public class PostmanCollectionParser implements SpecParser {
         Map<String, String> locations = new LinkedHashMap<>();
 
         String urlTemplate = parseUrl(
-                request.path("url"), variables, properties, required, locations);
+                request.path("url"), variables, preserveSourceUrls,
+                properties, required, locations);
         Map<String, String> staticHeaders = parseHeaders(request.path("header"), properties, required, locations);
         String bodyTemplate = parseBody(request.path("body"), properties, required, locations, staticHeaders);
         if (required.isEmpty()) schema.remove("required");
@@ -248,11 +256,12 @@ public class PostmanCollectionParser implements SpecParser {
     }
 
     /**
-     * Normalizes the request URL to a path template relative to the connection's baseUrl:
-     * a leading {@code {{baseUrl}}}-style variable or absolute origin is stripped, {@code :var}
-     * and inline {@code {{var}}} path segments become {@code {var}} template params.
+     * Normalizes the request URL to a path template. The default mode strips a leading
+     * {@code {{baseUrl}}}-style variable or absolute origin; source-URL mode retains each resolved
+     * absolute origin. {@code :var} and inline {@code {{var}}} path segments become template params.
      */
     private String parseUrl(JsonNode url, Map<String, String> variables,
+                            boolean preserveSourceUrls,
                             ObjectNode properties, ArrayNode required,
                             Map<String, String> locations) {
         String raw = url.isTextual() ? url.asText() : url.path("raw").asText("/");
@@ -260,15 +269,31 @@ public class PostmanCollectionParser implements SpecParser {
 
         String pathPart = raw;
         Matcher baseVar = BASE_URL_VAR.matcher(pathPart);
-        if (baseVar.find()) {
-            pathPart = pathPart.substring(baseVar.end());
-        } else if (pathPart.matches("^https?://.*")) {
-            int slash = pathPart.indexOf('/', pathPart.indexOf("//") + 2);
-            pathPart = slash >= 0 ? pathPart.substring(slash) : "/";
+        if (preserveSourceUrls) {
+            // A conventional but unresolved {{baseUrl}} is not itself a source host. Keep the
+            // request path and let ApiCollectionConnector resolve it against the explicit fallback
+            // base URL. Other unresolved authority variables are ambiguous and unsafe to preserve.
+            if (baseVar.find()) {
+                pathPart = pathPart.substring(baseVar.end());
+            } else if (pathPart.matches("^\\{\\{[^}]+}}.*")) {
+                throw new IllegalArgumentException("Cannot preserve an unresolved Postman URL variable in "
+                        + raw + " — define it at collection level or use connection-base mode");
+            }
+        } else {
+            if (baseVar.find()) {
+                pathPart = pathPart.substring(baseVar.end());
+            } else if (pathPart.matches("^https?://.*")) {
+                int slash = pathPart.indexOf('/', pathPart.indexOf("//") + 2);
+                pathPart = slash >= 0 ? pathPart.substring(slash) : "/";
+            }
         }
         int q = pathPart.indexOf('?');
         if (q >= 0) pathPart = pathPart.substring(0, q);
-        if (!pathPart.startsWith("/")) pathPart = "/" + pathPart;
+        int fragment = pathPart.indexOf('#');
+        if (fragment >= 0) pathPart = pathPart.substring(0, fragment);
+        if (!pathPart.startsWith("/") && !pathPart.matches("^https?://.*")) {
+            pathPart = "/" + pathPart;
+        }
 
         // :var → {var}
         Matcher pathVars = PATH_VAR.matcher(pathPart);

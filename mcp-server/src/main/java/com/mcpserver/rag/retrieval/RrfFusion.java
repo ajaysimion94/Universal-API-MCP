@@ -20,14 +20,30 @@ public final class RrfFusion {
     }
 
     /**
+     * Unweighted fusion — identical, float-for-float, to {@link #fuse(List, List, float, float)}
+     * at weights (1, 1).
+     *
      * @param vectorRanked   candidates ordered by vector cosine similarity (best first)
      * @param lexicalRanked  candidates ordered by lexical ts_rank (best first)
      * @return fused candidates keyed by chunk id with their RRF score, best first
      */
     public List<Map.Entry<String, Float>> fuse(List<String> vectorRanked, List<String> lexicalRanked) {
+        return fuse(vectorRanked, lexicalRanked, 1f, 1f);
+    }
+
+    /**
+     * Weighted fusion. The per-leg weights are what the ranking policy learns
+     * (com.mcpserver.learning): raising one leg's weight lifts every id it ranked, so a query class
+     * where lexical matching wins can be served by a different blend than one where it loses.
+     *
+     * @param vectorWeight   multiplier on the vector leg's reciprocal-rank contribution
+     * @param lexicalWeight  multiplier on the lexical leg's contribution
+     */
+    public List<Map.Entry<String, Float>> fuse(List<String> vectorRanked, List<String> lexicalRanked,
+                                               float vectorWeight, float lexicalWeight) {
         Map<String, Float> scores = new HashMap<>();
-        accumulate(vectorRanked, scores);
-        accumulate(lexicalRanked, scores);
+        accumulate(vectorRanked, scores, vectorWeight);
+        accumulate(lexicalRanked, scores, lexicalWeight);
         return scores.entrySet().stream()
                 // Equal RRF scores are common (for example, an item at rank 1 in only
                 // one leg). HashMap iteration order is not a ranking contract, so use
@@ -37,10 +53,10 @@ public final class RrfFusion {
                 .toList();
     }
 
-    private void accumulate(List<String> ranked, Map<String, Float> scores) {
+    private void accumulate(List<String> ranked, Map<String, Float> scores, float weight) {
         for (int i = 0; i < ranked.size(); i++) {
             int rank = i + 1;
-            scores.merge(ranked.get(i), 1f / (k + rank), Float::sum);
+            scores.merge(ranked.get(i), weight / (k + rank), Float::sum);
         }
     }
 }

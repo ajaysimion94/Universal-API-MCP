@@ -64,7 +64,15 @@ export async function mount(outlet) {
           : `<label class="form-field"><span>Spec file</span><input type="file" id="spec-file" class="file-input-hidden" accept=".json,.yaml,.yml,application/json"><button class="btn btn-ghost spec-file-btn" type="button" data-action="choose-spec">${icon("upload", 14)} ${escapeHtml(state.specFile?.name || "Choose Postman / OpenAPI file")}</button></label>`}
       </div>
       ${state.authNotice ? `<p class="connection-auth-notice">${escapeHtml(state.authNotice)}</p>` : ""}
-      <label class="form-field"><span>API base URL <small>(optional; derived from spec when blank)</small></span><input class="form-input" name="baseUrl" placeholder="https://api.example.com"></label>
+      <fieldset class="url-policy">
+        <legend>Request URLs</legend>
+        <div class="url-policy-options">
+          <label class="url-policy-option"><input type="radio" name="apiUrlMode" value="CONNECTION_BASE" checked><span><strong>Use one base URL</strong><small>Replace every imported host with the connection base URL.</small></span></label>
+          <label class="url-policy-option"><input type="radio" name="apiUrlMode" value="SOURCE_URLS"><span><strong>Keep source URLs</strong><small>Call each Postman or OpenAPI URL on the host declared in the source.</small></span></label>
+        </div>
+      </fieldset>
+      <label class="form-field"><span>Base URL <small>(override, or fallback for relative source URLs)</small></span><input class="form-input" name="baseUrl" placeholder="https://api.example.com"></label>
+      <p class="url-policy-warning">When source URLs are kept, stored connection credentials are sent to every preserved host.</p>
       <div class="form-row">
         <label class="form-field"><span>Authentication</span><select class="form-input" name="authMode" id="auth-mode">
           ${["NONE", "BASIC", "BEARER", "API_KEY_HEADER"].map((mode) => `<option value="${mode}" ${state.authMode === mode ? "selected" : ""}>${mode.replaceAll("_", " ")}</option>`).join("")}
@@ -83,13 +91,20 @@ export async function mount(outlet) {
     if (state.editingAuth !== connection.id) return "";
     return `<form class="connection-form connection-auth-form" data-connection-id="${escapeAttr(connection.id)}">
       <div class="form-row">
+        <label class="form-field"><span>Request URLs</span><select class="form-input" name="apiUrlMode">
+          <option value="CONNECTION_BASE" ${connection.apiUrlMode !== "SOURCE_URLS" ? "selected" : ""}>Use one base URL</option>
+          <option value="SOURCE_URLS" ${connection.apiUrlMode === "SOURCE_URLS" ? "selected" : ""}>Keep source URLs</option>
+        </select></label>
+        <label class="form-field"><span>Base URL <small>(override or relative-URL fallback)</small></span><input class="form-input" name="baseUrl" value="${escapeAttr(connection.baseUrl || "")}"></label>
+      </div>
+      <div class="form-row">
         <label class="form-field"><span>Authentication</span><select class="form-input" name="authMode">
           ${["NONE", "BASIC", "BEARER", "API_KEY_HEADER"].map((mode) => `<option value="${mode}" ${connection.authMode === mode ? "selected" : ""}>${mode.replaceAll("_", " ")}</option>`).join("")}
         </select></label>
         <label class="form-field"><span>Username / header name</span><input class="form-input" name="username" value="${escapeAttr(connection.authUsername || "")}"></label>
       </div>
       <label class="form-field"><span>New secret <small>(blank keeps current)</small></span><input class="form-input" name="password" type="password"></label>
-      <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="cancel-auth">Cancel</button><button class="btn btn-primary" type="submit">Save auth</button></div>
+      <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="cancel-auth">Cancel</button><button class="btn btn-primary" type="submit">Save settings</button></div>
     </form>`;
   }
 
@@ -121,14 +136,14 @@ export async function mount(outlet) {
     return `<div class="connection-block">
       <div class="plugin-row">
         <div class="plugin-info">
-          <div class="plugin-name-row"><span class="plugin-name">${escapeHtml(connection.name)}</span><span class="plugin-category mono optional">${typeLabel(connection.type)}</span>${connection.specFormat ? `<span class="plugin-category mono optional">${escapeHtml(connection.specFormat)}</span>` : ""}</div>
+          <div class="plugin-name-row"><span class="plugin-name">${escapeHtml(connection.name)}</span><span class="plugin-category mono optional">${typeLabel(connection.type)}</span>${connection.specFormat ? `<span class="plugin-category mono optional">${escapeHtml(connection.specFormat)}</span>` : ""}${isApi ? `<span class="plugin-category mono optional">${connection.apiUrlMode === "SOURCE_URLS" ? "source URLs" : "base override"}</span>` : ""}</div>
           <p class="plugin-description">${escapeHtml(connection.baseUrl || connection.specSourceUrl || "No base URL")}</p>
           <div class="plugin-health mono">${escapeHtml(connection.status === "ERROR" && connection.lastError ? connection.lastError : connection.lastSyncedAt ? `Last synced ${formatDate(connection.lastSyncedAt)}` : isApi ? "Knowledge index not refreshed yet" : "Content sync not started yet")}${job?.itemsTotal ? ` — ${job.itemsProcessed}/${job.itemsTotal}` : busy ? " — working…" : ""}</div>
         </div>
         <div class="plugin-status"><span class="status-pill ${statusClass(connection.status)}">${connection.status === "CONNECTED" ? icon("check", 12) : connection.status === "ERROR" ? icon("alert", 12) : ""}${statusLabel(connection.status, busy)}</span></div>
         <div class="plugin-actions">
           ${busy ? '<div class="install-progress"><div class="install-progress-bar"></div></div>' : `<button class="btn btn-ghost" type="button" data-action="backfill" data-id="${escapeAttr(connection.id)}" ${connection.status === "CONNECTED" ? "" : "disabled"}>${isApi ? "Refresh knowledge" : "Backfill"}</button>`}
-          ${isApi ? `<button class="btn btn-ghost ${state.editingAuth === connection.id ? "is-active" : ""}" type="button" data-action="edit-auth" data-id="${escapeAttr(connection.id)}">Edit auth</button>` : ""}
+          ${isApi ? `<button class="btn btn-ghost ${state.editingAuth === connection.id ? "is-active" : ""}" type="button" data-action="edit-auth" data-id="${escapeAttr(connection.id)}">Edit settings</button>` : ""}
           ${toggle(connection.status !== "DISABLED", connection.status === "DISABLED" ? "Disabled" : "Enabled", "toggle-connection", connection.id)}
           <button class="btn btn-ghost" type="button" data-action="delete-connection" data-id="${escapeAttr(connection.id)}" aria-label="Delete ${escapeAttr(connection.name)}">${icon("trash", 14)}</button>
         </div>
@@ -319,6 +334,7 @@ export async function mount(outlet) {
             username: data.username,
             password: data.password,
             apiKeyHeader: data.apiKeyHeader,
+            apiUrlMode: data.apiUrlMode,
           });
         } else {
           result = await api.createConnection({
@@ -330,6 +346,7 @@ export async function mount(outlet) {
             specUrl: data.specUrl,
             authMode: state.formType === "API_COLLECTION" ? state.authMode : undefined,
             apiKeyHeader: data.apiKeyHeader,
+            apiUrlMode: data.apiUrlMode,
           });
         }
         state.formOpen = false;
@@ -341,9 +358,11 @@ export async function mount(outlet) {
           authMode: data.authMode,
           username: data.username || undefined,
           password: data.password || undefined,
+          baseUrl: data.baseUrl || undefined,
+          apiUrlMode: data.apiUrlMode,
         });
         state.editingAuth = "";
-        state.notice = "Authentication updated; connection verification started.";
+        state.notice = "Connection settings saved; URLs are being re-imported and verified.";
         await load();
       }
     } catch (error) {

@@ -1,5 +1,5 @@
 import { api } from "../api.js";
-import { banner, escapeAttr, escapeHtml, formatDate, icon, markdown, message, on } from "../ui.js";
+import { escapeAttr, escapeHtml, formatDate, icon, markdown, message, on } from "../ui.js";
 
 const EXAMPLE = `---
 title: API activity
@@ -293,14 +293,37 @@ function interpolate(text, datasets) {
   return String(text ?? "").replace(/\{\{([^}]*)\}\}/g, (_match, expression) => evaluate(expression, datasets));
 }
 
+function isNumericValue(value) {
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value !== "string" || !value.trim()) return false;
+  return Number.isFinite(Number(value));
+}
+
 // Boolean cells colour themselves from their value (green/red) rather than being authored —
 // documented under "Colour" in query-language-reference.md — so this is shared by every table
 // renderer (DataTable, QuickTable, LabelTable) instead of each printing "true"/"false" as text.
-function formatCell(value) {
-  if (value === "" || value === null || value === undefined) return "—";
-  if (typeof value === "boolean") return `<span class="insight-flag is-${value}">${value}</span>`;
-  if (typeof value === "object") return escapeHtml(JSON.stringify(value));
-  return escapeHtml(String(value));
+// Cells are clipped to a max width by the stylesheet, so the untruncated value is carried on
+// `title` — otherwise a long path or description is simply unreadable in the table.
+function tableCell(value, numericColumn) {
+  if (value === "" || value === null || value === undefined) return '<td class="is-empty">—</td>';
+  if (typeof value === "boolean") return `<td><span class="insight-flag is-${value}">${value}</span></td>`;
+  const text = typeof value === "object" ? JSON.stringify(value) : String(value);
+  const numeric = numericColumn ?? isNumericValue(value);
+  return `<td class="${numeric ? "is-numeric" : ""}" title="${escapeAttr(text)}">${escapeHtml(text)}</td>`;
+}
+
+// Whether a column holds figures, decided once for the whole column rather than per cell: a
+// right-aligned tabular column only reads as a column if every row aligns the same way, and a
+// single null or blank in an otherwise numeric field must not flip the alignment mid-table.
+function isNumericColumn(rows, field) {
+  let seen = 0;
+  for (const row of rows) {
+    const value = row[field];
+    if (value === null || value === undefined || value === "") continue;
+    if (!isNumericValue(value)) return false;
+    if (++seen >= 20) break;
+  }
+  return seen > 0;
 }
 
 function dataTable(dataset, component) {
@@ -308,9 +331,11 @@ function dataTable(dataset, component) {
   const columns = component.props.columns
     ? parseColumnSpecs(component.props.columns)
     : fallbackFields.map((field) => ({ field, label: field }));
+  const rows = dataset.rows.slice(0, 100);
+  const numeric = columns.map((column) => isNumericColumn(rows, column.field));
   return `<section class="insight-card">
     <header class="insight-card-heading"><div><p class="insight-card-kicker">Dataset</p><h2>${escapeHtml(component.props.title || datasetName(component))}</h2></div><span>${dataset.rows.length} rows</span></header>
-    <div class="insight-table-scroll"><table class="insight-data-table"><thead><tr>${columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}</tr></thead><tbody>${dataset.rows.slice(0, 100).map((row) => `<tr>${columns.map((column) => `<td>${formatCell(row[column.field])}</td>`).join("")}</tr>`).join("")}</tbody></table>${dataset.rows.length > 100 ? `<p class="insight-table-note">Showing the first 100 of ${dataset.rows.length} rows.</p>` : ""}</div>
+    <div class="insight-table-scroll"><table class="insight-data-table"><thead><tr>${columns.map((column, index) => `<th class="${numeric[index] ? "is-numeric" : ""}">${escapeHtml(column.label)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${columns.map((column, index) => tableCell(row[column.field], numeric[index])).join("")}</tr>`).join("")}</tbody></table></div>${dataset.rows.length > 100 ? `<p class="insight-table-note">Showing the first 100 of ${dataset.rows.length} rows.</p>` : ""}
   </section>`;
 }
 
@@ -323,7 +348,7 @@ function inlineTable(component, datasets) {
   const headers = explicitHeaders || (component.type === "QuickTable" ? ["Label", "Value"] : null);
   return `<section class="insight-card insight-inline-table">
     <header class="insight-card-heading"><div><p class="insight-card-kicker">Table</p><h2>${escapeHtml(component.props.title || (component.type === "QuickTable" ? "Summary" : "Details"))}</h2></div></header>
-    <div class="insight-table-scroll"><table class="insight-data-table">${headers ? `<thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead>` : ""}<tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${formatCell(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>
+    <div class="insight-table-scroll"><table class="insight-data-table">${headers ? `<thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead>` : ""}<tbody>${rows.map((row) => `<tr>${row.map((cell) => tableCell(cell)).join("")}</tr>`).join("")}</tbody></table></div>
   </section>`;
 }
 
@@ -348,42 +373,61 @@ function metricsBlock(data) {
 }
 
 const MAX_BARS = 24;
+const MAX_AXIS_LABEL = 12;
+
+// Axis labels are rotated, so their length is consumed as vertical space below the plot. Capping
+// the character count is what keeps them inside the viewBox — the SVG paints outside its box
+// (overflow: visible, needed for value labels above the tallest bar), so an uncapped category name
+// would run over whatever card is rendered next rather than being clipped.
+function axisLabel(text) {
+  return text.length > MAX_AXIS_LABEL ? `${text.slice(0, MAX_AXIS_LABEL - 1)}…` : text;
+}
 
 function barChart(dataset, component) {
   const x = component.props.x;
   const y = component.props.y;
+  const title = component.props.title || `${y} by ${x}`;
   // Chartable rows are counted before the cap so the header reports the real category count and
   // the truncation is stated, rather than the chart silently presenting a subset as the whole.
   const chartable = dataset.rows.map((row) => ({ label: String(row[x] ?? "—"), value: Number(row[y]) })).filter((point) => Number.isFinite(point.value));
   const points = chartable.slice(0, MAX_BARS);
-  const width = 700;
-  const height = 280;
+  // The SVG scales to its container, and scaling also multiplies the 11px label type — at 700 wide
+  // in a full-width card that landed near 1.7×, so axis and value labels rendered at ~19px and the
+  // chart towered over every other card. Authoring at the width the card actually gets (capped to
+  // the same value in CSS) keeps the chart at roughly 1:1 and its type at the size it was set in.
+  const width = 1000;
+  const height = 330;
   const left = 48;
   const right = 18;
-  const top = 24;
-  const bottom = 58;
+  const top = 26;
+  const bottom = 76;
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
   const maximum = Math.max(1, ...points.map((point) => point.value));
   const slot = points.length ? plotWidth / points.length : plotWidth;
   const barWidth = Math.max(7, Math.min(40, slot - 8));
+  // Printed values turn to overlapping mush once the bars are narrow; past that density the hover
+  // tooltip and the data table twin are the way to read exact numbers.
+  const showValues = slot >= 42;
+  const baseline = top + plotHeight;
   const bars = points.map((point, index) => {
     const barHeight = point.value / maximum * plotHeight;
     const barX = left + index * slot + (slot - barWidth) / 2;
-    const barY = top + plotHeight - barHeight;
-    return `<g><rect x="${barX}" y="${barY}" width="${barWidth}" height="${barHeight}" rx="4" class="insight-bar"></rect><text x="${barX + barWidth / 2}" y="${barY - 6}" text-anchor="middle" class="insight-value-label">${escapeHtml(point.value)}</text><text x="${barX + barWidth / 2}" y="${top + plotHeight + 20}" text-anchor="end" transform="rotate(-35 ${barX + barWidth / 2} ${top + plotHeight + 20})" class="insight-axis-label">${escapeHtml(point.label)}</text></g>`;
+    const barY = baseline - barHeight;
+    const center = barX + barWidth / 2;
+    return `<g class="insight-bar-group"><title>${escapeHtml(point.label)}: ${escapeHtml(point.value)}</title><rect x="${barX}" y="${top}" width="${barWidth}" height="${plotHeight}" class="insight-bar-hit"></rect><rect x="${barX}" y="${barY}" width="${barWidth}" height="${barHeight}" rx="4" class="insight-bar"></rect>${showValues ? `<text x="${center}" y="${barY - 6}" text-anchor="middle" class="insight-value-label">${escapeHtml(point.value)}</text>` : ""}<text x="${center}" y="${baseline + 16}" text-anchor="end" transform="rotate(-35 ${center} ${baseline + 16})" class="insight-axis-label">${escapeHtml(axisLabel(point.label))}</text></g>`;
   }).join("");
   // The twin is the accessible route to the values, so it carries every chartable row (to the same
   // 100-row ceiling <DataTable> uses), not just the bars that fit on the axis.
   const twinRows = chartable.slice(0, 100);
   const twin = chartable.length ? `<details class="insight-table-twin"><summary>Show chart data table</summary>
-    <div class="insight-table-scroll"><table class="insight-data-table"><thead><tr><th>${escapeHtml(x)}</th><th>${escapeHtml(y)}</th></tr></thead><tbody>${twinRows.map((point) => `<tr><td>${escapeHtml(point.label)}</td><td>${escapeHtml(point.value)}</td></tr>`).join("")}</tbody></table>${chartable.length > twinRows.length ? `<p class="insight-table-note">Showing the first ${twinRows.length} of ${chartable.length} rows.</p>` : ""}</div>
+    <div class="insight-table-scroll"><table class="insight-data-table"><thead><tr><th>${escapeHtml(x)}</th><th class="is-numeric">${escapeHtml(y)}</th></tr></thead><tbody>${twinRows.map((point) => `<tr>${tableCell(point.label, false)}${tableCell(point.value, true)}</tr>`).join("")}</tbody></table></div>${chartable.length > twinRows.length ? `<p class="insight-table-note">Showing the first ${twinRows.length} of ${chartable.length} rows.</p>` : ""}
   </details>` : "";
   const truncated = chartable.length > points.length
     ? `<p class="insight-table-note">Charting the first ${points.length} of ${chartable.length} categories — open the data table for the rest.</p>`
     : "";
-  return `<section class="insight-card insight-chart-card"><header class="insight-card-heading"><div><p class="insight-card-kicker">Comparison</p><h2>${escapeHtml(component.props.title || `${y} by ${x}`)}</h2></div><span>${chartable.length} categories</span></header>
-    ${points.length ? `<svg class="insight-bar-chart" viewBox="0 0 ${width} ${height}" role="img">${[0, .5, 1].map((tick) => { const position = top + plotHeight - tick * plotHeight; return `<g><line x1="${left}" x2="${width - right}" y1="${position}" y2="${position}" class="insight-grid-line"></line><text x="${left - 9}" y="${position + 4}" text-anchor="end" class="insight-axis-label">${Math.round(maximum * tick)}</text></g>`; }).join("")}${bars}</svg>` : '<p class="insight-no-data">No numeric rows to chart.</p>'}
+  return `<section class="insight-card insight-chart-card"><header class="insight-card-heading"><div><p class="insight-card-kicker">Comparison</p><h2>${escapeHtml(title)}</h2></div><span>${chartable.length} categories</span></header>
+    ${points.length ? `<svg class="insight-bar-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeAttr(`${title} — bar chart of ${points.length} categories, highest value ${maximum}. The same figures are listed in the chart data table below.`)}">${[0, .5, 1].map((tick) => { const position = baseline - tick * plotHeight; return `<g><line x1="${left}" x2="${width - right}" y1="${position}" y2="${position}" class="insight-grid-line"></line><text x="${left - 9}" y="${position + 4}" text-anchor="end" class="insight-axis-label">${Math.round(maximum * tick)}</text></g>`; }).join("")}${bars}</svg>` : '<p class="insight-no-data">No numeric rows to chart.</p>'}
     ${truncated}
     ${twin}
   </section>`;
@@ -418,6 +462,11 @@ function renderInsight(data) {
 }
 
 const STORE_KEY = "mcp.insights.workspace.v1";
+
+// Run/save are reachable from the editor without leaving the keyboard — this page is used the way
+// an IDE is, and the alternative is a mouse trip to the toolbar after every edit.
+const IS_APPLE = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+const SHORTCUT_KEY = IS_APPLE ? "⌘" : "Ctrl+";
 
 /**
  * Which insight was open and whether the editor was showing. Only these two preferences are local —
@@ -485,7 +534,17 @@ export async function mount(outlet) {
   function parameterControls() {
     const params = state.analysis?.params || state.data?.params || [];
     if (!params.length) return "";
-    return `<div class="insight-params" aria-label="Insight parameters">${params.map((param) => `<label><span>${escapeHtml(param.name)}</span><input data-param="${escapeAttr(param.name)}" type="${param.type === "number" ? "number" : "text"}" value="${escapeAttr(state.parameters[param.name] ?? param.defaultValue ?? "")}"></label>`).join("")}</div>`;
+    // Labelled as a group: without it the inputs read as loose fields between the toolbar and the
+    // workspace, with nothing saying they are the document's declared parameters.
+    return `<div class="insight-params" role="group" aria-label="Insight parameters"><span class="insight-params-kicker">Parameters</span>${params.map((param) => `<label><span>${escapeHtml(param.name)}</span><input data-param="${escapeAttr(param.name)}" type="${param.type === "number" ? "number" : "text"}" value="${escapeAttr(state.parameters[param.name] ?? param.defaultValue ?? "")}"></label>`).join("")}</div>`;
+  }
+
+  /** The result panel is the largest region on the page; when empty it should offer the next step. */
+  function emptyPreview() {
+    if (state.opening) return '<div class="insight-preview-empty"><h2>Opening…</h2></div>';
+    return `<div class="insight-preview-empty">${icon("file", 24)}<h2>Ready for a query</h2><p>Run the document to fetch data from the connected apps and render its datasets.</p>
+      <button class="insight-run-button" type="button" data-action="run-insight" ${state.running ? "disabled" : ""}>${icon("play", 15)} Run insight</button>
+      <p class="insight-empty-hint">or press ${escapeHtml(SHORTCUT_KEY)}Enter</p></div>`;
   }
 
   /** When the result was produced, and whether it can still be trusted to match the document. */
@@ -521,7 +580,15 @@ export async function mount(outlet) {
       : null;
     outlet.innerHTML = `<section class="insight-page" aria-labelledby="insight-page-title">
       <header class="insight-page-header"><div><p class="eyebrow">${icon("file", 14)} Insight workspace</p><h1 id="insight-page-title">Insights</h1><p>Write RQL beside the view it drives. One insight can read from several connected apps.</p></div>
-        <div class="insight-actions"><label class="insight-name-field"><span>Name</span><input id="insight-name" value="${escapeAttr(state.name)}"></label><label class="insight-connection-picker"><span>Default app</span><select id="insight-connection"><option value="">All connected apps</option>${usable.map((connection) => `<option value="${escapeAttr(connection.id)}" ${state.connectionId === connection.id ? "selected" : ""}>${escapeHtml(connection.name)}</option>`).join("")}</select></label><button class="btn ${state.editing ? "is-active" : ""}" type="button" data-action="toggle-editor" aria-pressed="${state.editing}">${icon("file", 15)} Edit</button><button class="btn" type="button" data-action="save-insight" ${state.saving ? "disabled" : ""}>${icon("download", 15)} ${state.saving ? "Saving…" : "Save"}</button><button class="insight-run-button" type="button" data-action="run-insight" ${state.running ? "disabled" : ""}>${icon("play", 15)} ${state.running ? "Running…" : "Run insight"}</button></div>
+        <div class="insight-actions">
+          <label class="insight-name-field"><span>Name</span><input id="insight-name" value="${escapeAttr(state.name)}"></label>
+          <label class="insight-connection-picker"><span>Default app</span><select id="insight-connection"><option value="">All connected apps</option>${usable.map((connection) => `<option value="${escapeAttr(connection.id)}" ${state.connectionId === connection.id ? "selected" : ""}>${escapeHtml(connection.name)}</option>`).join("")}</select></label>
+          <div class="insight-button-group">
+            <button class="btn ${state.editing ? "is-active" : ""}" type="button" data-action="toggle-editor" aria-pressed="${state.editing}" title="Show or hide the document editor">${icon("file", 15)} Edit</button>
+            <button class="btn" type="button" data-action="save-insight" ${state.saving ? "disabled" : ""} title="Save (${SHORTCUT_KEY}S)">${icon("download", 15)} ${state.saving ? "Saving…" : "Save"}</button>
+            <button class="insight-run-button" type="button" data-action="run-insight" ${state.running ? "disabled" : ""} title="Run insight (${SHORTCUT_KEY}Enter)">${state.running ? '<span class="insight-run-spinner" aria-hidden="true"></span>' : icon("play", 15)} ${state.running ? "Running…" : "Run insight"}</button>
+          </div>
+        </div>
       </header>
       ${!usable.length ? '<div class="insight-connection-note">Import and connect an API collection on Connections to run an insight.</div>' : ""}
       ${hiddenDiagnosticsNote()}
@@ -529,7 +596,7 @@ export async function mount(outlet) {
       <div class="insight-workspace ${state.editing ? "is-editing" : ""}">
         <nav class="insight-library" aria-label="Saved insights"><header><span>Saved insights</span><button class="btn btn-sm" type="button" data-action="new-insight">New</button></header>${state.saved.length ? `<ul>${state.saved.map((insight) => `<li><button class="insight-library-item ${insight.id === state.activeId ? "is-active" : ""}" type="button" data-action="open-insight" data-id="${escapeAttr(insight.id)}"><strong>${escapeHtml(insight.name)}</strong>${insight.description ? `<small>${escapeHtml(insight.description)}</small>` : ""}</button><button class="insight-library-delete" type="button" data-action="delete-insight" data-id="${escapeAttr(insight.id)}" aria-label="Delete ${escapeAttr(insight.name)}">${icon("trash", 13)}</button></li>`).join("")}</ul>` : '<p class="insight-library-empty">Nothing saved yet. Build one, then press Save.</p>'}</nav>
         ${state.editing ? editorPanel() : ""}
-        <section class="insight-preview-panel" aria-live="polite"><header><span>Live insight</span><small>${previewStatus()}</small></header>${state.error ? `<div class="insight-run-error">${icon("alert", 15)} ${escapeHtml(state.error)}</div>` : ""}${state.runNote ? `<p class="insight-run-note">${escapeHtml(state.runNote)}</p>` : ""}${state.data ? renderInsight(state.data) : state.opening ? '<div class="insight-preview-empty"><h2>Opening…</h2></div>' : `<div class="insight-preview-empty">${icon("file", 24)}<h2>Ready for a query</h2><p>Run the document to fetch data and render its datasets.</p></div>`}</section>
+        <section class="insight-preview-panel ${state.running ? "is-running" : ""}" aria-busy="${state.running}"><header><span>Live insight</span><small aria-live="polite">${state.running ? "Running…" : previewStatus()}</small></header><div class="insight-preview-body">${state.error ? `<div class="insight-run-error">${icon("alert", 15)} <span>${escapeHtml(state.error)}</span><button class="insight-error-dismiss" type="button" data-action="dismiss-banner" aria-label="Dismiss error">${icon("close", 13)}</button></div>` : ""}${state.runNote ? `<p class="insight-run-note">${escapeHtml(state.runNote)}</p>` : ""}${state.data ? renderInsight(state.data) : emptyPreview()}</div></section>
       </div>
     </section>`;
     if (caret) {
@@ -611,61 +678,74 @@ export async function mount(outlet) {
     }
   }
 
+  async function runInsight() {
+    if (state.running) return;
+    state.running = true;
+    state.error = "";
+    render();
+    try {
+      const payload = {
+        source: state.source,
+        connectionId: state.connectionId || undefined,
+        parameters: state.parameters,
+      };
+      if (state.activeId) {
+        // Saved insight: the server runs it and keeps the result on the row.
+        const result = await api.runInsight(state.activeId, payload);
+        state.data = result.data;
+        state.lastRunAt = result.ranAt || new Date().toISOString();
+        state.runNote = result.stored ? "" : (result.storeNote || "");
+      } else {
+        // Unsaved draft: no id to store against, so this stays a pure evaluation.
+        state.data = await api.loadInsightData(payload);
+        state.lastRunAt = new Date().toISOString();
+        state.runNote = "Save this insight to keep its result.";
+      }
+      state.dataFresh = true;
+      state.analysis = { ...state.analysis, diagnostics: state.data.diagnostics, params: state.data.params, outline: state.data.outline };
+    } catch (error) {
+      state.error = message(error, "The insight could not be loaded.");
+    } finally {
+      state.running = false;
+      render();
+    }
+  }
+
+  async function saveInsight() {
+    if (state.saving) return;
+    state.saving = true;
+    render();
+    try {
+      const payload = { name: state.name, source: state.source, connectionId: state.connectionId || null };
+      const wasNew = !state.activeId;
+      const stored = state.activeId ? await api.updateInsight(state.activeId, payload) : await api.createInsight(payload);
+      state.activeId = stored.id;
+      state.savedSource = state.source;
+      state.saved = await api.listInsights();
+      saveStore({ lastInsightId: stored.id, editing: state.editing });
+      // A draft's result was computed before the insight had an id, so nothing was stored for it.
+      if (wasNew && state.data) state.runNote = "Run again to save this result with the insight.";
+    } catch (error) {
+      state.error = message(error, "Save failed");
+    } finally {
+      state.saving = false;
+      render();
+    }
+  }
+
   on(outlet, "click", "[data-action]", async (_event, target) => {
     const { action, id } = target.dataset;
     if (action === "run-insight") {
-      state.running = true;
-      state.error = "";
-      render();
-      try {
-        const payload = {
-          source: state.source,
-          connectionId: state.connectionId || undefined,
-          parameters: state.parameters,
-        };
-        if (state.activeId) {
-          // Saved insight: the server runs it and keeps the result on the row.
-          const result = await api.runInsight(state.activeId, payload);
-          state.data = result.data;
-          state.lastRunAt = result.ranAt || new Date().toISOString();
-          state.runNote = result.stored ? "" : (result.storeNote || "");
-        } else {
-          // Unsaved draft: no id to store against, so this stays a pure evaluation.
-          state.data = await api.loadInsightData(payload);
-          state.lastRunAt = new Date().toISOString();
-          state.runNote = "Save this insight to keep its result.";
-        }
-        state.dataFresh = true;
-        state.analysis = { ...state.analysis, diagnostics: state.data.diagnostics, params: state.data.params, outline: state.data.outline };
-      } catch (error) {
-        state.error = message(error, "The insight could not be loaded.");
-      } finally {
-        state.running = false;
-        render();
-      }
+      await runInsight();
     } else if (action === "toggle-editor") {
       state.editing = !state.editing;
       saveStore({ lastInsightId: state.activeId, editing: state.editing });
       render();
+      // The editor is the reason the toggle was pressed — put the caret in it rather than
+      // leaving focus on a button that just moved.
+      if (state.editing) outlet.querySelector("#insight-source")?.focus();
     } else if (action === "save-insight") {
-      state.saving = true;
-      render();
-      try {
-        const payload = { name: state.name, source: state.source, connectionId: state.connectionId || null };
-        const wasNew = !state.activeId;
-        const stored = state.activeId ? await api.updateInsight(state.activeId, payload) : await api.createInsight(payload);
-        state.activeId = stored.id;
-        state.savedSource = state.source;
-        state.saved = await api.listInsights();
-        saveStore({ lastInsightId: stored.id, editing: state.editing });
-        // A draft's result was computed before the insight had an id, so nothing was stored for it.
-        if (wasNew && state.data) state.runNote = "Run again to save this result with the insight.";
-      } catch (error) {
-        state.error = message(error, "Save failed");
-      } finally {
-        state.saving = false;
-        render();
-      }
+      await saveInsight();
     } else if (action === "new-insight") {
       state.activeId = null;
       state.name = "Untitled insight";
@@ -732,6 +812,19 @@ export async function mount(outlet) {
     if (event.target.id === "insight-connection") {
       state.connectionId = event.target.value;
       analyze();
+    }
+  }, { signal: abort.signal });
+  // On document, not outlet: with nothing focused the keydown targets <body>, which never bubbles
+  // through the page outlet. The abort signal unbinds it when the route changes.
+  document.addEventListener("keydown", (event) => {
+    if (!(IS_APPLE ? event.metaKey : event.ctrlKey) || event.altKey) return;
+    if (event.key === "Enter") {
+      event.preventDefault();
+      runInsight();
+    } else if (event.key.toLowerCase() === "s") {
+      // Otherwise the browser offers to save the page, which is never what is wanted here.
+      event.preventDefault();
+      saveInsight();
     }
   }, { signal: abort.signal });
 

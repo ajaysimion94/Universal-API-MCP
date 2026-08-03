@@ -104,6 +104,67 @@ class JiraConnectorTests {
     }
 
     @Test
+    void backfillRendersCloudAdfDescriptionAndComments() throws Exception {
+        Connection c = newConnection();
+        String key = "ENG-" + (int) (Math.random() * 100000);
+        String suffix = key.replace("-", "");
+        String descriptionTerm = "adfdescription" + suffix;
+        String commentTerm = "adfcomment" + suffix;
+        stubFor(get(urlPathEqualTo("/rest/api/2/search"))
+                .willReturn(okJson("""
+                        {"total":1,"issues":[{"key":"%s","fields":{
+                          "summary":"ADF issue","status":{"name":"Open"},
+                          "assignee":{"displayName":"Ada"},"priority":{"name":"High"},
+                          "labels":[],"project":{"key":"ENG"},
+                          "description":{"type":"doc","version":1,"content":[
+                            {"type":"paragraph","content":[{"type":"text","text":"%s"}]}]},
+                          "updated":"2024-01-01T12:00:00.000+0000",
+                          "comment":{"comments":[{"author":{"displayName":"Grace"},
+                            "body":{"type":"doc","version":1,"content":[
+                              {"type":"paragraph","content":[{"type":"text","text":"%s"}]}]}}]}
+                        }}]}
+                        """.formatted(key, descriptionTerm, commentTerm))));
+
+        connector.backfill(c, (done, total) -> {});
+
+        assertThat(chunkRepository.lexicalSearch(descriptionTerm, 10))
+                .anyMatch(h -> h.sourceFileId().equals(c.id() + ":" + key));
+        assertThat(chunkRepository.lexicalSearch(commentTerm, 10))
+                .anyMatch(h -> h.sourceFileId().equals(c.id() + ":" + key));
+    }
+
+    @Test
+    void backfillFetchesDedicatedCommentPagesOnlyWhenInlineCommentsAreTruncated() throws Exception {
+        Connection c = newConnection().withDeploymentType(DeploymentType.CLOUD);
+        String key = "ENG-" + (int) (Math.random() * 100000);
+        String uniqueTerm = "paginatedcomment" + key.replace("-", "");
+        stubFor(get(urlPathEqualTo("/rest/api/2/search"))
+                .willReturn(okJson("""
+                        {"total":1,"issues":[{"key":"%s","fields":{
+                          "summary":"Many comments","status":{"name":"Open"},
+                          "assignee":{"displayName":"Ada"},"priority":{"name":"High"},
+                          "labels":[],"project":{"key":"ENG"},"description":"Description",
+                          "updated":"2024-01-01T12:00:00.000+0000",
+                          "comment":{"startAt":0,"maxResults":1,"total":2,"comments":[
+                            {"author":{"displayName":"One"},"body":"first"}]}
+                        }}]}
+                        """.formatted(key))));
+        stubFor(get(urlPathEqualTo("/rest/api/3/issue/" + key + "/comment"))
+                .withQueryParam("startAt", equalTo("0"))
+                .willReturn(okJson("""
+                        {"startAt":0,"maxResults":100,"total":2,"comments":[
+                          {"author":{"displayName":"One"},"body":"first"},
+                          {"author":{"displayName":"Two"},"body":"%s"}]}
+                        """.formatted(uniqueTerm))));
+
+        connector.backfill(c, (done, total) -> {});
+
+        assertThat(chunkRepository.lexicalSearch(uniqueTerm, 10))
+                .anyMatch(h -> h.sourceFileId().equals(c.id() + ":" + key));
+        verify(1, getRequestedFor(urlPathEqualTo("/rest/api/3/issue/" + key + "/comment")));
+    }
+
+    @Test
     void backfillUsesModernSearchEndpointWhenAvailable() throws Exception {
         // Simulates a current Jira Cloud tenant, where Atlassian retired GET /rest/api/2/search
         // in 2025 (it now returns 410 Gone there) and POST /rest/api/3/search/jql with

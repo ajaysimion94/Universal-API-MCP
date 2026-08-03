@@ -454,7 +454,20 @@ function confirmPanel(turn) {
   </section>`;
 }
 
-function ragResults(response) {
+/**
+ * Thumbs for one result. `data-action` only, never `data-example` — the delegated handler returns
+ * early on a `data-example` target, so a vote button carrying both would silently do nothing.
+ * The current vote lives on the turn, not the DOM, because every state change re-renders the outlet.
+ */
+function voteControl(chunk, vote) {
+  const button = (value, name, label) => `<button type="button" class="vote-btn${vote === value ? " is-on" : ""}"
+    data-action="rate-result" data-chunk="${escapeAttr(chunk.id)}" data-rank="${chunk.rank}" data-value="${value}"
+    aria-pressed="${vote === value}" aria-label="${label}" title="${label}">${icon(name, 13)}</button>`;
+  return `<div class="result-vote">${button(1, "thumbUp", "Helpful")}${button(-1, "thumbDown", "Not helpful")}</div>`;
+}
+
+function ragResults(turn) {
+  const response = turn.response;
   if (response.mode === "notReady") {
     return `<div class="search-not-ready">${icon("alert", 18)}<div><h2>Search needs setup</h2><p>${escapeHtml(response.message || "Install and enable the required plugins.")}</p><a href="/plugins" data-link class="btn btn-primary">Open plugins</a></div></div>`;
   }
@@ -467,14 +480,21 @@ function ragResults(response) {
     );
   }
 
-  const local = response.results.filter((result) => result.sourceKind !== "web");
+  // Rank is stamped before grouping: groupResults() buckets by source, which destroys the flat
+  // index that is the true served rank — and rank is what feedback attribution needs.
+  const local = response.results
+    .filter((result) => result.sourceKind !== "web")
+    .map((result, index) => ({ ...result, rank: index + 1 }));
   const web = response.results.filter((result) => result.sourceKind === "web");
   const groups = groupResults(local);
+  const impressionId = response.impressionId || "";
+  const votes = turn.votes || {};
   return `<div class="search-results">
     <div class="search-result-summary">
       <span><strong>${response.total ?? response.results.length}</strong> matches</span>
       <span class="mono">${response.lexicalOnly ? "lexical index" : "hybrid retrieval"}</span>
       ${response.web ? `<span class="mono">${web.length} web</span>` : ""}
+      ${response.learnedAdjustments ? `<span class="mono search-learned" title="Results adjusted from your past feedback">learned ${response.learnedAdjustments}</span>` : ""}
     </div>
     ${response.lexicalMessage ? `<p class="search-inline-notice">${escapeHtml(response.lexicalMessage)}</p>` : ""}
     ${response.webMessage ? `<p class="search-inline-notice">${escapeHtml(response.webMessage)}</p>` : ""}
@@ -488,7 +508,7 @@ function ragResults(response) {
       </button>
       <div class="file-group-chunks" ${index === 0 ? "" : "hidden"}>
         ${group.chunks.map((chunk) => `<div class="search-result">
-          <div class="search-result-meta"><span class="mono">${Number(chunk.score || 0).toFixed(3)}</span>${chunk.sourceUrl ? `<a href="${escapeAttr(chunk.sourceUrl)}" target="_blank" rel="noopener noreferrer">${icon("external", 13)} source</a>` : ""}</div>
+          <div class="search-result-meta"><span class="mono">${Number(chunk.score || 0).toFixed(3)}</span>${chunk.sourceUrl ? `<a href="${escapeAttr(chunk.sourceUrl)}" target="_blank" rel="noopener noreferrer" data-action="open-source" data-chunk="${escapeAttr(chunk.id)}" data-rank="${chunk.rank}">${icon("external", 13)} source</a>` : ""}${impressionId ? voteControl(chunk, votes[chunk.id]) : ""}</div>
           <div class="search-result-excerpt">${markdown(chunk.excerpt || chunk.description || chunk.content || "")}</div>
         </div>`).join("")}
       </div>
@@ -572,7 +592,7 @@ function turnContent(turn) {
   if (response.mode === "tool-form") return toolForm(turn);
   if (response.mode === "tool-confirm") return confirmPanel(turn);
   if (response.mode === "tool-result") return `${response.message ? banner(response.message, "status") : ""}${resultPanel(turn)}`;
-  return ragResults(response);
+  return ragResults(turn);
 }
 
 function conversationContent(session) {
@@ -865,6 +885,73 @@ export async function mount(outlet, context) {
     };
   }
 
+  // ── Search feedback ────────────────────────────────────────────────────────────────────────
+  // Implicit signals are deduped per session load: the server's unique key already collapses
+  // repeats, but re-sending on every toggle would burn requests for nothing.
+  const sentSignals = new Set();
+
+  const numberOr = (value, fallback) => (Number.isFinite(Number(value)) ? Number(value) : fallback);
+
+  /** The impression that produced the results the target sits inside, or "" if learning is off. */
+  function impressionFor(target) {
+    const turn = turnById(active(), target.closest(".session-turn")?.dataset.turnId);
+    return turn?.response?.impressionId || "";
+  }
+
+  /** Fire-and-forget: feedback must never interrupt what the user was doing. */
+  function sendSignals(target, events) {
+    const impressionId = impressionFor(target);
+    if (!impressionId || !events.length) return;
+    const fresh = events.filter((event) => {
+      const key = `${impressionId}:${event.chunkId}:${event.signal}`;
+      if (sentSignals.has(key)) return false;
+      sentSignals.add(key);
+      return true;
+    });
+    if (!fresh.length) return;
+    api.sendFeedback(impressionId, fresh).catch(() => {});
+  }
+
+  function sendExpandSignals(target, content) {
+    const events = [...content.querySelectorAll("[data-action='rate-result'][data-value='1']")]
+      .map((button) => ({
+        chunkId: button.dataset.chunk,
+        rank: numberOr(button.dataset.rank, 0),
+        signal: "EXPAND",
+      }));
+    sendSignals(target, events);
+  }
+
+  /**
+   * Clicking the lit thumb clears the vote (value 0), which the server stores as a neutral RATING
+   * so the earlier vote is retracted rather than silently kept.
+   */
+  function rateResult(target) {
+    const session = active();
+    const turnId = target.closest(".session-turn")?.dataset.turnId;
+    const turn = turnById(session, turnId);
+    if (!turn) return;
+    const chunkId = target.dataset.chunk;
+    const clicked = numberOr(target.dataset.value, 0);
+    const votes = { ...(turn.votes || {}) };
+    const next = votes[chunkId] === clicked ? 0 : clicked;
+    if (next === 0) delete votes[chunkId];
+    else votes[chunkId] = next;
+
+    patchTurn(session.id, turnId, { votes });
+    render();
+
+    const impressionId = turn.response?.impressionId;
+    if (!impressionId) return;
+    // Ratings bypass the dedupe set: flipping and clearing a vote must always reach the server.
+    api.sendFeedback(impressionId, [{
+      chunkId,
+      rank: numberOr(target.dataset.rank, 0),
+      signal: "RATING",
+      value: next,
+    }]).catch(() => {});
+  }
+
   on(outlet, "click", "[data-action], [data-example]", async (_event, target) => {
     if (target.dataset.example) {
       state.input = target.dataset.example;
@@ -917,10 +1004,20 @@ export async function mount(outlet, context) {
       content.hidden = !content.hidden;
       target.setAttribute("aria-expanded", String(!content.hidden));
       chevron.classList.toggle("chev-open", !content.hidden);
+      // Only an opening toggle is a signal, and only a real one: the first group renders
+      // pre-expanded, so counting it would credit every search with an expand nobody performed.
+      if (!content.hidden) sendExpandSignals(target, content);
+    } else if (action === "rate-result") {
+      rateResult(target);
+    } else if (action === "open-source") {
+      // No preventDefault — the link must still open. The signal is best-effort alongside it.
+      sendSignals(target, [{ chunkId: target.dataset.chunk, rank: numberOr(target.dataset.rank, 0), signal: "OPEN" }]);
     } else if (action === "copy-result") {
       const turn = turnById(active(), target.dataset.turnId);
       await navigator.clipboard.writeText(turn?.response?.result?.body || "");
       target.textContent = "Copied";
+      // Query-level signal: a tool response has no chunk to attribute the copy to.
+      sendSignals(target, [{ chunkId: "", rank: 0, signal: "COPY" }]);
     } else if (action === "response-view") {
       patchTurn(active().id, target.dataset.turnId, { responseView: target.dataset.view });
       render();

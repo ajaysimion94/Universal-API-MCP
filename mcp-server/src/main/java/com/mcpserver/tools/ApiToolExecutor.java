@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.mcpserver.config.TlsHttpClientFactory;
 import com.mcpserver.connectors.Connection;
 import com.mcpserver.connectors.CredentialCipher;
+import com.mcpserver.connectors.ApiUrlMode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -117,7 +118,7 @@ public class ApiToolExecutor {
         }
 
         URI target = renderUri(tool, connection, merged, locations, overrides.extraQueryParams());
-        assertSameHost(target, connection);
+        assertAllowedTarget(tool, target, connection);
 
         HttpRequest.Builder request = HttpRequest.newBuilder()
                 .uri(target)
@@ -203,22 +204,43 @@ public class ApiToolExecutor {
         for (var e : args.entrySet()) {
             if ("query".equals(locations.get(e.getKey())) && e.getValue() != null
                     && !String.valueOf(e.getValue()).isBlank()) {
-                query.append(query.isEmpty() ? "?" : "&")
-                        .append(URLEncoder.encode(e.getKey(), StandardCharsets.UTF_8))
-                        .append('=')
-                        .append(URLEncoder.encode(String.valueOf(e.getValue()), StandardCharsets.UTF_8));
+                appendQueryParam(query, e.getKey(), String.valueOf(e.getValue()));
             }
         }
         for (var e : extraQueryParams.entrySet()) {
             if (e.getValue() == null || e.getValue().isBlank()) continue;
-            query.append(query.isEmpty() ? "?" : "&")
-                    .append(URLEncoder.encode(e.getKey(), StandardCharsets.UTF_8))
-                    .append('=')
-                    .append(URLEncoder.encode(e.getValue(), StandardCharsets.UTF_8));
+            appendQueryParam(query, e.getKey(), e.getValue());
         }
 
-        String base = connection.baseUrl().replaceAll("/+$", "");
-        return URI.create(base + path + query);
+        boolean absoluteTemplate = path.matches("^https?://.*");
+        String target;
+        if (connection.apiUrlMode() == ApiUrlMode.SOURCE_URLS) {
+            if (!absoluteTemplate) {
+                throw new IllegalStateException("Tool " + tool.name()
+                        + " has no absolute source URL — re-import the connection or switch to "
+                        + "connection-base mode");
+            }
+            target = path;
+        } else {
+            if (absoluteTemplate) {
+                throw new IllegalStateException("Tool " + tool.name()
+                        + " contains a source URL but the connection is in connection-base mode — "
+                        + "re-import the connection");
+            }
+            String base = connection.baseUrl().replaceAll("/+$", "");
+            target = base + path;
+        }
+        if (!query.isEmpty()) {
+            target += target.contains("?") ? "&" + query.substring(1) : query;
+        }
+        return URI.create(target);
+    }
+
+    private static void appendQueryParam(StringBuilder query, String key, String value) {
+        query.append(query.isEmpty() ? "?" : "&")
+                .append(URLEncoder.encode(key, StandardCharsets.UTF_8))
+                .append('=')
+                .append(URLEncoder.encode(value, StandardCharsets.UTF_8));
     }
 
     /**
@@ -340,13 +362,36 @@ public class ApiToolExecutor {
 
     // --- guardrails ---------------------------------------------------------
 
-    /** Structural given renderUri always joins baseUrl — asserted anyway per §9. */
-    private static void assertSameHost(URI target, Connection connection) {
-        String allowedHost = URI.create(connection.baseUrl()).getHost();
-        if (allowedHost == null || !allowedHost.equalsIgnoreCase(target.getHost())) {
-            throw new IllegalStateException("Tool target host " + target.getHost()
-                    + " is outside the connection's allowlisted host " + allowedHost);
+    /**
+     * Connection-base mode pins every tool to one configured origin. Source-URL mode instead pins
+     * each tool to the exact origin imported into that tool's persisted URL template, so path/query
+     * arguments can never turn the opt-in multi-host behavior into arbitrary SSRF.
+     */
+    private static void assertAllowedTarget(ApiTool tool, URI target, Connection connection) {
+        URI allowed;
+        if (connection.apiUrlMode() == ApiUrlMode.SOURCE_URLS) {
+            String safeTemplate = tool.urlTemplate().replaceAll("\\{[^}]+}", "x");
+            allowed = URI.create(safeTemplate);
+        } else {
+            allowed = URI.create(connection.baseUrl());
         }
+        if (!sameOrigin(allowed, target)) {
+            throw new IllegalStateException("Tool target " + originOf(target)
+                    + " is outside its allowlisted origin " + originOf(allowed));
+        }
+    }
+
+    private static boolean sameOrigin(URI allowed, URI target) {
+        return allowed.getHost() != null && target.getHost() != null
+                && allowed.getScheme() != null && target.getScheme() != null
+                && allowed.getScheme().equalsIgnoreCase(target.getScheme())
+                && allowed.getHost().equalsIgnoreCase(target.getHost())
+                && effectivePort(allowed) == effectivePort(target);
+    }
+
+    private static int effectivePort(URI uri) {
+        if (uri.getPort() >= 0) return uri.getPort();
+        return "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
     }
 
     private void checkRateLimit(ApiTool tool) {

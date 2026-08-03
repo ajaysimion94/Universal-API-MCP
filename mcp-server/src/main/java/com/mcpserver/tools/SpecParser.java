@@ -22,6 +22,15 @@ public interface SpecParser {
     List<ApiToolDefinition> parse(JsonNode root);
 
     /**
+     * Parse with source URLs preserved when the caller explicitly selected that connection mode.
+     * Parsers that can recover per-request/per-operation origins override this method; the default
+     * retains the existing connection-relative behavior.
+     */
+    default List<ApiToolDefinition> parse(JsonNode root, boolean preserveSourceUrls) {
+        return parse(root);
+    }
+
+    /**
      * Best-effort base URL suggestion when the connection didn't supply one explicitly.
      * Null when the format gives no usable signal — the caller then requires an explicit baseUrl.
      */

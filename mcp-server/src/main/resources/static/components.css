@@ -1617,6 +1617,113 @@
   gap: var(--space-2xs);
 }
 
+/* Ranking feedback panel — what the search has learned, and how to undo it. */
+.learning-panel {
+  margin-top: var(--space-xl);
+  padding-top: var(--space-lg);
+  border-top: 1px solid var(--border);
+}
+
+.learning-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  margin-bottom: var(--space-3xs);
+}
+
+.learning-header h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.learning-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-2xs);
+  margin: var(--space-md) 0;
+}
+
+.learning-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+}
+
+.learning-stat-value {
+  font-size: var(--text-lg);
+  color: var(--text);
+}
+
+.learning-stat-label {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.learning-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: var(--space-md);
+  font-size: var(--text-sm);
+}
+
+.learning-table th,
+.learning-table td {
+  padding: var(--space-2xs) var(--space-xs);
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.learning-table th {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+
+.learning-table td {
+  color: var(--text-secondary);
+}
+
+.learning-table .num {
+  text-align: right;
+}
+
+.learning-table .is-positive {
+  color: var(--ok);
+}
+
+.learning-table .is-negative {
+  color: var(--danger);
+}
+
+.learning-table tr.is-disabled td {
+  color: var(--text-faint);
+}
+
+.learning-empty {
+  margin-bottom: var(--space-md);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.learning-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+}
+
+.learning-dropped {
+  font-size: var(--text-xs);
+  color: var(--danger);
+}
+
 .plugin-row {
   display: grid;
   grid-template-columns: 1fr auto auto;
@@ -1883,6 +1990,85 @@
   display: flex;
   justify-content: flex-end;
   gap: var(--space-2xs);
+}
+
+.url-policy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+}
+
+.url-policy legend {
+  padding: 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.url-policy-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2xs);
+}
+
+.url-policy-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-2xs);
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+
+.url-policy-option:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-elevated);
+}
+
+.url-policy-option:has(input:checked) {
+  border-color: var(--border-focus);
+  background: var(--accent-tint);
+}
+
+.url-policy-option input {
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.url-policy-option input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.url-policy-option span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.url-policy-option strong {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.url-policy-option small,
+.url-policy-warning {
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  color: var(--text-muted);
+}
+
+.url-policy-warning {
+  margin-top: calc(var(--space-2xs) * -1);
 }
 
 /* ── Imported API tools: autocomplete, panels, review list (§5.8/§8) ── */
@@ -4014,13 +4200,24 @@
 
 /* ── Insights (.rqd) ─────────────────────────────────────────────── */
 
+/* .app-body is a row flex box already bounded to the viewport, so the page grows into it rather
+   than re-deriving its own 100vh — the old min-height left the page sized to its content and
+   stopping short of the right edge on any wide screen. */
 .insight-page {
-  min-height: calc(100vh - var(--topbar-h));
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   padding: var(--space-md);
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
+
+/* Everything above the workspace is chrome that must keep its natural height when the workspace
+   takes the remaining space. */
+.insight-page > :not(.insight-workspace) { flex: 0 0 auto; }
 
 .insight-page-header {
   display: flex;
@@ -4062,6 +4259,25 @@
   flex-wrap: wrap;
 }
 
+/* Declared parameters read as a bounded group rather than loose inputs floating above the grid. */
+.insight-params {
+  padding: var(--space-2xs) var(--space-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  gap: var(--space-xs);
+}
+
+.insight-params-kicker {
+  align-self: center;
+  padding-right: var(--space-2xs);
+  border-right: 1px solid var(--border);
+  color: var(--text-muted);
+  font: var(--text-xs) var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .insight-connection-picker,
 .insight-params label {
   display: flex;
@@ -4087,6 +4303,17 @@
   min-width: 124px;
 }
 
+/* Edit / Save / Run read as one control cluster, separated from the two document fields beside
+   them — otherwise the toolbar is five equal-weight things in a row with no grouping. */
+.insight-button-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  padding-left: var(--space-2xs);
+  margin-left: var(--space-3xs);
+  border-left: 1px solid var(--border);
+}
+
 .insight-run-button {
   height: 32px;
   padding: 0 var(--space-sm);
@@ -4098,10 +4325,26 @@
   color: oklch(0.18 0.008 75);
   font-size: var(--text-sm);
   font-weight: 700;
+  white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease-out);
 }
 
 .insight-run-button:hover:not(:disabled) { background: var(--accent-hover); }
-.insight-run-button:disabled { cursor: not-allowed; opacity: 0.45; }
+.insight-run-button:active:not(:disabled) { background: var(--accent-press); }
+.insight-run-button:disabled { cursor: not-allowed; opacity: 0.55; }
+
+/* The run button keeps its footprint while running; the icon slot carries the activity instead. */
+.insight-run-spinner {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: insight-spin 700ms linear infinite;
+}
+
+@keyframes insight-spin { to { transform: rotate(360deg); } }
 
 .insight-connection-note,
 .insight-run-error {
@@ -4116,15 +4359,31 @@
   font-size: var(--text-sm);
 }
 
+.insight-connection-note svg,
+.insight-run-error svg { flex: 0 0 auto; }
+
 .insight-run-error {
   border-color: color-mix(in oklab, var(--danger) 45%, var(--border));
   color: var(--danger);
 }
 
+.insight-run-error > span { flex: 1 1 auto; min-width: 0; }
+
+.insight-error-dismiss {
+  flex: 0 0 auto;
+  padding: 3px;
+  display: inline-flex;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  opacity: 0.7;
+}
+
+.insight-error-dismiss:hover { opacity: 1; background: var(--danger-tint); }
+
 /* Default is library + result; the editor is a third track only while editing. The editor panel is
    added and removed from the DOM rather than hidden, so the track count always matches the children. */
 .insight-workspace {
-  min-height: 660px;
+  min-height: 620px;
   display: grid;
   grid-template-columns: minmax(190px, 0.32fr) minmax(420px, 1.4fr);
   gap: var(--space-sm);
@@ -4132,6 +4391,20 @@
 
 .insight-workspace.is-editing {
   grid-template-columns: minmax(190px, 0.32fr) minmax(340px, 0.9fr) minmax(420px, 1.1fr);
+}
+
+/* Wide enough for every layout to stay multi-column: the page becomes the viewport and each panel
+   scrolls itself, so the toolbar and the run status stay in place while a long result scrolls.
+   Below this the grid stacks, and one ordinary page scroll reads better than nested scrollers. */
+@media (min-width: 1181px) {
+  .insight-page { overflow: hidden; }
+
+  .insight-workspace {
+    min-height: 0;
+    flex: 1 1 auto;
+  }
+
+  .insight-plain-editor { min-height: 0; }
 }
 
 /* Two tracks stay comfortable well below this, so only the three-track editing layout collapses. */
@@ -4201,7 +4474,9 @@
 .insight-name-field { display: flex; flex-direction: column; gap: 2px; }
 .insight-name-field span { color: var(--text-muted); font-size: var(--text-xs); }
 .insight-name-field input {
-  padding: 4px var(--space-2xs);
+  height: 32px;
+  min-width: 200px;
+  padding: 0 var(--space-2xs);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-subtle);
@@ -4238,9 +4513,58 @@
 }
 
 .insight-editor-panel > header span,
-.insight-preview-panel > header span { color: var(--text); }
+.insight-preview-panel > header span { color: var(--text); white-space: nowrap; }
 .insight-editor-panel > header small,
-.insight-preview-panel > header small { color: var(--text-muted); font-family: var(--font-sans); }
+.insight-preview-panel > header small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A hairline under the panel header, only while a run is in flight. Quieter than a spinner overlay
+   and it sits where the result is about to change. */
+.insight-preview-panel > header::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  opacity: 0;
+  transform: translateX(-100%);
+}
+
+.insight-preview-panel.is-running > header {
+  position: relative;
+  overflow: hidden;
+}
+
+.insight-preview-panel.is-running > header::after {
+  opacity: 1;
+  animation: insight-sweep 1.1s var(--ease-out) infinite;
+}
+
+@keyframes insight-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+/* The previous result stays on screen and legible while the next one loads — it is still the
+   truth until the run returns — but recedes so it is clearly not the pending answer. */
+.insight-preview-panel.is-running .insight-preview-body {
+  opacity: 0.55;
+  transition: opacity var(--dur) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .insight-preview-panel.is-running > header::after { animation: none; transform: none; }
+  .insight-run-spinner { animation-duration: 2s; }
+}
 
 .insight-code-editor { min-height: 0; flex: 1; }
 
@@ -4265,6 +4589,9 @@
 
 .insight-editor-panel > footer {
   min-height: 62px;
+  max-height: 132px;
+  flex: 0 0 auto;
+  overflow-y: auto;
   padding: var(--space-2xs) var(--space-xs);
   border-top: 1px solid var(--border);
   background: var(--bg-panel);
@@ -4275,37 +4602,58 @@
 .insight-diagnostics {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  overflow: hidden;
+  gap: 5px;
 }
 
+/* Diagnostics used to be clipped to a single ellipsised line, which hid the part that matters —
+   the message. They wrap now, and the footer scrolls instead of the text being truncated. */
 .insight-diagnostics p {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 5px;
-  overflow: hidden;
   color: var(--text-secondary);
   font-size: var(--text-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.45;
 }
 
+.insight-diagnostics p svg { flex: 0 0 auto; margin-top: 2px; }
+.insight-diagnostics p b { font-family: var(--font-mono); font-weight: 600; }
 .insight-diagnostics p.is-error { color: var(--danger); }
 .insight-diagnostics p.is-warning { color: var(--accent); }
 .insight-diagnostics span { color: var(--text-faint); font-size: var(--text-xs); }
 
-.insight-preview-panel { overflow: auto; }
+/* The scroll lives on the body, not the panel, so the panel header (which carries "when did this
+   run / is it stale") stays visible over a long result instead of scrolling away with it. */
+.insight-preview-body {
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+
+/* Run errors and notes sat flush against the panel edge as bare flex children; inset them to the
+   same gutter the rendered document uses. */
+.insight-preview-body > .insight-run-error,
+.insight-preview-body > .insight-run-note { margin: var(--space-sm) var(--space-sm) 0; }
+.insight-preview-body > .insight-run-error + .insight-rendered,
+.insight-preview-body > .insight-run-note + .insight-rendered { padding-top: var(--space-xs); }
 
 .insight-preview-empty {
   margin: auto;
   padding: var(--space-xl);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   text-align: center;
   color: var(--text-muted);
 }
 
-.insight-preview-empty svg { margin-bottom: var(--space-xs); color: var(--text-faint); }
+.insight-preview-empty > svg { margin-bottom: var(--space-xs); color: var(--text-faint); }
 .insight-preview-empty h2 { color: var(--text); font-size: var(--text-md); }
-.insight-preview-empty p { max-width: 260px; margin-top: var(--space-2xs); font-size: var(--text-sm); }
+.insight-preview-empty p { max-width: 300px; margin-top: var(--space-2xs); font-size: var(--text-sm); }
+.insight-preview-empty .insight-run-button { margin-top: var(--space-sm); }
+.insight-empty-hint { color: var(--text-faint); font-size: var(--text-xs); }
 
 .insight-rendered {
   padding: var(--space-sm);
@@ -4327,9 +4675,21 @@
   background: var(--bg-panel);
 }
 
-.insight-stat { padding: var(--space-sm); }
-.insight-stat > span { display: block; color: var(--text-muted); font-size: var(--text-xs); }
-.insight-stat > strong { display: block; margin-top: 2px; color: var(--text); font-size: 1.65rem; font-weight: 600; letter-spacing: -0.04em; }
+.insight-stat { min-width: 0; padding: var(--space-sm); }
+.insight-stat > span { display: block; overflow: hidden; color: var(--text-muted); font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; }
+.insight-stat > strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--text);
+  font-size: 1.65rem;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  /* Tabular so a row of KPIs reads as a column of figures; wrapping so a long string value
+     stays inside its card instead of stretching the grid track. */
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
 
 .insight-card { padding: var(--space-sm); }
 
@@ -4346,22 +4706,69 @@
 .insight-card-heading > span { color: var(--text-muted); font-size: var(--text-xs); white-space: nowrap; }
 .insight-no-data { padding: var(--space-lg) 0; color: var(--text-muted); font-size: var(--text-sm); text-align: center; }
 
-.insight-bar-chart { width: 100%; height: auto; display: block; overflow: visible; }
+/* Capped at the viewBox width authored in insights.js: past that the whole drawing — including the
+   axis and value type — is scaled up, and the chart stops matching the rest of the page. */
+.insight-bar-chart { width: 100%; max-width: 1000px; height: auto; display: block; overflow: visible; }
 .insight-grid-line { stroke: var(--border); stroke-width: 1; }
-.insight-bar { fill: var(--series-1); }
-.insight-axis-label { fill: var(--text-muted); font: 11px var(--font-mono); }
-.insight-value-label { fill: var(--text-secondary); font: 11px var(--font-mono); }
+.insight-bar { fill: var(--series-1); transition: fill var(--dur-fast) var(--ease-out); }
+/* Set a step larger than the surrounding 12px metadata: the SVG is scaled down to fit the narrower
+   editing-mode panel, and at 11px the labels became unreadable there. Capped max-width keeps the
+   wide case from ever scaling these up. */
+.insight-axis-label { fill: var(--text-muted); font: 13px var(--font-mono); }
+.insight-value-label { fill: var(--text-secondary); font: 13px var(--font-mono); }
+
+/* Full-height transparent target per bar, so the <title> tooltip and the highlight are reachable
+   anywhere in the column — a short bar is only a few pixels tall to aim at. */
+.insight-bar-hit { fill: transparent; }
+.insight-bar-group:hover .insight-bar-hit { fill: var(--accent-tint); }
+.insight-bar-group:hover .insight-bar { fill: color-mix(in oklab, var(--series-1) 78%, white); }
+.insight-bar-group:hover .insight-axis-label { fill: var(--text); }
 
 .insight-table-twin { margin-top: var(--space-xs); border-top: 1px solid var(--border); padding-top: var(--space-2xs); }
 .insight-table-twin summary { color: var(--text-secondary); cursor: pointer; font-size: var(--text-xs); }
 .insight-table-twin[open] summary { margin-bottom: var(--space-2xs); }
 
-.insight-table-scroll { overflow-x: auto; }
-.insight-data-table { width: 100%; border-collapse: collapse; font: var(--text-xs) var(--font-mono); }
+/* Capped so a 100-row dataset cannot push every card below it out of reach — the table scrolls
+   inside its own card, and the sticky head below keeps the columns identifiable while it does. */
+.insight-table-scroll {
+  max-height: 420px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.insight-data-table { width: 100%; border-collapse: separate; border-spacing: 0; font: var(--text-xs) var(--font-mono); }
 .insight-data-table th,
 .insight-data-table td { max-width: 220px; padding: 7px 8px; border-bottom: 1px solid var(--border); overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
-.insight-data-table th { color: var(--text-secondary); font-weight: 600; }
-.insight-data-table td { color: var(--text-muted); }
+
+.insight-data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  /* Headers are the metadata and the cells are the content, so the cells carry the stronger value.
+     It also lifts 12px mono data text off the muted step, which was thin against the panel. */
+  color: var(--text-muted);
+  font-weight: 600;
+  /* Opaque: rows scroll underneath it. Matches the card, not the panel. */
+  background: var(--bg-panel);
+}
+
+.insight-data-table td { color: var(--text-secondary); }
+.insight-data-table tbody tr:last-child td { border-bottom: 0; }
+.insight-data-table tbody tr:hover td { background: var(--bg-elevated); color: var(--text); }
+
+/* Figures line up column-to-column; that is the only way a table of numbers is comparable at a
+   glance. Alignment is decided per column in insights.js, never per cell. */
+.insight-data-table th.is-numeric,
+.insight-data-table td.is-numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  /* Shrink-to-content: without it the auto table splits its width evenly and a three-digit id
+     column ends up as wide as a title, opening dead gaps between the figures. */
+  width: 1%;
+}
+
+.insight-data-table td.is-empty { color: var(--text-faint); }
+
 .insight-table-note { margin-top: var(--space-2xs); color: var(--text-faint); font-size: var(--text-xs); }
 
 /* A result restored from the insight rather than run just now — it can be arbitrarily old. */
@@ -4425,8 +4832,24 @@
 .insight-kv.is-plain .insight-kv-label { font-weight: 400; color: var(--text-muted); }
 .insight-kv-value { color: var(--text); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
 
-.insight-metrics .insight-metric-rows { display: grid; gap: var(--space-2xs); }
-.insight-metrics .insight-kv { border: none; background: none; padding: 2px 0; }
+/* Five label/value pairs stacked full-width stretch each label metres from its value on a wide
+   panel. Laid out as columns they stay legible as pairs at any panel width. */
+.insight-metrics .insight-metric-rows {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-2xs) var(--space-sm);
+}
+
+.insight-metrics .insight-kv {
+  padding: var(--space-2xs) 0 0;
+  display: block;
+  border: none;
+  border-top: 1px solid var(--border);
+  background: none;
+}
+
+.insight-metrics .insight-kv-label { display: block; color: var(--text-muted); font-weight: 400; font-size: var(--text-xs); }
+.insight-metrics .insight-kv-value { display: block; margin-top: 1px; font-size: var(--text-md); }
 
 .insight-inline-table .insight-table-scroll { margin-top: 0; }
 
@@ -4449,14 +4872,21 @@
   .insight-actions { width: 100%; }
   .insight-workspace,
   .insight-workspace.is-editing { min-height: 0; grid-template-columns: 1fr; }
+  /* Stacked, the library is a short index above the work rather than a full-height rail. */
+  .insight-library { max-height: 260px; }
   .insight-editor-panel { min-height: 480px; }
   .insight-preview-panel { min-height: 500px; }
+  .insight-table-scroll { max-height: 340px; }
 }
 
 @media (max-width: 620px) {
   .insight-page { padding: var(--space-sm); }
   .insight-actions { align-items: stretch; flex-direction: column; }
-  .insight-connection-picker select { width: 100%; }
+  .insight-connection-picker select,
+  .insight-name-field input { width: 100%; min-width: 0; }
+  /* The cluster's left rule only reads as grouping while the toolbar is a row. */
+  .insight-button-group { margin: 0; padding: 0; border-left: 0; }
+  .insight-button-group > * { flex: 1 1 auto; justify-content: center; }
   .insight-run-button { justify-content: center; }
   .insight-workspace,
   .insight-workspace.is-editing { gap: var(--space-2xs); }
@@ -5575,7 +6005,6 @@
 .plugins-page,
 .connections-page,
 .apps-main,
-.insights-page,
 .guide-page {
   scrollbar-gutter: stable;
 }
@@ -5934,6 +6363,10 @@
   }
 
   .form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .url-policy-options {
     grid-template-columns: 1fr;
   }
 
@@ -6618,6 +7051,46 @@
   gap: 4px;
   color: var(--accent);
   text-decoration: none;
+}
+
+/* Result feedback. .icon-btn is 30px — too heavy for a chunk row, where the control should read as
+   a quiet affordance next to the score rather than a second action button. */
+.result-vote {
+  display: flex;
+  gap: 4px;
+}
+
+.vote-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-faint);
+  background: none;
+  transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+
+.vote-btn:hover {
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
+
+.vote-btn.is-on {
+  color: var(--ok);
+  border-color: color-mix(in oklch, var(--ok) 38%, transparent);
+}
+
+.vote-btn.is-on[data-value="-1"] {
+  color: var(--danger);
+  border-color: color-mix(in oklch, var(--danger) 38%, transparent);
+}
+
+.search-learned {
+  color: var(--accent);
 }
 
 .search-result-excerpt {

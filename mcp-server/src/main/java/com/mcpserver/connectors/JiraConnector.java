@@ -262,7 +262,7 @@ public class JiraConnector implements SourceConnector {
         ingestIssue(connection, mapper.readTree(res.body()));
     }
 
-    private void ingestIssue(Connection connection, JsonNode issue) {
+    private void ingestIssue(Connection connection, JsonNode issue) throws Exception {
         String key = issue.path("key").asText(null);
         JsonNode fields = issue.path("fields");
         if (key == null || fields.isMissingNode()) return;
@@ -277,7 +277,7 @@ public class JiraConnector implements SourceConnector {
             if (labels.length() > 0) labels.append(", ");
             labels.append(l.asText());
         }
-        String description = fields.path("description").asText("");
+        String description = renderRichText(fields.path("description"));
 
         StringBuilder md = new StringBuilder();
         md.append("# ").append(summary).append("\n\n");
@@ -287,9 +287,9 @@ public class JiraConnector implements SourceConnector {
         md.append("**Labels:** ").append(labels).append("\n\n");
         md.append("## Description\n").append(description).append("\n\n");
         md.append("## Comments\n");
-        for (JsonNode comment : fields.path("comment").path("comments")) {
+        for (JsonNode comment : loadComments(connection, key, fields.path("comment"))) {
             String author = comment.path("author").path("displayName").asText("Unknown");
-            String commentBody = comment.path("body").asText("");
+            String commentBody = renderRichText(comment.path("body"));
             md.append("- ").append(author).append(": ").append(commentBody).append("\n");
         }
 
@@ -309,6 +309,87 @@ public class JiraConnector implements SourceConnector {
         );
     }
 
+    /**
+     * Jira search embeds comments for the common case but may cap that expansion. Only pay for
+     * the dedicated paginated endpoint when its reported total proves the inline set is partial.
+     */
+    private List<JsonNode> loadComments(Connection connection, String issueKey,
+                                        JsonNode embeddedPage) throws Exception {
+        List<JsonNode> embedded = toList(embeddedPage.path("comments"));
+        int reportedTotal = embeddedPage.path("total").asInt(embedded.size());
+        if (reportedTotal <= embedded.size()) return embedded;
+
+        List<JsonNode> all = new ArrayList<>(reportedTotal);
+        int startAt = 0;
+        int total = reportedTotal;
+        String apiRoot = connection.deploymentType() == DeploymentType.CLOUD
+                ? "/rest/api/3" : "/rest/api/2";
+        while (startAt < total) {
+            HttpResponse<String> res = get(connection, apiRoot,
+                    "/issue/" + URLEncoder.encode(issueKey, StandardCharsets.UTF_8)
+                            + "/comment?startAt=" + startAt + "&maxResults=100");
+            if (res.statusCode() != 200) {
+                throw new IllegalStateException("Failed to fetch all comments for Jira issue "
+                        + issueKey + " (HTTP " + res.statusCode() + "): " + snippet(res.body()));
+            }
+            JsonNode page = mapper.readTree(res.body());
+            List<JsonNode> comments = toList(page.path("comments"));
+            if (comments.isEmpty()) break;
+            all.addAll(comments);
+            startAt += comments.size();
+            total = page.path("total").asInt(total);
+        }
+        return all;
+    }
+
+    /** Renders both Jira Server/DC strings and Jira Cloud Atlassian Document Format as plain text. */
+    private static String renderRichText(JsonNode value) {
+        if (value == null || value.isNull() || value.isMissingNode()) return "";
+        if (value.isTextual()) return value.asText();
+        StringBuilder out = new StringBuilder();
+        appendRichText(value, out);
+        return out.toString().strip();
+    }
+
+    private static void appendRichText(JsonNode node, StringBuilder out) {
+        if (node == null || node.isNull() || node.isMissingNode()) return;
+        if (node.isTextual()) {
+            out.append(node.asText());
+            return;
+        }
+        if (node.isArray()) {
+            for (JsonNode child : node) appendRichText(child, out);
+            return;
+        }
+
+        String type = node.path("type").asText("");
+        if ("hardBreak".equals(type)) {
+            appendNewline(out);
+            return;
+        }
+        if ("listItem".equals(type)) out.append("- ");
+
+        JsonNode text = node.get("text");
+        if (text != null && text.isTextual()) {
+            out.append(text.asText());
+        } else if (!node.has("content")) {
+            JsonNode attrs = node.path("attrs");
+            String fallback = attrs.path("text").asText(
+                    attrs.path("displayName").asText(attrs.path("url").asText("")));
+            out.append(fallback);
+        }
+        appendRichText(node.path("content"), out);
+
+        if ("paragraph".equals(type) || "heading".equals(type) || "blockquote".equals(type)
+                || "listItem".equals(type) || "codeBlock".equals(type)) {
+            appendNewline(out);
+        }
+    }
+
+    private static void appendNewline(StringBuilder out) {
+        if (!out.isEmpty() && out.charAt(out.length() - 1) != '\n') out.append('\n');
+    }
+
     /** Jira's "updated" field is e.g. "2024-01-01T12:00:00.000+0000" (offset without a colon) — normalize to ISO-8601. */
     private static String normalizeJiraTimestamp(String jiraTimestamp) {
         String s = jiraTimestamp.trim();
@@ -320,8 +401,12 @@ public class JiraConnector implements SourceConnector {
     }
 
     private HttpResponse<String> get(Connection connection, String path) throws Exception {
+        return get(connection, "/rest/api/2", path);
+    }
+
+    private HttpResponse<String> get(Connection connection, String apiRoot, String path) throws Exception {
         HttpRequest req = HttpRequest.newBuilder()
-                .uri(URI.create(connection.baseUrl() + "/rest/api/2" + path))
+                .uri(URI.create(connection.baseUrl() + apiRoot + path))
                 .header("Authorization", AtlassianAuth.basicAuthHeader(connection.authUsername(),
                         credentialCipher.decrypt(connection.authSecretEncrypted())))
                 .header("Accept", "application/json")

@@ -195,6 +195,17 @@ spec URL — and every request becomes a callable tool named `{app}_{request-nam
 becomes the `@app` slug used in chat. **Detect auth** inspects the spec and proposes the scheme;
 supported modes are Basic, Bearer, API key header, OAuth2, and none.
 
+Choose the URL policy when importing:
+
+- **Use one base URL** (default) sends every imported request to the connection's base URL. This is
+  useful for moving a collection between development, staging, and production.
+- **Keep source URLs** preserves each absolute Postman request URL or OpenAPI operation/path/document
+  server URL. Relative requests use the connection base URL as a fallback. Because connection-level
+  credentials can then be sent to multiple hosts, use this only for source definitions you trust.
+
+Changing this setting under **Edit settings** reimports the collection so persisted tool URLs and
+their allowed hosts stay in sync.
+
 Nothing is callable straight after import: requests arrive disabled, and enabling one is the moment a
 person decides it may run.
 

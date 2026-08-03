@@ -111,7 +111,8 @@ public class ConnectionService {
      */
     public CreateResult createApiCollection(String name, String baseUrl, AuthMode authMode,
                                             String username, String secret, List<String> aclScope,
-                                            String specUrl, String specDocument) {
+                                            String specUrl, String specDocument,
+                                            ApiUrlMode apiUrlMode) {
         connectorFor(ConnectionType.API_COLLECTION);
         if ((specUrl == null || specUrl.isBlank()) && (specDocument == null || specDocument.isBlank())) {
             throw new IllegalArgumentException("Either a spec URL or an uploaded spec file is required");
@@ -119,7 +120,7 @@ public class ConnectionService {
         Connection connection = Connection.create(ConnectionType.API_COLLECTION, name,
                 baseUrl == null ? "" : baseUrl, authMode, username,
                 secret == null || secret.isBlank() ? null : credentialCipher.encrypt(secret),
-                aclScope);
+                aclScope).withApiUrlMode(apiUrlMode);
         connection = connection.withSpec(
                 specUrl == null || specUrl.isBlank() ? null : specUrl.trim(), null, specDocument);
         connectionRepository.save(connection);
@@ -161,7 +162,8 @@ public class ConnectionService {
      * since the base URL or credentials may have changed; returns that job's id.
      */
     public String update(String connectionId, String name, String baseUrl,
-                          String username, String password, AuthMode authMode, List<String> aclScope) {
+                          String username, String password, AuthMode authMode, List<String> aclScope,
+                          ApiUrlMode apiUrlMode) {
         Connection existing = findById(connectionId);
         Connection updated = new Connection(
                 existing.id(), existing.type(),
@@ -173,7 +175,8 @@ public class ConnectionService {
                 ConnectionStatus.PENDING, null, existing.syncCursor(), existing.webhookRegistered(),
                 aclScope != null ? aclScope : existing.aclScope(),
                 existing.createdAt(), java.time.Instant.now(), existing.lastSyncedAt(),
-                existing.specSourceUrl(), existing.specFormat(), existing.specDocument()
+                existing.specSourceUrl(), existing.specFormat(), existing.specDocument(),
+                apiUrlMode != null ? apiUrlMode : existing.apiUrlMode()
         );
         connectionRepository.save(updated);
         return startTestConnectionJob(connectionId);

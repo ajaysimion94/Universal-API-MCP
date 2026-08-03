@@ -62,11 +62,17 @@ public class OpenApiParser implements SpecParser {
 
     @Override
     public String extractBaseUrl(JsonNode root) {
-        return extractServerUrl(root);
+        String rootServer = firstServer(root.path("servers"));
+        return rootServer != null ? rootServer : extractServerUrl(root);
     }
 
     @Override
     public List<ApiToolDefinition> parse(JsonNode root) {
+        return parse(root, false);
+    }
+
+    @Override
+    public List<ApiToolDefinition> parse(JsonNode root, boolean preserveSourceUrls) {
         List<ApiToolDefinition> out = new ArrayList<>();
         JsonNode paths = root.path("paths");
         paths.properties().forEach(pathEntry -> {
@@ -76,14 +82,17 @@ public class OpenApiParser implements SpecParser {
             for (String method : METHODS) {
                 JsonNode op = pathItem.path(method);
                 if (op.isMissingNode() || !op.isObject()) continue;
-                out.add(toDefinition(root, path, method, op, pathLevelParams));
+                out.add(toDefinition(root, path, method, op, pathItem, pathLevelParams,
+                        preserveSourceUrls));
             }
         });
         return out;
     }
 
     private ApiToolDefinition toDefinition(JsonNode root, String path, String method,
-                                           JsonNode op, JsonNode pathLevelParams) {
+                                           JsonNode op, JsonNode pathItem,
+                                           JsonNode pathLevelParams,
+                                           boolean preserveSourceUrls) {
         String summary = op.path("summary").asText("");
         String operationId = op.path("operationId").asText("");
         String displayName = !summary.isBlank() ? summary
@@ -115,9 +124,38 @@ public class OpenApiParser implements SpecParser {
                 : collectRequestBody(root, op, properties, required, locations);
         if (required.isEmpty()) schema.remove("required");
 
+        String urlTemplate = preserveSourceUrls
+                ? joinServerAndPath(serverFor(root, pathItem, op), path)
+                : path;
         return new ApiToolDefinition(displayName, requestSlug, description, category,
-                method.toUpperCase(), path, schema, locations, staticHeadersFor(bodyTemplate),
+                method.toUpperCase(), urlTemplate, schema, locations, staticHeadersFor(bodyTemplate),
                 bodyTemplate, primaryParam(properties, required, locations));
+    }
+
+    /** Operation servers override path-level servers, which override the document-level server. */
+    private String serverFor(JsonNode root, JsonNode pathItem, JsonNode op) {
+        String operationServer = firstServer(op.path("servers"));
+        if (operationServer != null) return operationServer;
+        String pathServer = firstServer(pathItem.path("servers"));
+        if (pathServer != null) return pathServer;
+        return extractServerUrl(root);
+    }
+
+    private String firstServer(JsonNode servers) {
+        if (!servers.isArray() || servers.isEmpty()) return null;
+        JsonNode server = servers.get(0);
+        String url = server.path("url").asText("");
+        if (url.isBlank()) return null;
+        for (var variable : server.path("variables").properties()) {
+            String value = variable.getValue().path("default").asText("");
+            if (!value.isBlank()) url = url.replace("{" + variable.getKey() + "}", value);
+        }
+        return url;
+    }
+
+    private static String joinServerAndPath(String server, String path) {
+        if (server == null || server.isBlank()) return path;
+        return server.replaceAll("/+$", "") + (path.startsWith("/") ? path : "/" + path);
     }
 
     private String collectSwaggerBody(JsonNode root, JsonNode pathLevelParams, JsonNode opParams,

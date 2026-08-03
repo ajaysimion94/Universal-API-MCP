@@ -97,6 +97,7 @@ CREATE INDEX IF NOT EXISTS idx_ingestion_events_connection_id ON ingestion_event
 ALTER TABLE connections ADD COLUMN spec_source_url TEXT;
 ALTER TABLE connections ADD COLUMN spec_format TEXT;
 ALTER TABLE connections ADD COLUMN spec_document TEXT;
+ALTER TABLE connections ADD COLUMN api_url_mode TEXT NOT NULL DEFAULT 'CONNECTION_BASE';
 
 -- Tools generated from an imported Postman collection / OpenAPI spec (product-idea.md §8).
 -- One row per request/operation; enabled tools are callable from search (# grammar) and MCP.
@@ -223,3 +224,91 @@ ALTER TABLE api_tools ADD COLUMN auth_secret_encrypted TEXT;
 -- it is ever run, so every pre-existing row reads back null here.
 ALTER TABLE insights ADD COLUMN last_run TEXT;
 ALTER TABLE insights ADD COLUMN last_run_at TEXT;
+
+-- ─── Adaptive ranking: feedback capture and learned state (com.mcpserver.learning) ───────────
+
+-- One row per served search. The ordered result list is JSON rather than a child table on purpose:
+-- it is never joined on, it holds at most 100 entries, and with a single shared SQLite connection
+-- "one row per search" versus "eleven rows per search" is a real difference. `context` and
+-- `propensity` are what make offline replay possible at all — without the logged feature vector and
+-- the exact probability the serving policy assigned to the arm it picked, no unbiased counterfactual
+-- estimate of an alternative policy can be computed after the fact, and neither can be backfilled.
+CREATE TABLE IF NOT EXISTS search_impressions (
+    id             TEXT PRIMARY KEY,             -- UUID, echoed to the client as impressionId
+    query          TEXT NOT NULL,
+    query_norm     TEXT NOT NULL,                -- sorted, stop-worded, lowercased term key
+    surface        TEXT NOT NULL DEFAULT 'web',  -- 'web' | 'mcp' (MCP has no feedback UI)
+    top_k          INTEGER NOT NULL DEFAULT 0,
+    web            INTEGER NOT NULL DEFAULT 0,
+    lexical_only   INTEGER NOT NULL DEFAULT 0,
+    from_cache     INTEGER NOT NULL DEFAULT 0,   -- Caffeine hit: logged, but never a bandit pull
+    arm_id         TEXT NOT NULL DEFAULT 'baseline',
+    propensity     REAL NOT NULL DEFAULT 1.0,    -- P(arm_id | context) under the serving policy
+    shadow_arm     TEXT,                         -- arm the policy WOULD have picked, in shadow mode
+    context        TEXT NOT NULL DEFAULT '[]',   -- JSON floats: 4 live features + 2 diagnostics
+    results        TEXT NOT NULL DEFAULT '[]',   -- JSON [{"c":chunkId,"r":rank,"s":score}]
+    memory_hits    INTEGER NOT NULL DEFAULT 0,   -- how many results the feedback memory adjusted
+    latency_ms     INTEGER NOT NULL DEFAULT 0,
+    served_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    rewarded_at    TEXT,                         -- NULL = still collecting signals
+    reward         REAL                          -- [0,1]; NULL = settled with no signal at all
+);
+
+CREATE INDEX IF NOT EXISTS idx_search_impressions_served ON search_impressions(served_at);
+CREATE INDEX IF NOT EXISTS idx_search_impressions_query_norm ON search_impressions(query_norm);
+CREATE INDEX IF NOT EXISTS idx_search_impressions_unsettled ON search_impressions(rewarded_at);
+
+-- One row per user signal. `chunk_id` is NOT NULL DEFAULT '' rather than nullable because SQLite
+-- treats NULLs as distinct in a UNIQUE index, so a nullable column would silently admit duplicate
+-- query-level signals. The UNIQUE key is what makes the feedback POST idempotent: re-clicking a
+-- thumb upserts instead of double-counting, and flipping up->down replaces the RATING row.
+CREATE TABLE IF NOT EXISTS search_feedback (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    impression_id TEXT NOT NULL,
+    chunk_id      TEXT NOT NULL DEFAULT '',
+    rank          INTEGER NOT NULL DEFAULT 0,   -- 1-based rank at serve time; 0 = query-level
+    signal        TEXT NOT NULL,                -- RATING | EXPAND | OPEN | COPY
+    value         REAL NOT NULL DEFAULT 0,      -- RATING: +1/-1/0 (cleared); implicit: fixed weight
+    actor         TEXT NOT NULL DEFAULT 'web-user',
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE (impression_id, chunk_id, signal)
+);
+
+CREATE INDEX IF NOT EXISTS idx_search_feedback_impression ON search_feedback(impression_id);
+CREATE INDEX IF NOT EXISTS idx_search_feedback_chunk ON search_feedback(chunk_id);
+
+-- Learned LinUCB state, one row per discrete (w_vector, w_lexical) arm. Arms are seeded from code
+-- (RankingPolicy.ensureSeeded), not from this DDL, so adding an arm later is a code change rather
+-- than a migration. A and b are tiny (4x4 + 4), so persisting them on every update costs nothing.
+CREATE TABLE IF NOT EXISTS ranking_policy_arms (
+    arm_id      TEXT PRIMARY KEY,
+    w_vector    REAL NOT NULL,
+    w_lexical   REAL NOT NULL,
+    a_matrix    TEXT NOT NULL DEFAULT '[]',   -- JSON 4x4 ridge design matrix (init = identity)
+    b_vector    TEXT NOT NULL DEFAULT '[]',   -- JSON 4-vector response (init = zero)
+    pulls       INTEGER NOT NULL DEFAULT 0,
+    reward_sum  REAL NOT NULL DEFAULT 0,
+    enabled     INTEGER NOT NULL DEFAULT 1,   -- auto-disabled by the underperformance guardrail
+    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+-- Per-query-family chunk preferences: the learner that is actually visible at single-user traffic.
+-- `strength` is clamped to [-1,+1] so no single vote is decisive. `embedding` is the running
+-- centroid of the query embeddings that produced this entry, stored so a paraphrase can match
+-- without recomputing history; it is nullable because the vector leg can be down, in which case
+-- term-Jaccard matching still works.
+CREATE TABLE IF NOT EXISTS feedback_memory (
+    id           TEXT PRIMARY KEY,
+    query_norm   TEXT NOT NULL,
+    query_sample TEXT NOT NULL,                -- one human-readable query, for the Learning panel
+    embedding    TEXT,                         -- JSON float[768] centroid, or NULL
+    chunk_id     TEXT NOT NULL,
+    source_name  TEXT NOT NULL DEFAULT '',     -- denormalized for the panel; chunks can be deleted
+    strength     REAL NOT NULL DEFAULT 0,
+    observations INTEGER NOT NULL DEFAULT 0,
+    last_seen_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE (query_norm, chunk_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_memory_query_norm ON feedback_memory(query_norm);

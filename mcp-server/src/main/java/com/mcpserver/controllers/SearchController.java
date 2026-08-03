@@ -125,6 +125,13 @@ public class SearchController {
         response.put("total", results.size());
         response.put("localCount", localCount);
         response.put("webCount", webCount);
+        // Absent when adaptive ranking is disabled — the UI then renders no vote controls at all.
+        if (searchResponse.impressionId() != null) {
+            response.put("impressionId", searchResponse.impressionId());
+        }
+        if (searchResponse.learnedAdjustments() > 0) {
+            response.put("learnedAdjustments", searchResponse.learnedAdjustments());
+        }
         return response;
     }
 

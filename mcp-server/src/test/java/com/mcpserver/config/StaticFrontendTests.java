@@ -79,6 +79,31 @@ class StaticFrontendTests {
                 .doesNotContain("if (!reuse && session.query)");
     }
 
+    /**
+     * Guards the two ways the feedback UI can silently produce garbage: a vote button that also
+     * carries {@code data-example} would never reach its handler (the delegated listener returns
+     * early on that attribute), and crediting the pre-expanded first group would attach a phantom
+     * EXPAND to every single search.
+     */
+    @Test
+    void resultFeedbackUsesDataActionAndOnlyCreditsUserInitiatedExpands() throws IOException {
+        String search = Files.readString(STATIC.resolve("pages/search.js"));
+
+        assertThat(search)
+                .contains("data-action=\"rate-result\"")
+                .contains("api.sendFeedback")
+                .contains("signal: \"EXPAND\"")
+                .contains("signal: \"OPEN\"")
+                // Votes live on the turn so they survive the full re-render every action triggers.
+                .contains("patchTurn(session.id, turnId, { votes })")
+                // The expand signal is emitted only inside the branch that opens a group.
+                .contains("if (!content.hidden) sendExpandSignals(target, content);");
+
+        assertThat(search.replaceAll("\\s+", " "))
+                .as("a vote button must not carry data-example")
+                .doesNotContain("data-action=\"rate-result\" data-example");
+    }
+
     @Test
     void searchAutocompleteDiscoversAppsGroupsAndScopedRequests() throws IOException {
         String search = Files.readString(STATIC.resolve("pages/search.js"));
@@ -92,5 +117,17 @@ class StaticFrontendTests {
                 .contains("requestSlug")
                 .contains("event.key === \"ArrowDown\"")
                 .contains("role=\"listbox\"");
+    }
+
+    @Test
+    void connectionImportOffersBaseOverrideAndSourceUrlPolicies() throws IOException {
+        String connections = Files.readString(STATIC.resolve("pages/connections.js"));
+
+        assertThat(connections)
+                .contains("name=\"apiUrlMode\"")
+                .contains("value=\"CONNECTION_BASE\"")
+                .contains("value=\"SOURCE_URLS\"")
+                .contains("Keep source URLs")
+                .contains("apiUrlMode: data.apiUrlMode");
     }
 }

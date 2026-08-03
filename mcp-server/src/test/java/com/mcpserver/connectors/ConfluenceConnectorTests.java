@@ -141,6 +141,31 @@ class ConfluenceConnectorTests {
     }
 
     @Test
+    void pollDeltaFetchesEveryResultPageBeforeAdvancingCursor() throws Exception {
+        Connection c = newConnection().withDeploymentType(DeploymentType.CLOUD);
+        connectionRepository.save(c.withSyncCursor("2020-01-01T00:00:00.000Z"));
+        String pageId = "pg-" + UUID.randomUUID();
+        String uniqueTerm = "secondpageupdate" + pageId.replace("-", "");
+
+        stubFor(get(urlPathEqualTo("/wiki/rest/api/content/search"))
+                .withQueryParam("start", equalTo("0"))
+                .willReturn(okJson(fullSearchPageJson())));
+        stubFor(get(urlPathEqualTo("/wiki/rest/api/content/search"))
+                .withQueryParam("start", equalTo("25"))
+                .willReturn(okJson(searchResultsJson(pageId, "Second page", "ENG",
+                        "<p>" + uniqueTerm + "</p>", "2024-06-02T00:00:00.000Z"))));
+
+        connector.pollDelta(connectionRepository.findById(c.id()).orElseThrow());
+
+        assertThat(chunkRepository.lexicalSearch(uniqueTerm, 10))
+                .anyMatch(h -> h.sourceFileId().equals(c.id() + ":" + pageId));
+        assertThat(connectionRepository.findById(c.id()).orElseThrow().syncCursor())
+                .isEqualTo("2024-06-02T00:00:00.000Z");
+        verify(getRequestedFor(urlPathEqualTo("/wiki/rest/api/content/search"))
+                .withQueryParam("start", equalTo("25")));
+    }
+
+    @Test
     void webhookPayloadPurgesChunksWhenPageNoLongerExists() throws Exception {
         Connection c = newConnection().withDeploymentType(DeploymentType.CLOUD);
         String pageId = "pg-" + UUID.randomUUID();
@@ -175,5 +200,18 @@ class ConfluenceConnectorTests {
                 "version":{"when":"%s"},
                 "_links":{"webui":"/spaces/%s/pages/%s","base":"https://example.atlassian.net"}}]}
                 """.formatted(id, title, spaceKey, storageHtml.replace("\"", "\\\""), when, spaceKey, id);
+    }
+
+    private static String fullSearchPageJson() {
+        StringBuilder results = new StringBuilder();
+        for (int i = 0; i < 25; i++) {
+            if (i > 0) results.append(',');
+            results.append("""
+                    {"id":"placeholder-%d","title":"Placeholder","space":{"key":"ENG"},
+                    "body":{"storage":{"value":""}},
+                    "version":{"when":"2024-06-01T00:00:00.000Z"}}
+                    """.formatted(i));
+        }
+        return "{\"results\":[" + results + "],\"_links\":{\"next\":\"next-page\"}}";
     }
 }

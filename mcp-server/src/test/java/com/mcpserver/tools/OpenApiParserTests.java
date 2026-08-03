@@ -112,6 +112,31 @@ class OpenApiParserTests {
                 .isEqualTo("https://petstore.example.com/api/v1");
     }
 
+    @Test
+    void sourceUrlModeUsesOperationThenPathThenDocumentServer() throws Exception {
+        JsonNode spec = new ObjectMapper().readTree("""
+                {
+                  "openapi":"3.0.3",
+                  "servers":[{"url":"https://default.example.test/v1"}],
+                  "paths":{
+                    "/pets":{"servers":[{"url":"https://pets.example.test/api"}],
+                      "get":{"operationId":"listPets"}},
+                    "/events":{"get":{"operationId":"listEvents",
+                      "servers":[{"url":"https://{region}.example.test/audit",
+                        "variables":{"region":{"default":"eu"}}}]}}
+                  }
+                }
+                """);
+
+        assertThat(parser.parse(spec, true))
+                .extracting(ApiToolDefinition::urlTemplate)
+                .containsExactly("https://pets.example.test/api/pets",
+                        "https://eu.example.test/audit/events");
+        assertThat(parser.parse(spec))
+                .extracting(ApiToolDefinition::urlTemplate)
+                .containsExactly("/pets", "/events");
+    }
+
     private static ApiToolDefinition byName(String displayName) {
         return defs.stream().filter(d -> d.displayName().equals(displayName)).findFirst().orElseThrow();
     }

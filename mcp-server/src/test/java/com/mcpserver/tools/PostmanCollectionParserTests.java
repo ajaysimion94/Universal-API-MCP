@@ -118,6 +118,28 @@ class PostmanCollectionParserTests {
     }
 
     @Test
+    void sourceUrlModePreservesEachRequestsResolvedAbsoluteHost() throws Exception {
+        JsonNode collection = new ObjectMapper().readTree("""
+                {
+                  "info": {"_postman_id": "multi-host", "name": "Multi host"},
+                  "variable": [{"key": "primary", "value": "https://api.example.test/v1"}],
+                  "item": [
+                    {"name": "Primary", "request": {"method": "GET", "url": "{{primary}}/items"}},
+                    {"name": "Audit", "request": {"method": "GET", "url": "https://audit.example.test/events"}}
+                  ]
+                }
+                """);
+
+        assertThat(parser.parse(collection, true))
+                .extracting(ApiToolDefinition::urlTemplate)
+                .containsExactly("https://api.example.test/v1/items",
+                        "https://audit.example.test/events");
+        assertThat(parser.parse(collection))
+                .extracting(ApiToolDefinition::urlTemplate)
+                .containsExactly("/v1/items", "/events");
+    }
+
+    @Test
     void importsRawTextUrlEncodedAndGraphqlBodies() throws Exception {
         JsonNode collection = new ObjectMapper().readTree("""
                 {

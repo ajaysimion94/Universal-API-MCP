@@ -145,19 +145,30 @@ public class ConfluenceConnector implements SourceConnector {
         }
         String cursorCql = CQL_DATE.format(Instant.parse(connection.syncCursor()));
         String cql = "lastmodified >= \"" + cursorCql + "\" order by lastmodified asc";
-        String path = "/content/search?cql=" + URLEncoder.encode(cql, StandardCharsets.UTF_8)
-                + "&expand=body.storage,version,space&limit=" + PAGE_SIZE;
-        HttpResponse<String> res = get(connection, connection.deploymentType(), path);
-        if (res.statusCode() != 200) {
-            throw new IllegalStateException("Confluence delta poll failed (HTTP " + res.statusCode() + "): "
-                    + snippet(res.body()));
-        }
-        JsonNode results = mapper.readTree(res.body()).path("results");
         String latestSeen = connection.syncCursor();
-        for (JsonNode page : results) {
-            ingestPage(connection, page);
-            String when = page.path("version").path("when").asText(null);
-            if (when != null) latestSeen = when;
+        int start = 0;
+        while (true) {
+            String path = "/content/search?cql=" + URLEncoder.encode(cql, StandardCharsets.UTF_8)
+                    + "&expand=body.storage,version,space&start=" + start + "&limit=" + PAGE_SIZE;
+            HttpResponse<String> res = get(connection, connection.deploymentType(), path);
+            if (res.statusCode() != 200) {
+                throw new IllegalStateException("Confluence delta poll failed (HTTP " + res.statusCode() + "): "
+                        + snippet(res.body()));
+            }
+            JsonNode response = mapper.readTree(res.body());
+            JsonNode results = response.path("results");
+            for (JsonNode page : results) {
+                ingestPage(connection, page);
+                String when = page.path("version").path("when").asText(null);
+                if (when != null && Instant.parse(when).isAfter(Instant.parse(latestSeen))) {
+                    latestSeen = when;
+                }
+            }
+
+            int returned = results.size();
+            boolean hasNextLink = !response.path("_links").path("next").asText("").isBlank();
+            if (returned == 0 || (!hasNextLink && returned < PAGE_SIZE)) break;
+            start += returned;
         }
         if (!latestSeen.equals(connection.syncCursor())) {
             connectionRepository.save(connection.withSyncCursor(latestSeen));

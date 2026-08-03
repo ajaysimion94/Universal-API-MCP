@@ -734,3 +734,127 @@ forward and confirming the test names it.
 `static/pages/help.js` (was `guide.js`); `static/pages/tutorial.js`; `static/app.js` (`?` button,
 `/guide` → `/help`); `static/ui.js` (`help`, `route` icons); `config/WebMvcConfig.java`;
 `TutorialCatalogTests`; `HelpNavigationTests`; `docs/user-guide.md`
+
+### 2026-08-03 — Search ranking learns from user feedback
+**Decision:** Add a self-contained `com.mcpserver.learning` subsystem that captures what the user
+found useful and feeds it back into ranking. Ground truth is two logs — `search_impressions` (one
+row per served search: ordered result ids, scores, arm, propensity, context, latency) and
+`search_feedback` (explicit thumbs plus implicit `EXPAND`/`OPEN`/`COPY` signals). Two learners read
+those logs: a **feedback memory** (`feedback_memory`, per-query-family chunk preferences, matched to
+new queries by term-Jaccard ≥ 0.60 **or** query-embedding cosine ≥ 0.92, applied as a bounded
+post-rerank score delta) and a **disjoint LinUCB contextual bandit** (`ranking_policy_arms`, five
+discrete `(w_vector, w_lexical)` arms over the newly weighted `RrfFusion.fuse`). All learning DB
+writes go through one `learning-writer` daemon thread modelled on `EventQueueWorker`, so the search
+request path does zero learning I/O. Everything learned is a **derived cache**: `reset` clears
+learned state without touching the logs, and `rebuild` reconstructs it from them.
+
+Five sub-decisions:
+
+1. **The bandit ships disabled** (`learning.bandit.enabled: false`), behind a shadow mode that logs
+   the arm the policy would have picked while serving `baseline`. Capture and the memory ship on.
+   With the bandit off, served ranking is bit-identical to a build without this subsystem — the
+   `(1,1)` arm is float-for-float the old unweighted fusion, asserted in `RrfFusionTests`.
+2. **The memory delta is applied *after* the `min-relevance-score` filter, never before.** This is
+   the load-bearing safety property: a thumbs-down can only sink a result, never remove it, so the
+   user can always find it again and re-vote. `max-boost` (0.12) and `max-demote` (0.06) are
+   asymmetric for the same reason — a wrong demotion hides evidence, a wrong promotion only annoys.
+3. **Propensity is logged on every impression** even while the bandit is off. It is the only thing
+   that makes unbiased off-policy evaluation possible after the fact, and it cannot be backfilled.
+   **Stopping rule, committed here:** if the replay harness reports
+   `V̂(learned) ≤ V̂(baseline) + 1 SE`, the bandit is not helping and stays disabled.
+4. **The golden set is being rebuilt, not extended.** At P@1 0.98 / nDCG@10 0.9926 over 10
+   topically-disjoint 400-character documents it cannot detect an improvement *or* a regression, so
+   it cannot judge a learner. It grows to 40 documents in 8 near-duplicate families with graded
+   relevance and near-miss negatives, plus a new Recall@candidate metric — the one the fusion
+   weights actually control. `GoldenSetRegressionTests` deliberately stays plain JUnit: making it
+   `@SpringBootTest` would pull in sqlite-vec, which is absent in CI, silently degrading the vector
+   leg so the gate would measure a different pipeline while still reporting green.
+5. **Accepted risk, not solved:** the learning writer shares the app's single
+   `SingleConnectionDataSource` with request threads, and xerial's connection is not documented as
+   thread-safe for concurrent statements. `EventQueueWorker` already does exactly this, so the
+   precedent and the risk both pre-date this change. Mitigations are one writer thread (not N), a
+   bounded drop-on-overflow queue, batched short transactions, and a busy timeout.
+
+**Why:** Ranking was entirely fixed — `SearchService` ran hand-tuned constants and nothing about it
+responded to whether the results were any good, because nothing was recorded. `AuditService.logSearch`
+existed but was never called, `MetricsService` was dead code, and the frontend sent no telemetry, so
+there was no reward signal to learn from and no way to tell a ranking win from noise. Of the two
+learners the **memory is the valuable half**: it changes results within one vote. The bandit's only
+knob sits upstream of a cross-encoder that dominates final ordering, and with 40+40 candidates
+retrieved from ~400 chunks, reweighting rarely changes what the reranker even sees — expected effect
+is near zero and detection would take months at single-user traffic. It is built because it is the
+general policy and because the instrumentation to judge it is worth having, but it is built to be
+switched off. This is a single-user app, so there is one global policy and no per-user modelling;
+the known consequence is that the memory entrenches whatever the user first liked, which is the
+feature here and would be a bug anywhere else.
+
+**Status:** active
+
+**Refs:** `learning/` (LearningWriter, FeedbackController, RewardSettler, FeedbackMemory,
+RankingPolicy, repositories); `rag/retrieval/RrfFusion.java` (weighted `fuse`);
+`services/SearchService.java`; `cache/CacheService.java` (arm-aware key); `schema.sql`
+(`search_impressions`, `search_feedback`, `ranking_policy_arms`, `feedback_memory`);
+`application.yml` (`learning:`); `static/pages/search.js`, `static/api.js`, `static/ui.js`;
+`eval-harness/`; `scripts/run-replay.sh`
+
+### 2026-08-03 — Imported API URL policy is selectable per connection
+**Decision:** Persist an `api_url_mode` on every `API_COLLECTION` connection. The default
+`CONNECTION_BASE` mode keeps the existing deployment override: all imported paths execute against one
+connection base URL. The opt-in `SOURCE_URLS` mode preserves absolute Postman request URLs and resolves
+OpenAPI servers with operation → path → document precedence; relative source requests fall back to the
+connection base URL. In source mode, execution validates each call against the exact origin persisted
+in that tool's imported URL template rather than a connection-wide origin. Changing modes triggers a
+reimport so the persisted URL and its structural host allowance cannot drift apart.
+**Why:** Real collections can intentionally span multiple services, so replacing every origin with one
+base URL changes their meaning. Keeping the current behavior as the default preserves portable
+environment overrides, while an explicit source mode supports multi-host collections without accepting
+arbitrary runtime hosts. The UI warns that shared connection credentials may be sent to every preserved
+host.
+**Status:** active
+**Refs:** `connectors/ApiUrlMode.java`, `connectors/ApiCollectionConnector.java`,
+`tools/PostmanCollectionParser.java`, `tools/OpenApiParser.java`, `tools/ApiToolExecutor.java`,
+`static/pages/connections.js`, `docs/user-guide.md` §5.2
+
+### 2026-08-03 — Golden set rebuilt; near-miss negatives are not rejected
+**Decision:** Replace the 10-document golden set with 40 documents in 8 near-duplicate families,
+160 graded queries and 15 near-miss negatives, and gate on measured values
+(P@1 0.86, MRR 0.91, graded nDCG@10 0.92, Recall@candidate 0.98). Two new metrics:
+**graded nDCG** — with one relevant document per query the ideal DCG is always 1, which is why the
+old nDCG tracked MRR almost exactly (0.9926 vs 0.99) and measured nothing extra — and
+**Recall@candidate**, the share of queries whose relevant document reached the reranker. That last
+one is the metric the fusion weights actually control; without it, any change to the vector/lexical
+blend is invisible to the gate because everything downstream can only reorder the candidate window.
+The gate file no longer carries `minimumRelevanceScore`: retrieval knobs are read from
+`application.yml`, so a baseline cannot silently redefine the behaviour it measures.
+
+**Finding, recorded rather than fixed:** negative-rejection accuracy measures **0.0**. The near-miss
+negatives — plausible in-domain questions with no answer in the corpus — score 0.020–0.079 from the
+cross-encoder, which is *above* the 0.015 `rag.search.min-relevance-score` floor, while genuinely
+correct answers score 0.73–0.93 (median 0.93). The floor was calibrated against off-topic queries,
+which fall below it, and does not separate in-domain unanswerable ones. Measured trade-off: a floor
+of 0.05 rejects 12/15 negatives and loses 4/157 correct answers; 0.08 rejects 15/15 and loses 9/157.
+Raising it is a change to shipped ranking behaviour, outside the scope of the feedback work that
+uncovered it, so the gate is set at the measured 0.0 and can only be tightened once that call is
+made. Note the lexical-rescue path (term coverage ≥ 0.30) retains a result regardless of the floor,
+so the floor alone cannot reject every negative.
+
+**Why:** The previous fixture was saturated — P@1 0.98 over 10 topically disjoint 400-character
+documents, with correct answers scoring 20× their nearest distractor. It could not detect an
+improvement or a regression, which makes it useless for judging a learner, and that is the whole
+reason the corpus was rebuilt. Difficulty comes from structure, not volume: within a family the
+documents share most of their prose and differ in one decisive dimension (Cloud vs Server setup, a
+30-day vs 90-day retention policy, an "ACL tag" / "permission label" pair naming different
+mechanisms), which defeats pure embedding similarity and forces the reranker to use one
+discriminating phrase. The set found a real pipeline weakness on its first run, which is the
+strongest available evidence that it is measuring something.
+
+**Known gap:** the harness scores one chunk per document, so chunk-level ranking *within* a long
+document is still not exercised. Closing it needs the harness to run the real chunker, not just a
+longer corpus.
+
+**Status:** active
+
+**Refs:** `eval-harness/README.md` (fixture shape, measured baseline, the floor trade-off table);
+`eval-harness/corpus/documents.json`; `eval-harness/golden-set/{search,negative-search,baseline}.json`;
+`GoldenSetRegressionTests`; `rag/retrieval/TextSignals.java`; `scripts/run-replay.sh`;
+`ReplayHarnessTests`

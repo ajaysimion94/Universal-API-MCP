@@ -18,6 +18,7 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.ArrayList;
 
 /**
  * Connector for imported API definitions (Postman collection / OpenAPI spec — §8 zero-code
@@ -94,20 +95,28 @@ public class ApiCollectionConnector implements SourceConnector {
             if (serverUrl != null && spec.resolvedUrl() != null && !serverUrl.matches("^https?://.*")) {
                 serverUrl = URI.create(spec.resolvedUrl()).resolve(serverUrl).toString();
             }
-            if (serverUrl == null || !serverUrl.matches("^https?://.*")) {
+            if ((serverUrl == null || !serverUrl.matches("^https?://.*"))
+                    && current.apiUrlMode() != ApiUrlMode.SOURCE_URLS) {
                 throw new IllegalArgumentException("Couldn't determine the API base URL from the "
                         + "spec — edit the connection and set it explicitly");
             }
-            current = new Connection(current.id(), current.type(), current.name(), serverUrl,
-                    current.deploymentType(), current.authMode(), current.authUsername(),
-                    current.authSecretEncrypted(), current.status(), current.lastError(),
-                    current.syncCursor(), current.webhookRegistered(), current.aclScope(),
-                    current.createdAt(), Instant.now(), current.lastSyncedAt(),
-                    current.specSourceUrl(), current.specFormat(), current.specDocument());
+            if (serverUrl != null && serverUrl.matches("^https?://.*")) {
+                current = new Connection(current.id(), current.type(), current.name(), serverUrl,
+                        current.deploymentType(), current.authMode(), current.authUsername(),
+                        current.authSecretEncrypted(), current.status(), current.lastError(),
+                        current.syncCursor(), current.webhookRegistered(), current.aclScope(),
+                        current.createdAt(), Instant.now(), current.lastSyncedAt(),
+                        current.specSourceUrl(), current.specFormat(), current.specDocument(),
+                        current.apiUrlMode());
+            }
         }
         connectionRepository.save(current);
 
-        List<ApiToolDefinition> definitions = spec.parser().parse(spec.parsed());
+        boolean preserveSourceUrls = current.apiUrlMode() == ApiUrlMode.SOURCE_URLS;
+        List<ApiToolDefinition> definitions = spec.parser().parse(spec.parsed(), preserveSourceUrls);
+        if (preserveSourceUrls) {
+            definitions = resolveSourceUrls(definitions, current, spec);
+        }
         if (definitions.isEmpty()) {
             throw new IllegalArgumentException("The spec parsed but contains no requests/operations");
         }
@@ -164,12 +173,72 @@ public class ApiCollectionConnector implements SourceConnector {
                 List.of("connection:" + connection.id(), "api:" + tool.appSlug()),
                 "api",
                 tool.id(),
-                connection.baseUrl().replaceAll("/+$", "") + tool.urlTemplate(),
+                tool.urlTemplate().matches("^https?://.*")
+                        ? tool.urlTemplate()
+                        : connection.baseUrl().replaceAll("/+$", "") + tool.urlTemplate(),
                 Instant.now()
         );
     }
 
+    /**
+     * SOURCE_URLS mode persists a concrete absolute URL per imported tool. Absolute Postman
+     * request URLs and OpenAPI server URLs pass through unchanged; relative URLs resolve against
+     * the fetched spec URL (OpenAPI) or the connection fallback base URL (Postman/upload).
+     */
+    private List<ApiToolDefinition> resolveSourceUrls(List<ApiToolDefinition> definitions,
+                                                      Connection connection,
+                                                      SpecFetcher.FetchedSpec spec) {
+        List<ApiToolDefinition> resolved = new ArrayList<>(definitions.size());
+        for (ApiToolDefinition def : definitions) {
+            String url = def.urlTemplate();
+            if (!url.matches("^https?://.*")) {
+                URI base = sourceUrlBase(connection, spec);
+                if (base == null) {
+                    throw new IllegalArgumentException("Request '" + def.displayName()
+                            + "' has a relative URL. Set a fallback base URL or use the "
+                            + "connection-base URL mode");
+                }
+                url = resolveUrlTemplate(base, url);
+            }
+            URI parsed = URI.create(url.replaceAll("\\{[^}]+}", "x"));
+            if (parsed.getHost() == null || parsed.getUserInfo() != null
+                    || !("http".equalsIgnoreCase(parsed.getScheme())
+                    || "https".equalsIgnoreCase(parsed.getScheme()))) {
+                throw new IllegalArgumentException("Request '" + def.displayName()
+                        + "' does not contain a safe HTTP(S) source URL");
+            }
+            resolved.add(new ApiToolDefinition(def.displayName(), def.requestSlug(),
+                    def.description(), def.category(), def.httpMethod(), url,
+                    def.paramsSchema(), def.paramLocations(), def.staticHeaders(),
+                    def.bodyTemplate(), def.primaryParam()));
+        }
+        return resolved;
+    }
+
+    private String resolveUrlTemplate(URI base, String template) {
+        // URI rejects RFC 6570-style braces, so protect them while resolving a relative URL and
+        // restore the executable tool template afterward.
+        String safeTemplate = template.replace("{", "%7B").replace("}", "%7D");
+        return base.resolve(safeTemplate).toString()
+                .replace("%7B", "{").replace("%7D", "}")
+                .replace("%7b", "{").replace("%7d", "}");
+    }
+
+    private URI sourceUrlBase(Connection connection, SpecFetcher.FetchedSpec spec) {
+        if ("OPENAPI".equals(spec.parser().format())
+                && spec.resolvedUrl() != null && !spec.resolvedUrl().isBlank()) {
+            return URI.create(spec.resolvedUrl());
+        }
+        if (connection.baseUrl() != null && !connection.baseUrl().isBlank()) {
+            String base = connection.baseUrl().endsWith("/")
+                    ? connection.baseUrl() : connection.baseUrl() + "/";
+            return URI.create(base);
+        }
+        return null;
+    }
+
     private void probeBaseUrl(Connection connection) {
+        if (connection.baseUrl() == null || connection.baseUrl().isBlank()) return;
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(connection.baseUrl()))

@@ -147,6 +147,49 @@ class ApiCollectionConnectorTests {
     }
 
     @Test
+    void sourceUrlModePersistsOriginalPostmanRequestOrigins() throws Exception {
+        Connection connection = newConnection(null, fixture("/specs/postman-todo.json"))
+                .withApiUrlMode(ApiUrlMode.SOURCE_URLS);
+        connectionRepository.save(connection);
+
+        connector.testConnection(connection);
+
+        assertThat(connectionRepository.findById(connection.id()).orElseThrow().apiUrlMode())
+                .isEqualTo(ApiUrlMode.SOURCE_URLS);
+        List<ApiTool> tools = apiToolRepository.findByConnectionId(connection.id());
+        assertThat(tools).allSatisfy(tool ->
+                assertThat(tool.urlTemplate()).matches("^https?://.*"));
+        assertThat(tools).anySatisfy(tool ->
+                assertThat(tool.urlTemplate()).startsWith("https://todo.example.com/"));
+        assertThat(tools).anySatisfy(tool ->
+                assertThat(tool.urlTemplate()).startsWith(wireMock.baseUrl() + "/"));
+    }
+
+    @Test
+    void sourceUrlModeNeedsNoFallbackWhenEveryOpenApiOperationHasAnAbsoluteServer() throws Exception {
+        String spec = """
+                {"openapi":"3.0.3","info":{"title":"Multi-host","version":"1"},"paths":{
+                  "/events":{"get":{"summary":"List events",
+                    "servers":[{"url":"https://events.example.test/v2"}],
+                    "responses":{"200":{"description":"ok"}}}}
+                }}
+                """;
+        Connection connection = Connection.create(ConnectionType.API_COLLECTION,
+                        "Multi-host-" + UUID.randomUUID(), "", AuthMode.NONE, null, null, List.of())
+                .withSpec(null, null, spec)
+                .withApiUrlMode(ApiUrlMode.SOURCE_URLS);
+        connectionRepository.save(connection);
+        createdConnectionIds.add(connection.id());
+
+        connector.testConnection(connection);
+
+        assertThat(apiToolRepository.findByConnectionId(connection.id())).singleElement()
+                .satisfies(tool -> assertThat(tool.urlTemplate())
+                        .isEqualTo("https://events.example.test/v2/events"));
+        assertThat(connectionRepository.findById(connection.id()).orElseThrow().baseUrl()).isBlank();
+    }
+
+    @Test
     void reimportPreservesAdminDecisionsAndDropsVanishedTools() throws Exception {
         Connection connection = newConnection(null, fixture("/specs/petstore-openapi.json"));
         connector.testConnection(connection);

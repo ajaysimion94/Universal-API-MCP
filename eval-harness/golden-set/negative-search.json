@@ -1,7 +1,62 @@
 [
-  {"query":"What is the best sourdough starter feeding ratio?","relevantIds":[]},
-  {"query":"How much rainfall will Mumbai receive tomorrow?","relevantIds":[]},
-  {"query":"Explain quantum entanglement using Bell's inequality.","relevantIds":[]},
-  {"query":"Which deductions should I claim on my personal income tax return?","relevantIds":[]},
-  {"query":"Who won the latest international cricket match?","relevantIds":[]}
+  {
+    "query": "How do I configure SAML single sign-on for the connector?",
+    "relevantIds": []
+  },
+  {
+    "query": "Which Kubernetes chart should I use to deploy this?",
+    "relevantIds": []
+  },
+  {
+    "query": "How do I shard the vector index across several machines?",
+    "relevantIds": []
+  },
+  {
+    "query": "What is the maximum number of concurrent users supported?",
+    "relevantIds": []
+  },
+  {
+    "query": "How do I enable multi-factor authentication for administrators?",
+    "relevantIds": []
+  },
+  {
+    "query": "Where do I set the per-tenant billing quota?",
+    "relevantIds": []
+  },
+  {
+    "query": "How do I replicate the workspace to a standby region?",
+    "relevantIds": []
+  },
+  {
+    "query": "Which GPU is required for inference?",
+    "relevantIds": []
+  },
+  {
+    "query": "How do I export the audit log to a SIEM over syslog?",
+    "relevantIds": []
+  },
+  {
+    "query": "What is the REST endpoint for creating a new user account?",
+    "relevantIds": []
+  },
+  {
+    "query": "How do I schedule an insight to email itself every Monday?",
+    "relevantIds": []
+  },
+  {
+    "query": "Which message broker does the event queue publish to?",
+    "relevantIds": []
+  },
+  {
+    "query": "How do I configure rate limiting per API consumer key?",
+    "relevantIds": []
+  },
+  {
+    "query": "What is the procedure for rotating the database encryption key?",
+    "relevantIds": []
+  },
+  {
+    "query": "How do I connect a Salesforce org as a knowledge source?",
+    "relevantIds": []
+  }
 ]

@@ -51,6 +51,31 @@ rag:
     max-content-chars: 20000
     min-relevance-score: 0.20
 
+# Feedback-driven adaptive ranking (com.mcpserver.learning).
+# Capture and the feedback memory are on by default: capture is pure-write and happens off the
+# request thread, and the memory does nothing at all until the user actually votes. The bandit is
+# off by default because exploration is the only part that changes results without being asked —
+# with it disabled, served ranking is bit-identical to a build without this subsystem.
+learning:
+  enabled: true
+  settle-interval-ms: 30000
+  reward-window-seconds: 120        # how long an impression collects implicit signals before settling
+  impression-retention-days: 180    # prune only impressions that never received any feedback
+  prune-interval-ms: 86400000       # daily
+  bandit:
+    enabled: false
+    shadow-mode: false              # log the arm the policy would pick; keep serving baseline
+    epsilon: 0.10
+    alpha: 0.35
+  memory:
+    max-boost: 0.12                 # asymmetric on purpose: a wrong demotion hides evidence,
+    max-demote: 0.06                # which is worse than a wrong promotion
+    learning-rate: 0.34             # three consistent votes reach full strength; one is never decisive
+    jaccard-threshold: 0.60
+    cosine-threshold: 0.92
+    half-life-days: 45
+    max-entries: 2000
+
 # Confluence/Jira connectors (com.mcpserver.connectors)
 connectors:
   poll-interval-ms: 300000   # 5 minutes — delta-poll cadence for every CONNECTED connection

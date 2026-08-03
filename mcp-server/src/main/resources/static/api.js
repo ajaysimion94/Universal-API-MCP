@@ -66,6 +66,15 @@ export const api = {
 
   search: (query, topK = 20, web = false) =>
     send(queryUrl("/api/search", { q: query, topK, web })),
+
+  // Adaptive ranking. sendFeedback is fire-and-forget from the caller's point of view — the server
+  // answers 200 even for an unknown impression, so a stale localStorage turn can never surface an
+  // error banner in a page the user is reading.
+  sendFeedback: (impressionId, events) =>
+    send("/api/search/feedback", "POST", { impressionId, events }),
+  fetchLearning: () => send("/api/search/learning"),
+  resetLearning: (scope) => send("/api/search/learning/reset", "POST", { scope }),
+  rebuildLearning: () => send("/api/search/learning/rebuild", "POST", {}),
   async createSummaryExport(selection) {
     const response = await fetch("/api/summary-exports", {
       method: "POST",

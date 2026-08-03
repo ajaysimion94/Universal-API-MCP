@@ -1,6 +1,8 @@
 package com.mcpserver.services;
 
 import com.mcpserver.cache.CacheService;
+import com.mcpserver.learning.FeedbackMemory;
+import com.mcpserver.learning.LearningService;
 import com.mcpserver.models.Chunk;
 import com.mcpserver.plugins.PluginRegistry;
 import com.mcpserver.rag.reranker.Reranker;
@@ -12,6 +14,7 @@ import com.mcpserver.rag.embedding.EmbeddingClient;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -28,9 +31,43 @@ class SearchServiceRankingTests {
     private final Reranker reranker = mock(Reranker.class);
     private final WebSearchService webSearch = mock(WebSearchService.class);
     private final PluginRegistry plugins = mock(PluginRegistry.class);
+    /** Learning disabled: these tests assert the base ranking contract, unperturbed by feedback. */
     private final SearchService service = new SearchService(
             embeddings, repository, reranker, webSearch, plugins,
-            new CacheService(60, 30), 40, 40, 60, 0.015f, 5);
+            new CacheService(60, 30), new LearningService(null, null, null, false), 40, 40, 60, 0.015f, 5);
+
+    /**
+     * The load-bearing safety property of the feedback memory: the learned delta is applied after
+     * the relevance filter, so a strong demotion can only sink a result — never remove it. If a
+     * thumbs-down could delete a result, the user would have no way to find it again and undo.
+     */
+    @Test
+    void aStronglyDemotedResultSinksButIsNeverFilteredOut() {
+        LearningService learning = mock(LearningService.class);
+        SearchService learningService = new SearchService(
+                embeddings, repository, reranker, webSearch, plugins,
+                new CacheService(60, 30), learning, 40, 40, 60, 0.015f, 5);
+
+        Chunk demoted = chunk("demoted", "demoted.md", "migration reference");
+        Chunk neutral = chunk("neutral", "neutral.md", "migration reference");
+        when(repository.lexicalSearch(anyString(), anyInt())).thenReturn(List.of(demoted, neutral));
+        when(reranker.rerank(anyString(), anyList())).thenReturn(List.of(
+                new Reranker.ScoredChunk(demoted, 0.60f),
+                new Reranker.ScoredChunk(neutral, 0.50f)));
+        when(learning.decide(anyString()))
+                .thenReturn(LearningService.RankingDecision.of("migration"));
+        // Far larger than the configured max-demote, to prove the guarantee is structural rather
+        // than a consequence of the delta happening to be small.
+        when(learning.memoryAdjustments(any(), any())).thenReturn(Map.of(
+                demoted.id(), new FeedbackMemory.Adjustment(demoted.id(), -0.95f, -1f)));
+
+        List<SearchPipeline.SearchResult> results =
+                learningService.search("migration", 5, List.of(), false);
+
+        assertThat(results).extracting(result -> result.chunk().sourceName())
+                .containsExactly("neutral.md", "demoted.md");
+        assertThat(results.get(1).score()).isGreaterThanOrEqualTo(0f);
+    }
 
     @Test
     void filenameFeatureChangesBothScoreAndOrdering() {

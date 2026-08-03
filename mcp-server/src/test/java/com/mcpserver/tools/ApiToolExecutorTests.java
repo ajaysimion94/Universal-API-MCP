@@ -2,6 +2,7 @@ package com.mcpserver.tools;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.mcpserver.connectors.AuthMode;
+import com.mcpserver.connectors.ApiUrlMode;
 import com.mcpserver.connectors.Connection;
 import com.mcpserver.connectors.ConnectionType;
 import com.mcpserver.connectors.CredentialCipher;
@@ -104,6 +105,41 @@ class ApiToolExecutorTests {
 
         verify(getRequestedFor(urlPathEqualTo("/me"))
                 .withHeader("X-Api-Key", equalTo("key-456")));
+    }
+
+    @Test
+    void sourceUrlModeCallsTheExactImportedHostInsteadOfConnectionBase() throws Exception {
+        WireMockServer sourceHost = new WireMockServer(0);
+        sourceHost.start();
+        try {
+            sourceHost.stubFor(get(urlPathEqualTo("/v2/items/42"))
+                    .willReturn(okJson("{\"id\":42}")));
+            ApiTool sourceTool = tool("GET", sourceHost.baseUrl() + "/v2/items/{itemId}",
+                    "{\"type\":\"object\",\"properties\":{\"itemId\":{\"type\":\"integer\"}},\"required\":[\"itemId\"]}",
+                    "{\"itemId\":\"path\"}", null);
+            Connection sourceConnection = connection(AuthMode.NONE, null, null)
+                    .withApiUrlMode(ApiUrlMode.SOURCE_URLS);
+
+            ToolInvocationResult result = executor.execute(sourceTool, sourceConnection,
+                    Map.of("itemId", "42"));
+
+            assertThat(result.status()).isEqualTo(200);
+            sourceHost.verify(getRequestedFor(urlPathEqualTo("/v2/items/42")));
+            assertThat(wireMock.getAllServeEvents()).isEmpty();
+        } finally {
+            sourceHost.stop();
+        }
+    }
+
+    @Test
+    void connectionBaseModeRejectsAStaleAbsoluteSourceTemplate() {
+        ApiTool stale = tool("GET", "https://unexpected.example.test/items",
+                "{\"type\":\"object\"}", "{}", null);
+
+        assertThatThrownBy(() -> executor.execute(stale,
+                connection(AuthMode.NONE, null, null), Map.of()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("re-import");
     }
 
     @Test

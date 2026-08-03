@@ -48,7 +48,7 @@ public class ConnectionController {
             }
             result = connectionService.createApiCollection(req.name, req.baseUrl,
                     parseAuthMode(req.authMode), authUsernameFor(req), req.password, aclScope,
-                    req.specUrl, null);
+                    req.specUrl, null, parseApiUrlMode(req.apiUrlMode));
         } else {
             if (req.name == null || req.baseUrl == null) {
                 throw new IllegalArgumentException("type, name, and baseUrl are required");
@@ -69,7 +69,8 @@ public class ConnectionController {
                                           @RequestParam(value = "authMode", required = false) String authMode,
                                           @RequestParam(value = "username", required = false) String username,
                                           @RequestParam(value = "password", required = false) String password,
-                                          @RequestParam(value = "apiKeyHeader", required = false) String apiKeyHeader) throws IOException {
+                                          @RequestParam(value = "apiKeyHeader", required = false) String apiKeyHeader,
+                                          @RequestParam(value = "apiUrlMode", required = false) String apiUrlMode) throws IOException {
         if (file.isEmpty()) {
             throw new IllegalArgumentException("Spec file is empty");
         }
@@ -77,7 +78,8 @@ public class ConnectionController {
         AuthMode mode = parseAuthMode(authMode);
         String authUsername = mode == AuthMode.API_KEY_HEADER ? apiKeyHeader : username;
         ConnectionService.CreateResult result = connectionService.createApiCollection(
-                name, baseUrl, mode, authUsername, password, List.of(), null, specDocument);
+                name, baseUrl, mode, authUsername, password, List.of(), null, specDocument,
+                parseApiUrlMode(apiUrlMode));
         return Map.of("id", result.connectionId(), "jobId", result.jobId(), "status", "running");
     }
 
@@ -128,6 +130,15 @@ public class ConnectionController {
         }
     }
 
+    private static ApiUrlMode parseApiUrlMode(String raw) {
+        if (raw == null || raw.isBlank()) return ApiUrlMode.CONNECTION_BASE;
+        try {
+            return ApiUrlMode.valueOf(raw.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Unknown API URL mode: " + raw);
+        }
+    }
+
     /** For API_KEY_HEADER auth the header name rides in the authUsername column. */
     private static String authUsernameFor(CreateRequest req) {
         return parseAuthMode(req.authMode) == AuthMode.API_KEY_HEADER ? req.apiKeyHeader : req.username;
@@ -136,7 +147,10 @@ public class ConnectionController {
     @PutMapping("/{id}")
     public Map<String, Object> update(@PathVariable String id, @RequestBody UpdateRequest req) {
         AuthMode authMode = req.authMode == null || req.authMode.isBlank() ? null : parseAuthMode(req.authMode);
-        String jobId = connectionService.update(id, req.name, req.baseUrl, req.username, req.password, authMode, req.aclScope);
+        ApiUrlMode apiUrlMode = req.apiUrlMode == null || req.apiUrlMode.isBlank()
+                ? null : parseApiUrlMode(req.apiUrlMode);
+        String jobId = connectionService.update(id, req.name, req.baseUrl, req.username,
+                req.password, authMode, req.aclScope, apiUrlMode);
         return Map.of("jobId", jobId, "status", "running");
     }
 
@@ -207,6 +221,7 @@ public class ConnectionController {
         map.put("deploymentType", c.deploymentType().name());
         map.put("authMode", c.authMode().name());
         map.put("authUsername", c.authUsername());
+        map.put("apiUrlMode", c.apiUrlMode().name());
         map.put("status", c.status().name());
         if (c.lastError() != null) map.put("lastError", c.lastError());
         map.put("webhookRegistered", c.webhookRegistered());
@@ -230,6 +245,7 @@ public class ConnectionController {
         public String specUrl;
         public String authMode;
         public String apiKeyHeader;
+        public String apiUrlMode;
     }
 
     public static class UpdateRequest {
@@ -240,5 +256,7 @@ public class ConnectionController {
         /** Null/blank leaves the current mode unchanged. For API_KEY_HEADER, put the header name in username. */
         public String authMode;
         public List<String> aclScope;
+        /** API_COLLECTION only: CONNECTION_BASE or SOURCE_URLS. */
+        public String apiUrlMode;
     }
 }

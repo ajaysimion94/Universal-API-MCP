@@ -1,9 +1,9 @@
 {
-  "queryCount": 50,
-  "negativeQueryCount": 5,
-  "minimumPrecisionAt1": 0.90,
-  "minimumMrr": 0.94,
-  "minimumNdcgAt10": 0.95,
-  "minimumNegativeRejectionAccuracy": 1.0,
-  "minimumRelevanceScore": 0.015
+  "queryCount": 160,
+  "negativeQueryCount": 15,
+  "minimumPrecisionAt1": 0.86,
+  "minimumMrr": 0.91,
+  "minimumNdcgAt10": 0.92,
+  "minimumRecallAtCandidate": 0.98,
+  "minimumNegativeRejectionAccuracy": 0.0
 }

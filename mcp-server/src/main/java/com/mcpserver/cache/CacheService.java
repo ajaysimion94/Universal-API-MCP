@@ -95,12 +95,25 @@ public class CacheService {
     public static String searchCacheKey(String query, int topK, boolean web,
                                         boolean vectorReady, boolean webReady,
                                         List<String> aclTags) {
+        return searchCacheKey(query, topK, web, vectorReady, webReady, aclTags, "baseline");
+    }
+
+    /**
+     * @param armId the ranking arm that produced (or will produce) the response. Part of the key
+     *              because a cached response from one fusion blend must never be served while the
+     *              policy has selected another — the impression would then record an arm the user
+     *              never actually saw, silently corrupting the off-policy evaluation data.
+     */
+    public static String searchCacheKey(String query, int topK, boolean web,
+                                        boolean vectorReady, boolean webReady,
+                                        List<String> aclTags, String armId) {
         Map<String, Object> attributes = Map.of(
                 "query", query,
                 "topK", topK,
                 "web", web,
                 "vectorReady", vectorReady,
                 "webReady", webReady,
+                "armId", armId == null ? "baseline" : armId,
                 "aclTags", aclTags == null ? List.of()
                         : aclTags.stream().filter(Objects::nonNull).sorted().distinct().toList());
         return "search:" + digest(canonical(attributes));

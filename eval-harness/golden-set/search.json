@@ -1,61 +1,1525 @@
 [
-  {"query":"How do we stop a user from retrieving a document they cannot access?","relevantIds":["access-control"]},
-  {"query":"Where are source permissions captured during ingestion?","relevantIds":["access-control"]},
-  {"query":"What happens when a file has item-level permission overrides?","relevantIds":["access-control"]},
-  {"query":"Why must the unauthenticated server stay on localhost?","relevantIds":["access-control"]},
-  {"query":"Which metadata will later filter knowledge by user groups?","relevantIds":["access-control"]},
-
-  {"query":"What command runs the packaged application JAR?","relevantIds":["deployment"]},
-  {"query":"How can I start the backend on port 9090?","relevantIds":["deployment"]},
-  {"query":"Which Java version is the minimum supported runtime?","relevantIds":["deployment"]},
-  {"query":"Why is the UI on 5173 during development?","relevantIds":["deployment"]},
-  {"query":"What address and port does the production JAR use by default?","relevantIds":["deployment"]},
-
-  {"query":"Which credentials are required for Confluence Cloud?","relevantIds":["confluence"]},
-  {"query":"When does a new Confluence connection become connected?","relevantIds":["confluence"]},
-  {"query":"How are Confluence Cloud changes discovered without webhooks?","relevantIds":["confluence"]},
-  {"query":"Can Confluence Data Center register change webhooks?","relevantIds":["confluence"]},
-  {"query":"What is the authentication difference between Confluence Cloud and Server?","relevantIds":["confluence"]},
-
-  {"query":"Why does Jira try two different search API generations?","relevantIds":["jira"]},
-  {"query":"How are changed Jira issues updated without duplicate chunks?","relevantIds":["jira"]},
-  {"query":"What details are needed to configure a Jira project connection?","relevantIds":["jira"]},
-  {"query":"Does the connector distinguish Jira Cloud from Data Center?","relevantIds":["jira"]},
-  {"query":"Which endpoint is attempted first for JQL issue search?","relevantIds":["jira"]},
-
-  {"query":"Can I import an older Swagger 2.0 definition?","relevantIds":["api-import"]},
-  {"query":"How are Postman collection variables handled during import?","relevantIds":["api-import"]},
-  {"query":"Can the importer discover a spec behind Swagger UI?","relevantIds":["api-import"]},
-  {"query":"What name format is used for imported API operations?","relevantIds":["api-import"]},
-  {"query":"Why are newly imported API tools pending?","relevantIds":["api-import"]},
-
-  {"query":"How do I group orders by status and sum revenue?","relevantIds":["rql"]},
-  {"query":"Which query operation enriches every row with detail data?","relevantIds":["rql"]},
-  {"query":"How can a report calculate count average minimum and maximum?","relevantIds":["rql"]},
-  {"query":"What pipeline stage sorts results by revenue descending?","relevantIds":["rql"]},
-  {"query":"How does the report language combine two datasets?","relevantIds":["rql"]},
-
-  {"query":"How are vector and keyword results combined?","relevantIds":["semantic-search"]},
-  {"query":"What reranks the strongest RAG chunks after RRF?","relevantIds":["semantic-search"]},
-  {"query":"What happens when the embedding model is unavailable?","relevantIds":["semantic-search"]},
-  {"query":"Why do exact ticket IDs benefit from FTS?","relevantIds":["semantic-search"]},
-  {"query":"Which local model creates semantic query vectors?","relevantIds":["semantic-search"]},
-
-  {"query":"How does web search avoid simply trusting SEO order?","relevantIds":["web-research"]},
-  {"query":"Why does one user question produce several web queries?","relevantIds":["web-research"]},
-  {"query":"Which signals favor trustworthy and recent web sources?","relevantIds":["web-research"]},
-  {"query":"How are duplicate tracking URLs removed from web results?","relevantIds":["web-research"]},
-  {"query":"Why fetch page text instead of ranking only search snippets?","relevantIds":["web-research"]},
-
-  {"query":"Which library extracts text from PDF and Office documents?","relevantIds":["file-ingestion"]},
-  {"query":"What happens when the same folder is uploaded twice?","relevantIds":["file-ingestion"]},
-  {"query":"How do headings survive document chunking?","relevantIds":["file-ingestion"]},
-  {"query":"Does deleting an uploaded source remove its indexed chunks?","relevantIds":["file-ingestion"]},
-  {"query":"Which file formats can be dragged into the file manager?","relevantIds":["file-ingestion"]},
-
-  {"query":"What protects a write tool from running without confirmation?","relevantIds":["tool-approval"]},
-  {"query":"Can a read-only imported API request execute immediately?","relevantIds":["tool-approval"]},
-  {"query":"Where are tool invocations recorded for review?","relevantIds":["tool-approval"]},
-  {"query":"What syntax invokes an imported tool deterministically?","relevantIds":["tool-approval"]},
-  {"query":"Which controls apply when an API tool makes an HTTP call?","relevantIds":["tool-approval"]}
+  {
+    "query": "How do I run the server while developing?",
+    "relevantIds": [
+      "deployment-local"
+    ],
+    "grades": {
+      "deployment-local": 3,
+      "deployment-jar-prod": 1
+    }
+  },
+  {
+    "query": "Is there an npm install step for the web UI?",
+    "relevantIds": [
+      "deployment-local"
+    ],
+    "grades": {
+      "deployment-local": 3
+    }
+  },
+  {
+    "query": "Where does the SQLite database file get created on first boot?",
+    "relevantIds": [
+      "deployment-local"
+    ],
+    "grades": {
+      "deployment-local": 3,
+      "deployment-jar-prod": 1
+    }
+  },
+  {
+    "query": "How do I reset my whole workspace back to empty?",
+    "relevantIds": [
+      "deployment-local"
+    ],
+    "grades": {
+      "deployment-local": 3
+    }
+  },
+  {
+    "query": "What command runs the packaged application archive?",
+    "relevantIds": [
+      "deployment-jar-prod"
+    ],
+    "grades": {
+      "deployment-jar-prod": 3,
+      "deployment-windows": 1
+    }
+  },
+  {
+    "query": "How can I make the backend listen on port 9090 instead?",
+    "relevantIds": [
+      "deployment-jar-prod"
+    ],
+    "grades": {
+      "deployment-jar-prod": 3,
+      "deployment-troubleshooting": 1
+    }
+  },
+  {
+    "query": "Which Java version is the minimum supported runtime?",
+    "relevantIds": [
+      "deployment-jar-prod"
+    ],
+    "grades": {
+      "deployment-jar-prod": 3,
+      "deployment-windows": 1,
+      "deployment-troubleshooting": 1
+    }
+  },
+  {
+    "query": "Does the working directory matter when launching the jar?",
+    "relevantIds": [
+      "deployment-jar-prod"
+    ],
+    "grades": {
+      "deployment-jar-prod": 3
+    }
+  },
+  {
+    "query": "How do I run this on Windows?",
+    "relevantIds": [
+      "deployment-windows"
+    ],
+    "grades": {
+      "deployment-windows": 3,
+      "deployment-jar-prod": 1
+    }
+  },
+  {
+    "query": "Will the server trust a certificate already installed in the Windows root store?",
+    "relevantIds": [
+      "deployment-windows"
+    ],
+    "grades": {
+      "deployment-windows": 3
+    }
+  },
+  {
+    "query": "Are file permissions on the credential key enforced on Windows?",
+    "relevantIds": [
+      "deployment-windows"
+    ],
+    "grades": {
+      "deployment-windows": 3,
+      "access-credentials": 1
+    }
+  },
+  {
+    "query": "Do I need to quote a path containing spaces on the command line?",
+    "relevantIds": [
+      "deployment-windows"
+    ],
+    "grades": {
+      "deployment-windows": 3
+    }
+  },
+  {
+    "query": "The server exits immediately saying port 8080 is already in use",
+    "relevantIds": [
+      "deployment-troubleshooting"
+    ],
+    "grades": {
+      "deployment-troubleshooting": 3,
+      "deployment-jar-prod": 1
+    }
+  },
+  {
+    "query": "I get an unsupported class file version error on startup",
+    "relevantIds": [
+      "deployment-troubleshooting"
+    ],
+    "grades": {
+      "deployment-troubleshooting": 3,
+      "deployment-jar-prod": 1
+    }
+  },
+  {
+    "query": "Startup logs complain about a duplicate column, is that a problem?",
+    "relevantIds": [
+      "deployment-troubleshooting"
+    ],
+    "grades": {
+      "deployment-troubleshooting": 3,
+      "deployment-upgrade": 1
+    }
+  },
+  {
+    "query": "The app starts but search says it is not ready",
+    "relevantIds": [
+      "deployment-troubleshooting"
+    ],
+    "grades": {
+      "deployment-troubleshooting": 3,
+      "plugins-embedding": 1,
+      "plugins-vector-store": 1
+    }
+  },
+  {
+    "query": "How do I move to a newer version without losing my data?",
+    "relevantIds": [
+      "deployment-upgrade"
+    ],
+    "grades": {
+      "deployment-upgrade": 3
+    }
+  },
+  {
+    "query": "Is the database schema migrated automatically on boot?",
+    "relevantIds": [
+      "deployment-upgrade"
+    ],
+    "grades": {
+      "deployment-upgrade": 3
+    }
+  },
+  {
+    "query": "Do I have to download the embedding model again after upgrading?",
+    "relevantIds": [
+      "deployment-upgrade"
+    ],
+    "grades": {
+      "deployment-upgrade": 3,
+      "plugins-embedding": 1
+    }
+  },
+  {
+    "query": "Can I roll back to the previous version after upgrading?",
+    "relevantIds": [
+      "deployment-upgrade"
+    ],
+    "grades": {
+      "deployment-upgrade": 3
+    }
+  },
+  {
+    "query": "Which credentials are required for Confluence Cloud?",
+    "relevantIds": [
+      "confluence-cloud-setup"
+    ],
+    "grades": {
+      "confluence-cloud-setup": 3,
+      "jira-cloud-setup": 1,
+      "confluence-server-setup": 1
+    }
+  },
+  {
+    "query": "Can Confluence Cloud register change webhooks?",
+    "relevantIds": [
+      "confluence-cloud-setup"
+    ],
+    "grades": {
+      "confluence-cloud-setup": 3,
+      "confluence-server-setup": 1
+    }
+  },
+  {
+    "query": "Why does my Cloud wiki connection miss deleted pages?",
+    "relevantIds": [
+      "confluence-cloud-setup"
+    ],
+    "grades": {
+      "confluence-cloud-setup": 3,
+      "connector-troubleshooting": 1
+    }
+  },
+  {
+    "query": "How are Confluence Cloud changes discovered without webhooks?",
+    "relevantIds": [
+      "confluence-cloud-setup"
+    ],
+    "grades": {
+      "confluence-cloud-setup": 3
+    }
+  },
+  {
+    "query": "What credentials does a self-hosted Confluence Data Center instance need?",
+    "relevantIds": [
+      "confluence-server-setup"
+    ],
+    "grades": {
+      "confluence-server-setup": 3,
+      "confluence-cloud-setup": 1
+    }
+  },
+  {
+    "query": "Can Confluence Data Center subscribe to page removed events?",
+    "relevantIds": [
+      "confluence-server-setup"
+    ],
+    "grades": {
+      "confluence-server-setup": 3,
+      "confluence-cloud-setup": 1
+    }
+  },
+  {
+    "query": "Which Confluence deployment keeps the index cleanest over time?",
+    "relevantIds": [
+      "confluence-server-setup"
+    ],
+    "grades": {
+      "confluence-server-setup": 3
+    }
+  },
+  {
+    "query": "What do I configure so Confluence Server can call back to this server?",
+    "relevantIds": [
+      "confluence-server-setup"
+    ],
+    "grades": {
+      "confluence-server-setup": 3,
+      "connector-troubleshooting": 1
+    }
+  },
+  {
+    "query": "Which credentials are required for Jira Cloud?",
+    "relevantIds": [
+      "jira-cloud-setup"
+    ],
+    "grades": {
+      "jira-cloud-setup": 3,
+      "confluence-cloud-setup": 1,
+      "jira-server-setup": 1
+    }
+  },
+  {
+    "query": "Why does Jira Cloud need the newer JQL search endpoint?",
+    "relevantIds": [
+      "jira-cloud-setup"
+    ],
+    "grades": {
+      "jira-cloud-setup": 3,
+      "jira-server-setup": 1
+    }
+  },
+  {
+    "query": "Does editing a Jira Cloud issue create duplicate chunks?",
+    "relevantIds": [
+      "jira-cloud-setup"
+    ],
+    "grades": {
+      "jira-cloud-setup": 3
+    }
+  },
+  {
+    "query": "Which Jira issue fields get ingested during backfill?",
+    "relevantIds": [
+      "jira-cloud-setup"
+    ],
+    "grades": {
+      "jira-cloud-setup": 3,
+      "jira-server-setup": 1
+    }
+  },
+  {
+    "query": "What credentials does self-hosted Jira Data Center need?",
+    "relevantIds": [
+      "jira-server-setup"
+    ],
+    "grades": {
+      "jira-server-setup": 3,
+      "jira-cloud-setup": 1
+    }
+  },
+  {
+    "query": "Which Jira deployment still supports the classic offset search endpoint?",
+    "relevantIds": [
+      "jira-server-setup"
+    ],
+    "grades": {
+      "jira-server-setup": 3,
+      "jira-cloud-setup": 1
+    }
+  },
+  {
+    "query": "Can Jira Server notify this application when an issue is deleted?",
+    "relevantIds": [
+      "jira-server-setup"
+    ],
+    "grades": {
+      "jira-server-setup": 3,
+      "confluence-server-setup": 1
+    }
+  },
+  {
+    "query": "How quickly does a self-hosted Jira connection notice a change?",
+    "relevantIds": [
+      "jira-server-setup"
+    ],
+    "grades": {
+      "jira-server-setup": 3
+    }
+  },
+  {
+    "query": "My connection authenticates but ingests nothing",
+    "relevantIds": [
+      "connector-troubleshooting"
+    ],
+    "grades": {
+      "connector-troubleshooting": 3
+    }
+  },
+  {
+    "query": "I paused a connection and now nothing syncs and there is no error",
+    "relevantIds": [
+      "connector-troubleshooting"
+    ],
+    "grades": {
+      "connector-troubleshooting": 3
+    }
+  },
+  {
+    "query": "Certificate error when connecting to an internal wiki host",
+    "relevantIds": [
+      "connector-troubleshooting"
+    ],
+    "grades": {
+      "connector-troubleshooting": 3,
+      "deployment-windows": 1
+    }
+  },
+  {
+    "query": "Where do I see why a connection failed?",
+    "relevantIds": [
+      "connector-troubleshooting"
+    ],
+    "grades": {
+      "connector-troubleshooting": 3
+    }
+  },
+  {
+    "query": "How do I make a document searchable?",
+    "relevantIds": [
+      "ingestion-upload"
+    ],
+    "grades": {
+      "ingestion-upload": 3,
+      "ingestion-formats": 1
+    }
+  },
+  {
+    "query": "What happens when I upload a changed version of the same file?",
+    "relevantIds": [
+      "ingestion-upload"
+    ],
+    "grades": {
+      "ingestion-upload": 3
+    }
+  },
+  {
+    "query": "When are permissions recorded on an uploaded document?",
+    "relevantIds": [
+      "ingestion-upload"
+    ],
+    "grades": {
+      "ingestion-upload": 3,
+      "access-acl-tags": 1
+    }
+  },
+  {
+    "query": "Do chunks disappear when I delete the file they came from?",
+    "relevantIds": [
+      "ingestion-upload"
+    ],
+    "grades": {
+      "ingestion-upload": 3
+    }
+  },
+  {
+    "query": "How large is a chunk and how much do chunks overlap?",
+    "relevantIds": [
+      "ingestion-chunking"
+    ],
+    "grades": {
+      "ingestion-chunking": 3
+    }
+  },
+  {
+    "query": "Why is the chunk target smaller than the embedding window?",
+    "relevantIds": [
+      "ingestion-chunking"
+    ],
+    "grades": {
+      "ingestion-chunking": 3,
+      "plugins-embedding": 1
+    }
+  },
+  {
+    "query": "Are documents split at headings or at a fixed size?",
+    "relevantIds": [
+      "ingestion-chunking"
+    ],
+    "grades": {
+      "ingestion-chunking": 3
+    }
+  },
+  {
+    "query": "How does the UI know several results came from one document?",
+    "relevantIds": [
+      "ingestion-chunking"
+    ],
+    "grades": {
+      "ingestion-chunking": 3
+    }
+  },
+  {
+    "query": "Can this index a PDF?",
+    "relevantIds": [
+      "ingestion-formats"
+    ],
+    "grades": {
+      "ingestion-formats": 3,
+      "ingestion-upload": 1
+    }
+  },
+  {
+    "query": "Will a scanned document be searchable?",
+    "relevantIds": [
+      "ingestion-formats"
+    ],
+    "grades": {
+      "ingestion-formats": 3
+    }
+  },
+  {
+    "query": "Are spreadsheet formulas extracted or just the values?",
+    "relevantIds": [
+      "ingestion-formats"
+    ],
+    "grades": {
+      "ingestion-formats": 3
+    }
+  },
+  {
+    "query": "What happens to a file whose type is not recognised?",
+    "relevantIds": [
+      "ingestion-formats"
+    ],
+    "grades": {
+      "ingestion-formats": 3
+    }
+  },
+  {
+    "query": "How long is deleted content kept in a standard workspace?",
+    "relevantIds": [
+      "ingestion-retention-standard"
+    ],
+    "grades": {
+      "ingestion-retention-standard": 3,
+      "ingestion-retention-extended": 1
+    }
+  },
+  {
+    "query": "Which workspace keeps deleted material for thirty days?",
+    "relevantIds": [
+      "ingestion-retention-standard"
+    ],
+    "grades": {
+      "ingestion-retention-standard": 3
+    }
+  },
+  {
+    "query": "Is retention measured from ingestion or from deletion?",
+    "relevantIds": [
+      "ingestion-retention-standard"
+    ],
+    "grades": {
+      "ingestion-retention-standard": 3,
+      "ingestion-retention-extended": 1
+    }
+  },
+  {
+    "query": "Can an administrator undo an accidental delete within a month?",
+    "relevantIds": [
+      "ingestion-retention-standard"
+    ],
+    "grades": {
+      "ingestion-retention-standard": 3
+    }
+  },
+  {
+    "query": "How long is deleted content kept in an extended workspace?",
+    "relevantIds": [
+      "ingestion-retention-extended"
+    ],
+    "grades": {
+      "ingestion-retention-extended": 3,
+      "ingestion-retention-standard": 1
+    }
+  },
+  {
+    "query": "Which workspace retains deleted material for a full quarter?",
+    "relevantIds": [
+      "ingestion-retention-extended"
+    ],
+    "grades": {
+      "ingestion-retention-extended": 3
+    }
+  },
+  {
+    "query": "We have a ninety day compliance obligation, which workspace fits?",
+    "relevantIds": [
+      "ingestion-retention-extended"
+    ],
+    "grades": {
+      "ingestion-retention-extended": 3
+    }
+  },
+  {
+    "query": "Does lengthening retention bring back already-purged content?",
+    "relevantIds": [
+      "ingestion-retention-extended"
+    ],
+    "grades": {
+      "ingestion-retention-extended": 3,
+      "ingestion-retention-standard": 1
+    }
+  },
+  {
+    "query": "How are the two retrieval legs combined into one ranking?",
+    "relevantIds": [
+      "search-hybrid"
+    ],
+    "grades": {
+      "search-hybrid": 3,
+      "search-reranking": 1
+    }
+  },
+  {
+    "query": "Why not just compare the raw scores from each leg?",
+    "relevantIds": [
+      "search-hybrid"
+    ],
+    "grades": {
+      "search-hybrid": 3
+    }
+  },
+  {
+    "query": "How many candidates does each retrieval leg return?",
+    "relevantIds": [
+      "search-hybrid"
+    ],
+    "grades": {
+      "search-hybrid": 3
+    }
+  },
+  {
+    "query": "What makes a question match a document written in different words?",
+    "relevantIds": [
+      "search-hybrid"
+    ],
+    "grades": {
+      "search-hybrid": 3,
+      "search-lexical": 1
+    }
+  },
+  {
+    "query": "How does a ticket key or error code retrieve correctly?",
+    "relevantIds": [
+      "search-lexical"
+    ],
+    "grades": {
+      "search-lexical": 3,
+      "search-hybrid": 1
+    }
+  },
+  {
+    "query": "Does search still work without the embedding model?",
+    "relevantIds": [
+      "search-lexical"
+    ],
+    "grades": {
+      "search-lexical": 3,
+      "plugins-embedding": 1,
+      "plugins-vector-store": 1
+    }
+  },
+  {
+    "query": "Is keyword matching stemmed?",
+    "relevantIds": [
+      "search-lexical"
+    ],
+    "grades": {
+      "search-lexical": 3
+    }
+  },
+  {
+    "query": "What happens to a query made entirely of common words?",
+    "relevantIds": [
+      "search-lexical"
+    ],
+    "grades": {
+      "search-lexical": 3
+    }
+  },
+  {
+    "query": "What reorders results after retrieval?",
+    "relevantIds": [
+      "search-reranking"
+    ],
+    "grades": {
+      "search-reranking": 3,
+      "search-hybrid": 1
+    }
+  },
+  {
+    "query": "Why can reranking not rescue a document neither leg found?",
+    "relevantIds": [
+      "search-reranking"
+    ],
+    "grades": {
+      "search-reranking": 3,
+      "search-hybrid": 1
+    }
+  },
+  {
+    "query": "How does a query with no good answer return nothing at all?",
+    "relevantIds": [
+      "search-reranking"
+    ],
+    "grades": {
+      "search-reranking": 3
+    }
+  },
+  {
+    "query": "Does a matching file name affect the ranking?",
+    "relevantIds": [
+      "search-reranking"
+    ],
+    "grades": {
+      "search-reranking": 3
+    }
+  },
+  {
+    "query": "What does the web toggle on the search page do?",
+    "relevantIds": [
+      "search-web"
+    ],
+    "grades": {
+      "search-web": 3,
+      "plugins-searxng": 1
+    }
+  },
+  {
+    "query": "Is fetched web content saved into my workspace index?",
+    "relevantIds": [
+      "search-web"
+    ],
+    "grades": {
+      "search-web": 3
+    }
+  },
+  {
+    "query": "How are web pages scored beyond plain relevance?",
+    "relevantIds": [
+      "search-web"
+    ],
+    "grades": {
+      "search-web": 3
+    }
+  },
+  {
+    "query": "What happens to the web toggle if the search plugin is stopped?",
+    "relevantIds": [
+      "search-web"
+    ],
+    "grades": {
+      "search-web": 3,
+      "plugins-searxng": 1
+    }
+  },
+  {
+    "query": "How do I tell the search that a result was useful?",
+    "relevantIds": [
+      "search-feedback"
+    ],
+    "grades": {
+      "search-feedback": 3
+    }
+  },
+  {
+    "query": "Can a thumbs down remove a result from search entirely?",
+    "relevantIds": [
+      "search-feedback"
+    ],
+    "grades": {
+      "search-feedback": 3
+    }
+  },
+  {
+    "query": "Does my rating on one question affect a similar question later?",
+    "relevantIds": [
+      "search-feedback"
+    ],
+    "grades": {
+      "search-feedback": 3
+    }
+  },
+  {
+    "query": "How do I undo everything the ranking has learned?",
+    "relevantIds": [
+      "search-feedback"
+    ],
+    "grades": {
+      "search-feedback": 3
+    }
+  },
+  {
+    "query": "Where do permissions get captured during ingestion?",
+    "relevantIds": [
+      "access-acl-tags"
+    ],
+    "grades": {
+      "access-acl-tags": 3,
+      "ingestion-upload": 1
+    }
+  },
+  {
+    "query": "Why capture permission metadata before it is enforced?",
+    "relevantIds": [
+      "access-acl-tags"
+    ],
+    "grades": {
+      "access-acl-tags": 3,
+      "access-localhost": 1
+    }
+  },
+  {
+    "query": "What metadata will later filter knowledge by user group?",
+    "relevantIds": [
+      "access-acl-tags"
+    ],
+    "grades": {
+      "access-acl-tags": 3
+    }
+  },
+  {
+    "query": "Are ACL tags applied to Confluence and Jira content too?",
+    "relevantIds": [
+      "access-acl-tags"
+    ],
+    "grades": {
+      "access-acl-tags": 3,
+      "confluence-cloud-setup": 1
+    }
+  },
+  {
+    "query": "What is a permission label on an exported report?",
+    "relevantIds": [
+      "access-permission-labels"
+    ],
+    "grades": {
+      "access-permission-labels": 3
+    }
+  },
+  {
+    "query": "Does classifying a report change who can retrieve its sources?",
+    "relevantIds": [
+      "access-permission-labels"
+    ],
+    "grades": {
+      "access-permission-labels": 3,
+      "access-acl-tags": 1
+    }
+  },
+  {
+    "query": "What is the difference between an ACL tag and a permission label?",
+    "relevantIds": [
+      "access-acl-tags",
+      "access-permission-labels"
+    ],
+    "grades": {
+      "access-permission-labels": 3,
+      "access-acl-tags": 3
+    }
+  },
+  {
+    "query": "Who sets the classification on a dashboard export?",
+    "relevantIds": [
+      "access-permission-labels"
+    ],
+    "grades": {
+      "access-permission-labels": 3
+    }
+  },
+  {
+    "query": "Why must this server stay on the loopback address?",
+    "relevantIds": [
+      "access-localhost"
+    ],
+    "grades": {
+      "access-localhost": 3,
+      "access-acl-tags": 1
+    }
+  },
+  {
+    "query": "Can I put the application behind a reverse proxy?",
+    "relevantIds": [
+      "access-localhost"
+    ],
+    "grades": {
+      "access-localhost": 3
+    }
+  },
+  {
+    "query": "Why are search results not permission filtered yet?",
+    "relevantIds": [
+      "access-localhost"
+    ],
+    "grades": {
+      "access-localhost": 3,
+      "access-acl-tags": 1
+    }
+  },
+  {
+    "query": "How do I stop a user retrieving a document they cannot access?",
+    "relevantIds": [
+      "access-acl-tags",
+      "access-localhost"
+    ],
+    "grades": {
+      "access-localhost": 3,
+      "access-acl-tags": 3
+    }
+  },
+  {
+    "query": "What gets written to the audit log?",
+    "relevantIds": [
+      "access-audit"
+    ],
+    "grades": {
+      "access-audit": 3
+    }
+  },
+  {
+    "query": "Can I query the audit trail by actor and date?",
+    "relevantIds": [
+      "access-audit"
+    ],
+    "grades": {
+      "access-audit": 3
+    }
+  },
+  {
+    "query": "Are failed tool attempts logged or only successful ones?",
+    "relevantIds": [
+      "access-audit"
+    ],
+    "grades": {
+      "access-audit": 3,
+      "tools-approval": 1
+    }
+  },
+  {
+    "query": "How trustworthy is the actor recorded on an audit entry?",
+    "relevantIds": [
+      "access-audit"
+    ],
+    "grades": {
+      "access-audit": 3,
+      "access-localhost": 1
+    }
+  },
+  {
+    "query": "How are connection passwords protected at rest?",
+    "relevantIds": [
+      "access-credentials"
+    ],
+    "grades": {
+      "access-credentials": 3
+    }
+  },
+  {
+    "query": "Is there a secrets manager or key vault integration?",
+    "relevantIds": [
+      "access-credentials"
+    ],
+    "grades": {
+      "access-credentials": 3
+    }
+  },
+  {
+    "query": "Where is the encryption key kept?",
+    "relevantIds": [
+      "access-credentials"
+    ],
+    "grades": {
+      "access-credentials": 3
+    }
+  },
+  {
+    "query": "Can I read back a saved API token through the interface?",
+    "relevantIds": [
+      "access-credentials"
+    ],
+    "grades": {
+      "access-credentials": 3
+    }
+  },
+  {
+    "query": "How do I turn a Postman collection into callable tools?",
+    "relevantIds": [
+      "tools-import-postman"
+    ],
+    "grades": {
+      "tools-import-postman": 3,
+      "tools-import-openapi": 1
+    }
+  },
+  {
+    "query": "Do collection folders become anything after import?",
+    "relevantIds": [
+      "tools-import-postman"
+    ],
+    "grades": {
+      "tools-import-postman": 3
+    }
+  },
+  {
+    "query": "Is an auth block inside a Postman file imported as a credential?",
+    "relevantIds": [
+      "tools-import-postman"
+    ],
+    "grades": {
+      "tools-import-postman": 3,
+      "tools-auth": 1,
+      "tools-import-openapi": 1
+    }
+  },
+  {
+    "query": "Which imported requests are callable immediately?",
+    "relevantIds": [
+      "tools-import-postman"
+    ],
+    "grades": {
+      "tools-import-postman": 3,
+      "tools-import-openapi": 1,
+      "tools-approval": 1
+    }
+  },
+  {
+    "query": "How do I import an OpenAPI specification?",
+    "relevantIds": [
+      "tools-import-openapi"
+    ],
+    "grades": {
+      "tools-import-openapi": 3,
+      "tools-import-postman": 1
+    }
+  },
+  {
+    "query": "Can I paste a Swagger UI page URL instead of the raw spec?",
+    "relevantIds": [
+      "tools-import-openapi"
+    ],
+    "grades": {
+      "tools-import-openapi": 3
+    }
+  },
+  {
+    "query": "What happens to a reference pointing at an external document?",
+    "relevantIds": [
+      "tools-import-openapi"
+    ],
+    "grades": {
+      "tools-import-openapi": 3
+    }
+  },
+  {
+    "query": "Do OpenAPI tags become anything after import?",
+    "relevantIds": [
+      "tools-import-openapi"
+    ],
+    "grades": {
+      "tools-import-openapi": 3,
+      "tools-import-postman": 1
+    }
+  },
+  {
+    "query": "How is a write operation confirmed before it runs?",
+    "relevantIds": [
+      "tools-approval"
+    ],
+    "grades": {
+      "tools-approval": 3
+    }
+  },
+  {
+    "query": "What stops a double click creating two objects?",
+    "relevantIds": [
+      "tools-approval"
+    ],
+    "grades": {
+      "tools-approval": 3
+    }
+  },
+  {
+    "query": "What happens if a confirmation token expires?",
+    "relevantIds": [
+      "tools-approval"
+    ],
+    "grades": {
+      "tools-approval": 3
+    }
+  },
+  {
+    "query": "Why can read-only tools be enabled automatically?",
+    "relevantIds": [
+      "tools-approval"
+    ],
+    "grades": {
+      "tools-approval": 3,
+      "tools-import-postman": 1
+    }
+  },
+  {
+    "query": "How do I organise endpoints from several applications together?",
+    "relevantIds": [
+      "tools-groups"
+    ],
+    "grades": {
+      "tools-groups": 3
+    }
+  },
+  {
+    "query": "Can I enable a whole set of endpoints at once?",
+    "relevantIds": [
+      "tools-groups"
+    ],
+    "grades": {
+      "tools-groups": 3
+    }
+  },
+  {
+    "query": "Do saved queries break when a group is renamed?",
+    "relevantIds": [
+      "tools-groups"
+    ],
+    "grades": {
+      "tools-groups": 3
+    }
+  },
+  {
+    "query": "What happens if a group slug collides with an application slug?",
+    "relevantIds": [
+      "tools-groups"
+    ],
+    "grades": {
+      "tools-groups": 3
+    }
+  },
+  {
+    "query": "Which authentication modes can an imported API use?",
+    "relevantIds": [
+      "tools-auth"
+    ],
+    "grades": {
+      "tools-auth": 3,
+      "access-credentials": 1
+    }
+  },
+  {
+    "query": "How do I authenticate an API that wants a custom header?",
+    "relevantIds": [
+      "tools-auth"
+    ],
+    "grades": {
+      "tools-auth": 3
+    }
+  },
+  {
+    "query": "Can one endpoint authenticate differently from the rest?",
+    "relevantIds": [
+      "tools-auth"
+    ],
+    "grades": {
+      "tools-auth": 3
+    }
+  },
+  {
+    "query": "Is OAuth2 supported for imported APIs?",
+    "relevantIds": [
+      "tools-auth"
+    ],
+    "grades": {
+      "tools-auth": 3
+    }
+  },
+  {
+    "query": "How are report queries structured?",
+    "relevantIds": [
+      "rql-language"
+    ],
+    "grades": {
+      "rql-language": 3,
+      "rql-pipelines": 1
+    }
+  },
+  {
+    "query": "What happens when a report query has a syntax error?",
+    "relevantIds": [
+      "rql-language"
+    ],
+    "grades": {
+      "rql-language": 3
+    }
+  },
+  {
+    "query": "Why does one typo not blank the whole editor?",
+    "relevantIds": [
+      "rql-language"
+    ],
+    "grades": {
+      "rql-language": 3
+    }
+  },
+  {
+    "query": "Does the query grammar restrict which verb targets which input?",
+    "relevantIds": [
+      "rql-language"
+    ],
+    "grades": {
+      "rql-language": 3,
+      "rql-pipelines": 1
+    }
+  },
+  {
+    "query": "Which transformation stages are available in a query?",
+    "relevantIds": [
+      "rql-pipelines"
+    ],
+    "grades": {
+      "rql-pipelines": 3,
+      "rql-language": 1
+    }
+  },
+  {
+    "query": "How do I aggregate rows with a count or a sum?",
+    "relevantIds": [
+      "rql-pipelines"
+    ],
+    "grades": {
+      "rql-pipelines": 3
+    }
+  },
+  {
+    "query": "Why is autocompletion possible after a pipe?",
+    "relevantIds": [
+      "rql-pipelines"
+    ],
+    "grades": {
+      "rql-pipelines": 3,
+      "rql-language": 1
+    }
+  },
+  {
+    "query": "Can one query drive both a dashboard and a spreadsheet?",
+    "relevantIds": [
+      "rql-pipelines"
+    ],
+    "grades": {
+      "rql-pipelines": 3,
+      "insights-excel": 1
+    }
+  },
+  {
+    "query": "What goes into an insight document?",
+    "relevantIds": [
+      "insights-documents"
+    ],
+    "grades": {
+      "insights-documents": 3,
+      "insights-charts": 1
+    }
+  },
+  {
+    "query": "Can I interpolate a computed number into the prose?",
+    "relevantIds": [
+      "insights-documents"
+    ],
+    "grades": {
+      "insights-documents": 3
+    }
+  },
+  {
+    "query": "Is raw HTML allowed in an insight?",
+    "relevantIds": [
+      "insights-documents"
+    ],
+    "grades": {
+      "insights-documents": 3
+    }
+  },
+  {
+    "query": "Why does reopening an insight show the previous run?",
+    "relevantIds": [
+      "insights-documents"
+    ],
+    "grades": {
+      "insights-documents": 3
+    }
+  },
+  {
+    "query": "How do I add a chart to an insight?",
+    "relevantIds": [
+      "insights-charts"
+    ],
+    "grades": {
+      "insights-charts": 3,
+      "insights-documents": 1
+    }
+  },
+  {
+    "query": "Can I set a chart colour with a hex value?",
+    "relevantIds": [
+      "insights-charts"
+    ],
+    "grades": {
+      "insights-charts": 3
+    }
+  },
+  {
+    "query": "Why can I not build a dual-axis chart?",
+    "relevantIds": [
+      "insights-charts"
+    ],
+    "grades": {
+      "insights-charts": 3
+    }
+  },
+  {
+    "query": "What happens with more than eight categorical series?",
+    "relevantIds": [
+      "insights-charts"
+    ],
+    "grades": {
+      "insights-charts": 3
+    }
+  },
+  {
+    "query": "How do I get an insight into Excel?",
+    "relevantIds": [
+      "insights-excel"
+    ],
+    "grades": {
+      "insights-excel": 3,
+      "insights-documents": 1
+    }
+  },
+  {
+    "query": "Are charts exported as images or as native spreadsheet charts?",
+    "relevantIds": [
+      "insights-excel"
+    ],
+    "grades": {
+      "insights-excel": 3
+    }
+  },
+  {
+    "query": "Why is there no headless browser in the export path?",
+    "relevantIds": [
+      "insights-excel"
+    ],
+    "grades": {
+      "insights-excel": 3
+    }
+  },
+  {
+    "query": "How are document parameters handled during export?",
+    "relevantIds": [
+      "insights-excel"
+    ],
+    "grades": {
+      "insights-excel": 3
+    }
+  },
+  {
+    "query": "How does an AI client connect to this server?",
+    "relevantIds": [
+      "mcp-endpoint"
+    ],
+    "grades": {
+      "mcp-endpoint": 3,
+      "mcp-tools": 1
+    }
+  },
+  {
+    "query": "Does the protocol endpoint run on its own port?",
+    "relevantIds": [
+      "mcp-endpoint"
+    ],
+    "grades": {
+      "mcp-endpoint": 3,
+      "access-localhost": 1
+    }
+  },
+  {
+    "query": "Does enabling a tool require a restart before clients see it?",
+    "relevantIds": [
+      "mcp-endpoint"
+    ],
+    "grades": {
+      "mcp-endpoint": 3
+    }
+  },
+  {
+    "query": "What breaks if the protocol library fails?",
+    "relevantIds": [
+      "mcp-endpoint"
+    ],
+    "grades": {
+      "mcp-endpoint": 3
+    }
+  },
+  {
+    "query": "Which tools does a connected client see?",
+    "relevantIds": [
+      "mcp-tools"
+    ],
+    "grades": {
+      "mcp-tools": 3,
+      "mcp-endpoint": 1
+    }
+  },
+  {
+    "query": "Does the server generate an answer for the model?",
+    "relevantIds": [
+      "mcp-tools"
+    ],
+    "grades": {
+      "mcp-tools": 3
+    }
+  },
+  {
+    "query": "How is retrieved content isolated from instructions?",
+    "relevantIds": [
+      "mcp-tools"
+    ],
+    "grades": {
+      "mcp-tools": 3
+    }
+  },
+  {
+    "query": "Can a client reach an unapproved write tool?",
+    "relevantIds": [
+      "mcp-tools"
+    ],
+    "grades": {
+      "mcp-tools": 3,
+      "tools-approval": 1
+    }
+  },
+  {
+    "query": "Why is the embedding model downloaded rather than bundled?",
+    "relevantIds": [
+      "plugins-embedding"
+    ],
+    "grades": {
+      "plugins-embedding": 3
+    }
+  },
+  {
+    "query": "Does indexing send my documents to a hosted service?",
+    "relevantIds": [
+      "plugins-embedding"
+    ],
+    "grades": {
+      "plugins-embedding": 3
+    }
+  },
+  {
+    "query": "What are the dimensions and input window of the embedding model?",
+    "relevantIds": [
+      "plugins-embedding"
+    ],
+    "grades": {
+      "plugins-embedding": 3,
+      "ingestion-chunking": 1
+    }
+  },
+  {
+    "query": "What can search still do before the model is installed?",
+    "relevantIds": [
+      "plugins-embedding"
+    ],
+    "grades": {
+      "plugins-embedding": 3,
+      "search-lexical": 1
+    }
+  },
+  {
+    "query": "Do I need to install a separate database server?",
+    "relevantIds": [
+      "plugins-vector-store"
+    ],
+    "grades": {
+      "plugins-vector-store": 3
+    }
+  },
+  {
+    "query": "Why does the application use a single shared database connection?",
+    "relevantIds": [
+      "plugins-vector-store"
+    ],
+    "grades": {
+      "plugins-vector-store": 3
+    }
+  },
+  {
+    "query": "Does uninstalling the vector store delete my embeddings?",
+    "relevantIds": [
+      "plugins-vector-store"
+    ],
+    "grades": {
+      "plugins-vector-store": 3
+    }
+  },
+  {
+    "query": "What provides vector similarity search?",
+    "relevantIds": [
+      "plugins-vector-store"
+    ],
+    "grades": {
+      "plugins-vector-store": 3,
+      "search-hybrid": 1
+    }
+  },
+  {
+    "query": "Which backend powers live web search?",
+    "relevantIds": [
+      "plugins-searxng"
+    ],
+    "grades": {
+      "plugins-searxng": 3,
+      "search-web": 1
+    }
+  },
+  {
+    "query": "Are my web queries sent to a commercial search account?",
+    "relevantIds": [
+      "plugins-searxng"
+    ],
+    "grades": {
+      "plugins-searxng": 3
+    }
+  },
+  {
+    "query": "How is web search readiness determined?",
+    "relevantIds": [
+      "plugins-searxng"
+    ],
+    "grades": {
+      "plugins-searxng": 3
+    }
+  },
+  {
+    "query": "What happens after a restart to the running search process?",
+    "relevantIds": [
+      "plugins-searxng"
+    ],
+    "grades": {
+      "plugins-searxng": 3
+    }
+  }
 ]

@@ -194,6 +194,21 @@ public class ChunkRepository {
     }
 
     /**
+     * The display name of one chunk's source, without loading its content or embedding.
+     * Used by the feedback memory to label a learned preference in the UI; empty when the chunk has
+     * since been deleted, which is why the memory denormalizes the name rather than joining on it.
+     */
+    public String findSourceName(String chunkId) {
+        try {
+            List<String> names = jdbc.queryForList(
+                    "SELECT source_name FROM chunks WHERE id = ?", String.class, chunkId);
+            return names.isEmpty() ? "" : names.get(0);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /**
      * Returns every indexed chunk for explicitly selected uploaded files and connector
      * connections. Connector source ids are namespaced as {@code connectionId:externalId}.
      */

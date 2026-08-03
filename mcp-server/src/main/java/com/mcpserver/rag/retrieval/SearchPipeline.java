@@ -35,10 +35,26 @@ public interface SearchPipeline {
         return new SearchResponse(search(query, topN, userAclTags, includeWeb), List.of());
     }
 
-    record SearchResponse(List<SearchResult> results, List<String> webQueries) {
+    /**
+     * @param impressionId  id of the logged impression for this response, or null when the
+     *                      adaptive-ranking subsystem is disabled. The client echoes it back with
+     *                      any feedback so a vote can be attributed to the exact ranking it saw.
+     * @param learnedAdjustments  how many results the feedback memory nudged, for the UI to surface
+     */
+    record SearchResponse(List<SearchResult> results, List<String> webQueries,
+                          String impressionId, int learnedAdjustments) {
         public SearchResponse {
             results = results == null ? List.of() : List.copyOf(results);
             webQueries = webQueries == null ? List.of() : List.copyOf(webQueries);
+        }
+
+        /** Pre-learning call sites keep working unchanged. */
+        public SearchResponse(List<SearchResult> results, List<String> webQueries) {
+            this(results, webQueries, null, 0);
+        }
+
+        public SearchResponse withImpressionId(String impressionId) {
+            return new SearchResponse(results, webQueries, impressionId, learnedAdjustments);
         }
     }
 

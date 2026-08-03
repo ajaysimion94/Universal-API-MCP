@@ -2,7 +2,7 @@ import { api } from "../api.js";
 import { banner, escapeAttr, escapeHtml, icon, message, on, statusClass, toggle } from "../ui.js";
 
 export async function mount(outlet) {
-  const state = { plugins: [], loading: true, error: "", jobs: new Map() };
+  const state = { plugins: [], loading: true, error: "", jobs: new Map(), learning: null, notice: "" };
   const abort = new AbortController();
   let pollTimer = 0;
 
@@ -58,7 +58,67 @@ export async function mount(outlet) {
             </div>
           </div>`;
         }).join("")}</div>`}
+      ${learningPanel()}
     </div>`;
+  }
+
+  /**
+   * What the ranking has learned, and how to undo it. Lives here rather than on its own route
+   * because Plugins is already the page for "what is this server doing under the hood".
+   */
+  function learningPanel() {
+    const data = state.learning;
+    if (!data) return "";
+    const impressions = data.impressions || {};
+    const signals = data.feedback || {};
+    const entries = data.memory?.topEntries || [];
+    const arms = data.arms || [];
+
+    const mode = !data.enabled ? "Off"
+      : data.banditEnabled ? "Learning + weight tuning"
+      : data.shadowMode ? "Learning (weight tuning in shadow)"
+      : "Learning from feedback";
+
+    return `<section class="learning-panel">
+      <div class="learning-header">
+        <h2>${icon("route", 18)} Ranking feedback</h2>
+        <span class="status-pill ${statusClass(data.enabled ? "ACTIVE" : "DISABLED")}">${escapeHtml(mode)}</span>
+      </div>
+      <p class="plugins-subtitle">Thumbs on a search result teach this server which sources answer which questions. Ratings are stored locally and never leave the machine.</p>
+      ${state.notice ? banner(state.notice, "status") : ""}
+      <div class="learning-stats">
+        ${statTile("Searches recorded", impressions.total ?? 0)}
+        ${statTile("With feedback", impressions.withFeedback ?? 0)}
+        ${statTile("Ratings", signals.RATING ?? 0)}
+        ${statTile("Learned preferences", data.memory?.entries ?? 0)}
+      </div>
+      ${entries.length ? `<table class="learning-table">
+        <thead><tr><th>Query</th><th>Source</th><th class="num">Strength</th><th class="num">Votes</th></tr></thead>
+        <tbody>${entries.map((entry) => `<tr>
+          <td>${escapeHtml(entry.query)}</td>
+          <td>${escapeHtml(entry.sourceName || entry.chunkId.slice(0, 8))}</td>
+          <td class="num mono ${entry.decayedStrength < 0 ? "is-negative" : "is-positive"}">${entry.decayedStrength > 0 ? "+" : ""}${entry.decayedStrength}</td>
+          <td class="num mono">${entry.observations}</td>
+        </tr>`).join("")}</tbody>
+      </table>` : `<p class="learning-empty">Nothing learned yet. Rate a search result and it will appear here.</p>`}
+      ${data.banditEnabled || data.shadowMode ? `<table class="learning-table">
+        <thead><tr><th>Weight blend</th><th class="num">vector</th><th class="num">lexical</th><th class="num">uses</th><th class="num">mean reward</th></tr></thead>
+        <tbody>${arms.map((arm) => `<tr class="${arm.enabled ? "" : "is-disabled"}">
+          <td>${escapeHtml(arm.armId)}${arm.enabled ? "" : " (retired)"}</td>
+          <td class="num mono">${arm.wVector}</td><td class="num mono">${arm.wLexical}</td>
+          <td class="num mono">${arm.pulls}</td><td class="num mono">${arm.pulls ? arm.meanReward : "—"}</td>
+        </tr>`).join("")}</tbody>
+      </table>` : ""}
+      <div class="learning-actions">
+        <button class="btn btn-ghost" type="button" data-action="reset-memory">Reset what it learned</button>
+        <button class="btn btn-ghost" type="button" data-action="rebuild-learning">Rebuild from history</button>
+        ${data.droppedWrites ? `<span class="mono learning-dropped">${data.droppedWrites} dropped write(s)</span>` : ""}
+      </div>
+    </section>`;
+  }
+
+  function statTile(label, value) {
+    return `<div class="learning-stat"><span class="learning-stat-value mono">${value}</span><span class="learning-stat-label">${escapeHtml(label)}</span></div>`;
   }
 
   async function load() {
@@ -71,6 +131,16 @@ export async function mount(outlet) {
       state.loading = false;
       render();
     }
+  }
+
+  /** Best-effort: the panel is supplementary, so a failure here must not blank the plugins list. */
+  async function loadLearning() {
+    try {
+      state.learning = await api.fetchLearning();
+    } catch {
+      state.learning = null;
+    }
+    render();
   }
 
   async function pollJobs() {
@@ -96,7 +166,28 @@ export async function mount(outlet) {
     const plugin = state.plugins.find((item) => item.id === target.dataset.id);
     if (target.dataset.action === "dismiss-banner") {
       state.error = "";
+      state.notice = "";
       render();
+      return;
+    }
+    if (target.dataset.action === "reset-memory") {
+      try {
+        await api.resetLearning("memory");
+        state.notice = "Cleared what ranking had learned. Your rating history is kept, so Rebuild can restore it.";
+      } catch (error) {
+        state.error = message(error, "Reset failed");
+      }
+      await loadLearning();
+      return;
+    }
+    if (target.dataset.action === "rebuild-learning") {
+      try {
+        await api.rebuildLearning();
+        state.notice = "Rebuilding from your rating history.";
+      } catch (error) {
+        state.error = message(error, "Rebuild failed");
+      }
+      await loadLearning();
       return;
     }
     if (!plugin) return;
@@ -121,6 +212,7 @@ export async function mount(outlet) {
 
   render();
   await load();
+  await loadLearning();
   return () => {
     abort.abort();
     clearInterval(pollTimer);
