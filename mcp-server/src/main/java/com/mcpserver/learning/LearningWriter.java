@@ -64,6 +64,8 @@ public class LearningWriter {
     private final ArrayBlockingQueue<Task> queue = new ArrayBlockingQueue<>(QUEUE_CAPACITY);
     private final AtomicLong dropped = new AtomicLong();
     private final AtomicLong processed = new AtomicLong();
+    private final AtomicLong accepted = new AtomicLong();
+    private final AtomicLong completed = new AtomicLong();
 
     private volatile boolean running = true;
     private Thread workerThread;
@@ -112,9 +114,10 @@ public class LearningWriter {
 
     /** Test seam: block until the queue has drained, so assertions don't race the writer. */
     public boolean awaitDrain(long timeoutMs) {
+        long target = accepted.get();
         long deadline = System.currentTimeMillis() + timeoutMs;
         while (System.currentTimeMillis() < deadline) {
-            if (queue.isEmpty()) return true;
+            if (completed.get() >= target) return true;
             try {
                 Thread.sleep(10);
             } catch (InterruptedException interrupted) {
@@ -122,11 +125,13 @@ public class LearningWriter {
                 return false;
             }
         }
-        return queue.isEmpty();
+        return completed.get() >= target;
     }
 
     private void submit(Task task) {
-        if (!queue.offer(task)) {
+        if (queue.offer(task)) {
+            accepted.incrementAndGet();
+        } else {
             long total = dropped.incrementAndGet();
             // Only the first drop and then every 100th, so a sustained burst cannot flood the log.
             if (total == 1 || total % 100 == 0) {
@@ -145,7 +150,11 @@ public class LearningWriter {
                 batch.clear();
                 batch.add(first);
                 queue.drainTo(batch, BATCH_SIZE - 1);
-                drain(batch);
+                try {
+                    drain(batch);
+                } finally {
+                    completed.addAndGet(batch.size());
+                }
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
                 return;

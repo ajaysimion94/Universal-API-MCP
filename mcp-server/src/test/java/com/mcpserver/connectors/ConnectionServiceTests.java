@@ -14,9 +14,11 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -51,6 +53,7 @@ class ConnectionServiceTests {
                 mock(ChunkRepository.class),
                 mock(IngestionEventRepository.class),
                 credentialCipher,
+                mock(WebhookTokenService.class),
                 mock(ApiToolService.class),
                 mock(ToolGroupRepository.class),
                 mock(JiraToolProvider.class),
@@ -67,5 +70,68 @@ class ConnectionServiceTests {
                 org.mockito.ArgumentMatchers.argThat(
                         connection -> connection.status() == ConnectionStatus.CONNECTED));
         assertThat(saved.get().lastSyncedAt()).isNotNull();
+    }
+
+    @Test
+    void webhookIsRejectedBeforeQueueingWhenCallbackTokenIsInvalid() {
+        ConnectionRepository connectionRepository = mock(ConnectionRepository.class);
+        IngestionEventRepository eventRepository = mock(IngestionEventRepository.class);
+        WebhookTokenService webhookTokenService = mock(WebhookTokenService.class);
+        SourceConnector connector = mock(SourceConnector.class);
+        Connection connection = Connection.create(ConnectionType.JIRA, "Jira", "https://jira.test",
+                "user", "encrypted", List.of());
+        when(connectionRepository.findById(connection.id())).thenReturn(Optional.of(connection));
+        when(connector.type()).thenReturn(ConnectionType.JIRA);
+        when(webhookTokenService.verify(connection.id(), "wrong")).thenReturn(false);
+        ConnectionService service = service(connectionRepository, eventRepository,
+                webhookTokenService, connector);
+
+        assertThatThrownBy(() -> service.receiveWebhook(connection.id(), "wrong", "{}"))
+                .isInstanceOf(SecurityException.class)
+                .hasMessageContaining("Invalid webhook callback token");
+        verify(eventRepository, never()).insert(any());
+        service.shutdown();
+    }
+
+    @Test
+    void validWebhookTokenQueuesPayloadDurably() {
+        ConnectionRepository connectionRepository = mock(ConnectionRepository.class);
+        IngestionEventRepository eventRepository = mock(IngestionEventRepository.class);
+        WebhookTokenService webhookTokenService = mock(WebhookTokenService.class);
+        SourceConnector connector = mock(SourceConnector.class);
+        Connection connection = Connection.create(ConnectionType.CONFLUENCE, "Docs", "https://docs.test",
+                "user", "encrypted", List.of());
+        when(connectionRepository.findById(connection.id())).thenReturn(Optional.of(connection));
+        when(connector.type()).thenReturn(ConnectionType.CONFLUENCE);
+        when(webhookTokenService.verify(connection.id(), "valid")).thenReturn(true);
+        ConnectionService service = service(connectionRepository, eventRepository,
+                webhookTokenService, connector);
+
+        service.receiveWebhook(connection.id(), "valid", "{\"page\":{\"id\":\"42\"}}");
+
+        verify(eventRepository).insert(org.mockito.ArgumentMatchers.argThat(event ->
+                event.connectionId().equals(connection.id())
+                        && event.eventType() == EventType.WEBHOOK
+                        && event.payload().contains("42")));
+        service.shutdown();
+    }
+
+    private static ConnectionService service(ConnectionRepository connectionRepository,
+                                             IngestionEventRepository eventRepository,
+                                             WebhookTokenService webhookTokenService,
+                                             SourceConnector connector) {
+        return new ConnectionService(
+                connectionRepository,
+                mock(ChunkRepository.class),
+                eventRepository,
+                mock(CredentialCipher.class),
+                webhookTokenService,
+                mock(ApiToolService.class),
+                mock(ToolGroupRepository.class),
+                mock(JiraToolProvider.class),
+                mock(ConfluenceToolProvider.class),
+                mock(GitHubToolProvider.class),
+                mock(CacheService.class),
+                List.of(connector));
     }
 }

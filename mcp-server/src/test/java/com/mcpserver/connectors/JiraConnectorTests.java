@@ -2,14 +2,17 @@ package com.mcpserver.connectors;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.mcpserver.repositories.ChunkRepository;
+import com.mcpserver.services.IngestionService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -26,6 +29,8 @@ class JiraConnectorTests {
     private CredentialCipher credentialCipher;
     @Autowired
     private ChunkRepository chunkRepository;
+    @Autowired
+    private IngestionService ingestionService;
 
     private WireMockServer wireMock;
 
@@ -85,6 +90,21 @@ class JiraConnectorTests {
     }
 
     @Test
+    void dataCenterPatUsesBearerAuthorization() throws Exception {
+        Connection connection = Connection.create(ConnectionType.JIRA, "PAT", wireMock.baseUrl(),
+                AuthMode.BEARER, null, credentialCipher.encrypt("dc-pat"), List.of())
+                .withDeploymentType(DeploymentType.SERVER_DC);
+        stubFor(get(urlEqualTo("/rest/api/2/myself"))
+                .withHeader("Authorization", equalTo("Bearer dc-pat"))
+                .willReturn(okJson("{}")));
+
+        connector.testConnection(connection);
+
+        verify(getRequestedFor(urlEqualTo("/rest/api/2/myself"))
+                .withHeader("Authorization", equalTo("Bearer dc-pat")));
+    }
+
+    @Test
     void backfillIngestsIssuesAsSearchableChunks() throws Exception {
         Connection c = newConnection();
         String key = "ENG-" + (int) (Math.random() * 100000);
@@ -101,6 +121,21 @@ class JiraConnectorTests {
         List<com.mcpserver.models.Chunk> hits = chunkRepository.lexicalSearch(uniqueTerm, 10);
         assertThat(hits).anyMatch(h -> h.sourceFileId().equals(c.id() + ":" + key));
         assertThat(hits).anyMatch(h -> "jira".equals(h.sourceSystem()) && key.equals(h.externalId()));
+    }
+
+    @Test
+    void backfillCursorCoversChangesThatHappenDuringTheCrawl() throws Exception {
+        Connection c = newConnection();
+        String key = "ENG-" + (int) (Math.random() * 100000);
+        stubFor(get(urlPathEqualTo("/rest/api/2/search"))
+                .willReturn(okJson(searchResultsJson(key, "Cursor coverage", "ENG",
+                        "content", "2024-01-01T12:00:00.000+0000"))));
+        AtomicReference<Instant> progressObservedAt = new AtomicReference<>();
+
+        connector.backfill(c, (done, total) -> progressObservedAt.compareAndSet(null, Instant.now()));
+
+        Instant cursor = Instant.parse(connectionRepository.findById(c.id()).orElseThrow().syncCursor());
+        assertThat(cursor).isBeforeOrEqualTo(progressObservedAt.get());
     }
 
     @Test
@@ -295,6 +330,26 @@ class JiraConnectorTests {
 
         assertThat(chunkRepository.lexicalSearch(uniqueTerm, 10))
                 .noneMatch(h -> h.sourceFileId().equals(c.id() + ":" + key));
+    }
+
+    @Test
+    void reconciliationPurgesIssuesNoLongerReturnedByJira() throws Exception {
+        Connection c = newConnection().withDeploymentType(DeploymentType.CLOUD)
+                .withSyncCursor("2020-01-01T00:00:00Z");
+        connectionRepository.save(c);
+        String key = "ENG-" + (int) (Math.random() * 100000);
+        String uniqueTerm = "deletedbyinventory" + key.replace("-", "");
+        ingestionService.ingest(c.id() + ":" + key, key, "ENG",
+                uniqueTerm.getBytes(), "text/plain", List.of("connection:" + c.id()),
+                "jira", key, null, Instant.parse("2024-01-01T00:00:00Z"));
+        stubFor(post(urlEqualTo("/rest/api/3/search/jql")).willReturn(aResponse().withStatus(404)));
+        stubFor(get(urlPathEqualTo("/rest/api/2/search"))
+                .willReturn(okJson("{\"total\":0,\"issues\":[]}")));
+
+        connector.pollDelta(c);
+
+        assertThat(chunkRepository.lexicalSearch(uniqueTerm, 10))
+                .noneMatch(hit -> hit.sourceFileId().equals(c.id() + ":" + key));
     }
 
     private static String searchResultsJson(String key, String summary, String projectKey, String description, String updated) {

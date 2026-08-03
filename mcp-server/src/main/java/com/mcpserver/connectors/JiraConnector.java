@@ -3,6 +3,7 @@ package com.mcpserver.connectors;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mcpserver.config.TlsHttpClientFactory;
+import com.mcpserver.repositories.ChunkRepository;
 import com.mcpserver.services.IngestionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,8 +21,10 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -52,24 +55,34 @@ public class JiraConnector implements SourceConnector {
             .withZone(ZoneOffset.UTC);
 
     private final IngestionService ingestionService;
+    private final ChunkRepository chunkRepository;
     private final ConnectionRepository connectionRepository;
     private final CredentialCipher credentialCipher;
+    private final WebhookTokenService webhookTokenService;
     private final String webhookBaseUrl;
+    private final Duration reconcileInterval;
     private final HttpClient httpClient;
     private final ObjectMapper mapper = new ObjectMapper();
 
     /** Per-connection cache of which search endpoint generation works, populated on first use. */
     private final Map<String, Boolean> modernSearchSupported = new ConcurrentHashMap<>();
+    private final Map<String, Instant> lastReconciledAt = new ConcurrentHashMap<>();
 
     public JiraConnector(IngestionService ingestionService,
+                          ChunkRepository chunkRepository,
                           ConnectionRepository connectionRepository,
                           CredentialCipher credentialCipher,
+                          WebhookTokenService webhookTokenService,
                           TlsHttpClientFactory tlsHttpClientFactory,
-                          @Value("${connectors.webhook-base-url:}") String webhookBaseUrl) {
+                          @Value("${connectors.webhook-base-url:}") String webhookBaseUrl,
+                          @Value("${connectors.reconcile-interval-ms:86400000}") long reconcileIntervalMs) {
         this.ingestionService = ingestionService;
+        this.chunkRepository = chunkRepository;
         this.connectionRepository = connectionRepository;
         this.credentialCipher = credentialCipher;
+        this.webhookTokenService = webhookTokenService;
         this.webhookBaseUrl = webhookBaseUrl;
+        this.reconcileInterval = Duration.ofMillis(Math.max(60_000, reconcileIntervalMs));
         this.httpClient = tlsHttpClientFactory.builder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
@@ -102,19 +115,25 @@ public class JiraConnector implements SourceConnector {
 
     @Override
     public void backfill(Connection connection, BackfillProgressSink sink) throws Exception {
+        Instant crawlStartedAt = Instant.now();
+        Set<String> activeIssueKeys = new HashSet<>();
         String cursor = null;
         int processed = 0;
         do {
             IssuePage page = searchIssues(connection, "order by updated asc", cursor, PAGE_SIZE);
             for (JsonNode issue : page.issues()) {
+                String key = issue.path("key").asText(null);
+                if (key != null) activeIssueKeys.add(key);
                 ingestIssue(connection, issue);
                 processed++;
                 sink.progress(processed, 0); // neither endpoint gives a reliable upfront total
             }
             cursor = page.nextCursor();
         } while (cursor != null);
+        purgeMissing(connection, activeIssueKeys);
+        lastReconciledAt.put(connection.id(), Instant.now());
         connectionRepository.save(connectionRepository.findById(connection.id())
-                .orElse(connection).withSyncCursor(Instant.now().toString()));
+                .orElse(connection).withSyncCursor(crawlStartedAt.toString()));
         log.info("Jira backfill complete for connection {}: {} issues", connection.id(), processed);
     }
 
@@ -126,7 +145,9 @@ public class JiraConnector implements SourceConnector {
         if (webhookBaseUrl == null || webhookBaseUrl.isBlank()) {
             throw new IllegalStateException("connectors.webhook-base-url is not configured — relying on polling");
         }
-        String callbackUrl = webhookBaseUrl + "/api/connections/" + connection.id() + "/webhook";
+        String token = webhookTokenService.getOrCreate(connection.id());
+        String callbackUrl = webhookBaseUrl + "/api/connections/" + connection.id()
+                + "/webhook?token=" + URLEncoder.encode(token, StandardCharsets.UTF_8);
         com.fasterxml.jackson.databind.node.ObjectNode payload = mapper.createObjectNode();
         payload.put("name", "mcp-server-" + connection.id());
         payload.put("url", callbackUrl);
@@ -143,6 +164,7 @@ public class JiraConnector implements SourceConnector {
     public void pollDelta(Connection connection) throws Exception {
         if (connection.syncCursor() == null) {
             connectionRepository.save(connection.withSyncCursor(Instant.now().toString()));
+            maybeReconcile(connection);
             return;
         }
         String cursorJql = JQL_DATE.format(Instant.parse(connection.syncCursor()));
@@ -154,13 +176,17 @@ public class JiraConnector implements SourceConnector {
             for (JsonNode issue : page.issues()) {
                 ingestIssue(connection, issue);
                 String updated = issue.path("fields").path("updated").asText(null);
-                if (updated != null) latestSeen = normalizeJiraTimestamp(updated);
+                if (updated != null) {
+                    String normalized = normalizeJiraTimestamp(updated);
+                    if (Instant.parse(normalized).isAfter(Instant.parse(latestSeen))) latestSeen = normalized;
+                }
             }
             pageCursor = page.nextCursor();
         } while (pageCursor != null);
         if (!latestSeen.equals(connection.syncCursor())) {
             connectionRepository.save(connection.withSyncCursor(latestSeen));
         }
+        maybeReconcile(connection);
     }
 
     private record IssuePage(List<JsonNode> issues, String nextCursor) {}
@@ -173,12 +199,18 @@ public class JiraConnector implements SourceConnector {
      * the failed probe.
      */
     private IssuePage searchIssues(Connection connection, String jql, String cursor, int maxResults) throws Exception {
-        Boolean modernOk = modernSearchSupported.get(connection.id());
+        return searchIssues(connection, jql, cursor, maxResults, FIELDS_LIST);
+    }
+
+    private IssuePage searchIssues(Connection connection, String jql, String cursor,
+                                   int maxResults, List<String> fields) throws Exception {
+        String capabilityKey = connection.id() + "\u0000" + connection.baseUrl();
+        Boolean modernOk = modernSearchSupported.get(capabilityKey);
         boolean firstProbe = modernOk == null;
         if (modernOk == null || modernOk) {
-            HttpResponse<String> res = postSearchJql(connection, jql, cursor, maxResults);
+            HttpResponse<String> res = postSearchJql(connection, jql, cursor, maxResults, fields);
             if (res.statusCode() == 200) {
-                modernSearchSupported.put(connection.id(), true);
+                modernSearchSupported.put(capabilityKey, true);
                 JsonNode body = mapper.readTree(res.body());
                 List<JsonNode> issues = toList(body.path("issues"));
                 String nextToken = body.path("nextPageToken").asText(null);
@@ -194,13 +226,13 @@ public class JiraConnector implements SourceConnector {
             // and surfaces rather than being silently swallowed by falling back.
             boolean unrecognizedShapeOnFirstProbe = firstProbe && res.statusCode() == 400;
             if (endpointUnavailable || unrecognizedShapeOnFirstProbe) {
-                modernSearchSupported.put(connection.id(), false);
+                modernSearchSupported.put(capabilityKey, false);
             } else {
                 throw new IllegalStateException("Jira search failed (HTTP " + res.statusCode() + "): " + snippet(res.body()));
             }
         }
         int startAt = cursor == null ? 0 : Integer.parseInt(cursor);
-        HttpResponse<String> res = getLegacySearch(connection, jql, startAt, maxResults);
+        HttpResponse<String> res = getLegacySearch(connection, jql, startAt, maxResults, fields);
         if (res.statusCode() != 200) {
             throw new IllegalStateException("Jira search failed (HTTP " + res.statusCode() + "): " + snippet(res.body()));
         }
@@ -212,12 +244,13 @@ public class JiraConnector implements SourceConnector {
         return new IssuePage(issues, next);
     }
 
-    private HttpResponse<String> postSearchJql(Connection connection, String jql, String cursor, int maxResults) throws Exception {
+    private HttpResponse<String> postSearchJql(Connection connection, String jql, String cursor,
+                                               int maxResults, List<String> requestedFields) throws Exception {
         com.fasterxml.jackson.databind.node.ObjectNode body = mapper.createObjectNode();
         body.put("jql", jql);
         body.put("maxResults", maxResults);
         com.fasterxml.jackson.databind.node.ArrayNode fields = body.putArray("fields");
-        for (String f : FIELDS_LIST) fields.add(f);
+        for (String f : requestedFields) fields.add(f);
         // Atlassian's documented convention is to send nextPageToken explicitly as null on the
         // first page, not omit the field — ObjectNode.put(String, String) writes a JSON null for
         // a null value.
@@ -225,10 +258,41 @@ public class JiraConnector implements SourceConnector {
         return post(connection, "/rest/api/3", "/search/jql", body.toString());
     }
 
-    private HttpResponse<String> getLegacySearch(Connection connection, String jql, int startAt, int maxResults) throws Exception {
+    private HttpResponse<String> getLegacySearch(Connection connection, String jql, int startAt,
+                                                 int maxResults, List<String> requestedFields) throws Exception {
         String path = "/search?jql=" + URLEncoder.encode(jql, StandardCharsets.UTF_8)
-                + "&fields=" + FIELDS_CSV + "&startAt=" + startAt + "&maxResults=" + maxResults;
+                + "&fields=" + String.join(",", requestedFields)
+                + "&startAt=" + startAt + "&maxResults=" + maxResults;
         return get(connection, path);
+    }
+
+    private void maybeReconcile(Connection connection) throws Exception {
+        Instant now = Instant.now();
+        Instant last = lastReconciledAt.get(connection.id());
+        if (last != null && last.plus(reconcileInterval).isAfter(now)) return;
+
+        Set<String> activeIssueKeys = new HashSet<>();
+        String cursor = null;
+        do {
+            IssuePage page = searchIssues(connection, "order by key asc", cursor, 100, List.of("updated"));
+            for (JsonNode issue : page.issues()) {
+                String key = issue.path("key").asText(null);
+                if (key != null) activeIssueKeys.add(key);
+            }
+            cursor = page.nextCursor();
+        } while (cursor != null);
+        purgeMissing(connection, activeIssueKeys);
+        lastReconciledAt.put(connection.id(), now);
+    }
+
+    private void purgeMissing(Connection connection, Set<String> activeIssueKeys) {
+        Set<String> stale = chunkRepository.findExternalIds(connection.id(), "jira");
+        stale.removeAll(activeIssueKeys);
+        stale.forEach(key -> ingestionService.purgeSource(connection.id() + ":" + key));
+        if (!stale.isEmpty()) {
+            log.info("Jira reconciliation purged {} stale issue(s) for connection {}",
+                    stale.size(), connection.id());
+        }
     }
 
     private static List<JsonNode> toList(JsonNode arrayNode) {
@@ -407,8 +471,8 @@ public class JiraConnector implements SourceConnector {
     private HttpResponse<String> get(Connection connection, String apiRoot, String path) throws Exception {
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(connection.baseUrl() + apiRoot + path))
-                .header("Authorization", AtlassianAuth.basicAuthHeader(connection.authUsername(),
-                        credentialCipher.decrypt(connection.authSecretEncrypted())))
+                .header("Authorization", AtlassianAuth.authorizationHeader(connection.authMode(),
+                        connection.authUsername(), credentialCipher.decrypt(connection.authSecretEncrypted())))
                 .header("Accept", "application/json")
                 .timeout(Duration.ofSeconds(20))
                 .GET()
@@ -419,8 +483,8 @@ public class JiraConnector implements SourceConnector {
     private HttpResponse<String> post(Connection connection, String apiRoot, String path, String jsonBody) throws Exception {
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(connection.baseUrl() + apiRoot + path))
-                .header("Authorization", AtlassianAuth.basicAuthHeader(connection.authUsername(),
-                        credentialCipher.decrypt(connection.authSecretEncrypted())))
+                .header("Authorization", AtlassianAuth.authorizationHeader(connection.authMode(),
+                        connection.authUsername(), credentialCipher.decrypt(connection.authSecretEncrypted())))
                 .header("Accept", "application/json")
                 .header("Content-Type", "application/json")
                 .timeout(Duration.ofSeconds(20))

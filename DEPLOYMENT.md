@@ -160,6 +160,22 @@ chain for every outbound connector and imported API request, so use it only for 
 troubleshooting, never for production or untrusted networks. Remove the variable (or set it to
 `false`) and restart to restore verification. Hostname verification remains enabled.
 
+### Jira and Confluence synchronization
+
+Cloud connections use Basic authentication with an email and API token. Jira/Confluence Data Center
+connections may use either Basic username/password or a Bearer personal access token. Configure the
+mode when creating the connection or under **Connections → Edit settings**.
+
+Connector polling defaults to four concurrent sources (`connectors.poll-concurrency`) while preventing
+the same connection from overlapping itself. `connectors.reconcile-interval-ms` defaults to one day;
+the reconciliation inventory removes indexed pages/issues deleted remotely or no longer visible to
+the connector account.
+
+Server/DC webhook registration requires `connectors.webhook-base-url`. Every registered callback URL
+contains a random per-connection token stored encrypted in SQLite; requests without the exact token
+receive `401` and are not queued. Keep reverse-proxy access logs containing webhook query strings
+restricted. Cloud relies on polling unless a Connect/Forge app supplies its own webhook integration.
+
 ---
 
 ## The files & folders API

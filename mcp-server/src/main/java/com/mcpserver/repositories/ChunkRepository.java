@@ -12,7 +12,9 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 import org.springframework.jdbc.core.ConnectionCallback;
 
@@ -136,6 +138,19 @@ public class ChunkRepository {
                 "SELECT id FROM chunks WHERE source_file_id LIKE ?", String.class, prefix + "%");
         jdbc.update("DELETE FROM chunks WHERE source_file_id LIKE ?", prefix + "%");
         deleteFromSecondaryLegs(chunkIds);
+    }
+
+    /**
+     * Returns the distinct remote IDs currently indexed for one connector connection. Reconciliation
+     * compares this set with a lightweight source inventory so remote deletions and permission
+     * removals do not leave stale searchable chunks behind.
+     */
+    public Set<String> findExternalIds(String connectionId, String sourceSystem) {
+        return new LinkedHashSet<>(jdbc.queryForList("""
+                SELECT DISTINCT external_id
+                FROM chunks
+                WHERE source_file_id LIKE ? AND source_system = ? AND external_id IS NOT NULL
+                """, String.class, connectionId + ":%", sourceSystem));
     }
 
     private void deleteFromSecondaryLegs(List<String> chunkIds) {

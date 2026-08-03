@@ -38,6 +38,7 @@ public class ConnectionService {
     private final ChunkRepository chunkRepository;
     private final IngestionEventRepository eventRepository;
     private final CredentialCipher credentialCipher;
+    private final WebhookTokenService webhookTokenService;
     private final ApiToolService apiToolService;
     private final ToolGroupRepository toolGroupRepository;
     private final JiraToolProvider jiraToolProvider;
@@ -58,6 +59,7 @@ public class ConnectionService {
                               ChunkRepository chunkRepository,
                               IngestionEventRepository eventRepository,
                               CredentialCipher credentialCipher,
+                              WebhookTokenService webhookTokenService,
                               ApiToolService apiToolService,
                               ToolGroupRepository toolGroupRepository,
                               JiraToolProvider jiraToolProvider,
@@ -69,6 +71,7 @@ public class ConnectionService {
         this.chunkRepository = chunkRepository;
         this.eventRepository = eventRepository;
         this.credentialCipher = credentialCipher;
+        this.webhookTokenService = webhookTokenService;
         this.apiToolService = apiToolService;
         this.toolGroupRepository = toolGroupRepository;
         this.jiraToolProvider = jiraToolProvider;
@@ -95,8 +98,15 @@ public class ConnectionService {
     /** Persists the connection (PENDING) and kicks off an async test-connection job. */
     public CreateResult create(ConnectionType type, String name, String baseUrl,
                           String username, String password, List<String> aclScope) {
+        return create(type, name, baseUrl, AuthMode.BASIC, username, password, aclScope);
+    }
+
+    public CreateResult create(ConnectionType type, String name, String baseUrl, AuthMode authMode,
+                               String username, String password, List<String> aclScope) {
         connectorFor(type); // fail fast if the type has no implementation yet
-        Connection connection = Connection.create(type, name, baseUrl, username,
+        validateAtlassianAuth(type, authMode, username, password);
+        Connection connection = Connection.create(type, name, baseUrl, authMode,
+                authMode == AuthMode.BEARER ? null : username,
                 credentialCipher.encrypt(password), aclScope);
         connectionRepository.save(connection);
         return new CreateResult(connection.id(), startTestConnectionJob(connection.id(), true));
@@ -165,21 +175,40 @@ public class ConnectionService {
                           String username, String password, AuthMode authMode, List<String> aclScope,
                           ApiUrlMode apiUrlMode) {
         Connection existing = findById(connectionId);
+        AuthMode newAuthMode = authMode != null ? authMode : existing.authMode();
+        String newUsername = username != null && !username.isBlank() ? username : existing.authUsername();
+        String newBaseUrl = baseUrl != null && !baseUrl.isBlank() ? baseUrl : existing.baseUrl();
+        boolean contentConnection = existing.type() == ConnectionType.JIRA
+                || existing.type() == ConnectionType.CONFLUENCE;
+        if (contentConnection && newAuthMode != AuthMode.BASIC && newAuthMode != AuthMode.BEARER) {
+            throw new IllegalArgumentException("Atlassian connections support BASIC or BEARER authentication");
+        }
+        if (contentConnection && newAuthMode == AuthMode.BASIC
+                && (newUsername == null || newUsername.isBlank())) {
+            throw new IllegalArgumentException("Username is required for Atlassian Basic authentication");
+        }
+        if (contentConnection && authMode != null && authMode != existing.authMode()
+                && (password == null || password.isBlank())) {
+            throw new IllegalArgumentException("Enter a new password or token when changing authentication mode");
+        }
+        if (contentConnection && newAuthMode == AuthMode.BEARER) newUsername = null;
+        boolean sourceChanged = contentConnection && !newBaseUrl.equals(existing.baseUrl());
         Connection updated = new Connection(
                 existing.id(), existing.type(),
                 name != null && !name.isBlank() ? name : existing.name(),
-                baseUrl != null && !baseUrl.isBlank() ? baseUrl : existing.baseUrl(),
-                existing.deploymentType(), authMode != null ? authMode : existing.authMode(),
-                username != null && !username.isBlank() ? username : existing.authUsername(),
+                newBaseUrl,
+                sourceChanged ? DeploymentType.UNKNOWN : existing.deploymentType(), newAuthMode,
+                newUsername,
                 password != null && !password.isBlank() ? credentialCipher.encrypt(password) : existing.authSecretEncrypted(),
-                ConnectionStatus.PENDING, null, existing.syncCursor(), existing.webhookRegistered(),
+                ConnectionStatus.PENDING, null, sourceChanged ? null : existing.syncCursor(),
+                sourceChanged ? false : existing.webhookRegistered(),
                 aclScope != null ? aclScope : existing.aclScope(),
                 existing.createdAt(), java.time.Instant.now(), existing.lastSyncedAt(),
                 existing.specSourceUrl(), existing.specFormat(), existing.specDocument(),
                 apiUrlMode != null ? apiUrlMode : existing.apiUrlMode()
         );
         connectionRepository.save(updated);
-        return startTestConnectionJob(connectionId);
+        return startTestConnectionJob(connectionId, sourceChanged);
     }
 
     public void setDisabled(String connectionId, boolean disabled) {
@@ -203,6 +232,7 @@ public class ConnectionService {
         cacheService.invalidateSearchResults();
         apiToolService.deleteByConnectionId(connectionId); // also removes TOOL memberships
         toolGroupRepository.deleteMembersForConnection(connectionId);
+        webhookTokenService.delete(connectionId);
         connectionRepository.deleteById(connectionId);
         log.info("Deleted connection {} and purged its chunks, tools, and group memberships", connectionId);
     }
@@ -212,10 +242,27 @@ public class ConnectionService {
      * connector happens on {@link EventQueueWorker}'s background thread. This is what satisfies
      * the 3-second webhook-ack SLA and survives a crash between receipt and processing.
      */
-    public void receiveWebhook(String connectionId, String rawPayload) {
+    public void receiveWebhook(String connectionId, String callbackToken, String rawPayload) {
         Connection connection = findById(connectionId); // 404s if missing
         connectorFor(connection.type()); // fail fast if no connector implementation is registered
+        if (!webhookTokenService.verify(connectionId, callbackToken)) {
+            throw new SecurityException("Invalid webhook callback token");
+        }
         eventRepository.insert(IngestionEvent.create(connectionId, EventType.WEBHOOK, null, rawPayload));
+    }
+
+    private static void validateAtlassianAuth(ConnectionType type, AuthMode authMode,
+                                               String username, String password) {
+        if (type != ConnectionType.JIRA && type != ConnectionType.CONFLUENCE) return;
+        if (authMode != AuthMode.BASIC && authMode != AuthMode.BEARER) {
+            throw new IllegalArgumentException("Atlassian connections support BASIC or BEARER authentication");
+        }
+        if (authMode == AuthMode.BASIC && (username == null || username.isBlank())) {
+            throw new IllegalArgumentException("Username is required for Atlassian Basic authentication");
+        }
+        if (password == null || password.isBlank()) {
+            throw new IllegalArgumentException("Password or token is required for Atlassian authentication");
+        }
     }
 
     private void runTestConnection(String connectionId, ConnectionJob job) {

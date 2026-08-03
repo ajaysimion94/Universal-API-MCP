@@ -858,3 +858,31 @@ longer corpus.
 `eval-harness/corpus/documents.json`; `eval-harness/golden-set/{search,negative-search,baseline}.json`;
 `GoldenSetRegressionTests`; `rag/retrieval/TextSignals.java`; `scripts/run-replay.sh`;
 `ReplayHarnessTests`
+
+### 2026-08-03 — Atlassian connectors use explicit auth, overlap-safe cursors, and reconciliation
+
+**Decision:** Jira and Confluence connections now persist an explicit Basic-or-Bearer choice: Cloud
+email/API-token and Server/DC username/password use Basic; Server/DC personal access tokens use
+Bearer. Confluence Cloud fetching moves from REST v1 to REST v2 cursor pagination while Server/DC
+stays on v1. Backfills persist the crawl's start time—not its completion time—as the delta cursor.
+Polling runs in a bounded executor with a per-connection overlap guard, and each connector performs a
+daily lightweight full-ID inventory that purges indexed IDs no longer returned by the source. Manual
+backfills reconcile immediately. Server/DC webhook callback URLs carry a random per-connection token;
+the token is AES-GCM encrypted in `connection_webhook_tokens`, verified in constant time before an
+event is queued, and deleted with the connection.
+
+**Why:** A completion-time cursor can skip edits made while a long backfill is running. Delta APIs do
+not emit reliable tombstones on polling-only Cloud connections, so webhooks alone cannot meet delete
+propagation. Serial polling lets one slow tenant delay all others. Atlassian Data Center PATs require
+Bearer rather than the Cloud Basic email/token pattern. Finally, an externally reachable callback
+that trusts only a connection ID lets a forged Jira delete event purge indexed content. These fixes
+close those correctness and security gaps without adding Phase-6 user authentication or an external
+queue/database.
+
+**Status:** active
+
+**Refs:** `connectors/AtlassianAuth.java`, `JiraConnector.java`, `ConfluenceConnector.java`,
+`ConnectionPollingScheduler.java`, `WebhookTokenService.java`, `ConnectionController.java`;
+`repositories/ChunkRepository.java`; `schema.sql` (`connection_webhook_tokens`);
+`JiraConnectorTests`, `ConfluenceConnectorTests`, `ConnectionPollingSchedulerTests`,
+`WebhookTokenServiceTests`; `static/pages/connections.js`

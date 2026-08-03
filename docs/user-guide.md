@@ -170,7 +170,16 @@ Two different kinds of connection live on this page.
 Create the connection with a base URL and credentials. Deployment type (Cloud vs Server/Data Center)
 is auto-detected, since the two have diverged — notably Jira Cloud retired the classic search
 endpoint, so the connector tries `POST /rest/api/3/search/jql` first and falls back to
-`GET /rest/api/2/search`, caching whichever works per connection.
+`GET /rest/api/2/search`, caching whichever works per connection and base URL. Confluence Cloud uses
+REST v2 cursor pagination; Server/Data Center remains on REST v1.
+
+Choose the matching authentication mode:
+
+- **Cloud token / password (Basic):** Cloud email + API token, or a Server/DC username + password.
+- **Data Center PAT (Bearer):** a Jira or Confluence Data Center personal access token; no username.
+
+Use **Edit settings** on any connection to rotate credentials or change its name/base URL. Switching
+the base URL resets deployment/cursor state and performs a fresh backfill before reconnecting.
 
 The lifecycle:
 
@@ -178,15 +187,17 @@ The lifecycle:
 | --- | --- |
 | **Test connection** | Background job; verifies credentials and deployment. Poll `GET /api/connections/jobs/{jobId}`. |
 | **Backfill** | Background job; walks the source and ingests everything through the shared ingestion pipeline. |
-| **Webhook** | `POST /api/connections/{id}/webhook` durably queues the event and returns 202 immediately, so intake stays inside a 3-second ack regardless of processing time. |
-| **Delta poll** | A scheduler polls every `CONNECTED` connection on `connectors.poll-interval-ms`. |
+| **Webhook** | Server/DC registration creates an encrypted per-connection callback token. `POST /api/connections/{id}/webhook?token=…` verifies it, durably queues the event, and returns 202 immediately. |
+| **Delta poll** | A bounded scheduler polls `CONNECTED` sources concurrently without overlapping the same connection. |
+| **Reconciliation** | A lightweight daily full-ID inventory purges remote deletions and pages/issues the connector account can no longer see. |
 | **Disable** | Excludes the connection from polling — that is the entire pause mechanism. |
 
 Queued webhook events are processed by a single background worker over a SQLite table. If the process
 crashes mid-event, rows left `PROCESSING` are reset to `PENDING` at startup, so nothing is lost.
 
 Credentials are encrypted with AES-256-GCM using a locally generated key file (`./data/connections.key`).
-There is no Vault/KMS integration yet — a deliberate, documented scope limit.
+Webhook callback tokens use the same encryption and are never returned by the REST API. There is no
+Vault/KMS integration yet — a deliberate, documented scope limit.
 
 ### 5.2 API collections (Postman / OpenAPI)
 

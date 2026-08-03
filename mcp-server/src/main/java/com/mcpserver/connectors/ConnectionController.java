@@ -53,7 +53,8 @@ public class ConnectionController {
             if (req.name == null || req.baseUrl == null) {
                 throw new IllegalArgumentException("type, name, and baseUrl are required");
             }
-            result = connectionService.create(type, req.name, req.baseUrl, req.username, req.password, aclScope);
+            result = connectionService.create(type, req.name, req.baseUrl,
+                    parseAtlassianAuthMode(req.authMode), req.username, req.password, aclScope);
         }
         return Map.of("id", result.connectionId(), "jobId", result.jobId(), "status", "running");
     }
@@ -130,6 +131,14 @@ public class ConnectionController {
         }
     }
 
+    private static AuthMode parseAtlassianAuthMode(String raw) {
+        AuthMode mode = raw == null || raw.isBlank() ? AuthMode.BASIC : parseAuthMode(raw);
+        if (mode != AuthMode.BASIC && mode != AuthMode.BEARER) {
+            throw new IllegalArgumentException("Atlassian connections support BASIC or BEARER authentication");
+        }
+        return mode;
+    }
+
     private static ApiUrlMode parseApiUrlMode(String raw) {
         if (raw == null || raw.isBlank()) return ApiUrlMode.CONNECTION_BASE;
         try {
@@ -201,9 +210,16 @@ public class ConnectionController {
      * endpoint within the 3-second webhook-ack SLA regardless of how long ingestion takes.
      */
     @PostMapping("/{id}/webhook")
-    public ResponseEntity<Void> webhook(@PathVariable String id, @RequestBody String rawPayload) {
-        connectionService.receiveWebhook(id, rawPayload);
+    public ResponseEntity<Void> webhook(@PathVariable String id,
+                                        @RequestParam(value = "token", required = false) String token,
+                                        @RequestBody String rawPayload) {
+        connectionService.receiveWebhook(id, token, rawPayload);
         return ResponseEntity.status(HttpStatus.ACCEPTED).build();
+    }
+
+    @ExceptionHandler(SecurityException.class)
+    public ResponseEntity<Map<String, String>> handleSecurityException(SecurityException e) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", e.getMessage()));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

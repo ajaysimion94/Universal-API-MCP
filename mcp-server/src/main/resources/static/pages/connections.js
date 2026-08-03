@@ -38,13 +38,14 @@ export async function mount(outlet) {
     formOpen: false,
     formType: "CONFLUENCE",
     specSource: "url",
-    authMode: "NONE",
+    authMode: "BASIC",
     specFile: null,
     authNotice: "",
     jobs: new Map(),
     expanded: new Set(),
     tools: new Map(),
     editingAuth: "",
+    editAuthMode: "",
   };
   const abort = new AbortController();
   let pollTimer = 0;
@@ -82,13 +83,39 @@ export async function mount(outlet) {
       </div>
       ${state.authMode !== "NONE" ? `<label class="form-field"><span>${state.authMode === "BASIC" ? "Password" : state.authMode === "BEARER" ? "Token" : "API key"}</span><input class="form-input" type="password" name="password" required></label>` : ""}`
       : `<label class="form-field"><span>Base URL</span><input class="form-input" name="baseUrl" placeholder="https://your-team.atlassian.net" required></label>
-      <div class="form-row"><label class="form-field"><span>Username</span><input class="form-input" name="username" required></label><label class="form-field"><span>Password / API token</span><input class="form-input" type="password" name="password" required></label></div>`}
+      <div class="form-row">
+        <label class="form-field"><span>Authentication</span><select class="form-input" name="authMode" id="auth-mode">
+          <option value="BASIC" ${state.authMode === "BASIC" ? "selected" : ""}>Cloud token / password</option>
+          <option value="BEARER" ${state.authMode === "BEARER" ? "selected" : ""}>Data Center PAT</option>
+        </select></label>
+        ${state.authMode === "BASIC" ? '<label class="form-field"><span>Username / Cloud email</span><input class="form-input" name="username" required></label>' : ""}
+      </div>
+      <label class="form-field"><span>${state.authMode === "BEARER" ? "Personal access token" : "Password / Cloud API token"}</span><input class="form-input" type="password" name="password" required></label>`}
       <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="cancel-form">Cancel</button><button class="btn btn-primary" type="submit">${isApi ? "Import" : "Connect"}</button></div>
     </form>`;
   }
 
   function authForm(connection) {
     if (state.editingAuth !== connection.id) return "";
+    const isApi = connection.type === "API_COLLECTION";
+    const mode = state.editAuthMode || connection.authMode;
+    if (!isApi) {
+      return `<form class="connection-form connection-auth-form" data-connection-id="${escapeAttr(connection.id)}">
+        <div class="form-row">
+          <label class="form-field"><span>Name</span><input class="form-input" name="name" value="${escapeAttr(connection.name)}" required></label>
+          <label class="form-field"><span>Base URL</span><input class="form-input" name="baseUrl" value="${escapeAttr(connection.baseUrl || "")}" required></label>
+        </div>
+        <div class="form-row">
+          <label class="form-field"><span>Authentication</span><select class="form-input" name="authMode" id="edit-auth-mode">
+            <option value="BASIC" ${mode === "BASIC" ? "selected" : ""}>Cloud token / password</option>
+            <option value="BEARER" ${mode === "BEARER" ? "selected" : ""}>Data Center PAT</option>
+          </select></label>
+          ${mode === "BASIC" ? `<label class="form-field"><span>Username / Cloud email</span><input class="form-input" name="username" value="${escapeAttr(connection.authUsername || "")}" required></label>` : ""}
+        </div>
+        <label class="form-field"><span>New ${mode === "BEARER" ? "personal access token" : "password / API token"} <small>(${mode === connection.authMode ? "blank keeps current" : "required after mode change"})</small></span><input class="form-input" name="password" type="password" ${mode === connection.authMode ? "" : "required"}></label>
+        <div class="form-actions"><button class="btn btn-ghost" type="button" data-action="cancel-auth">Cancel</button><button class="btn btn-primary" type="submit">Save settings</button></div>
+      </form>`;
+    }
     return `<form class="connection-form connection-auth-form" data-connection-id="${escapeAttr(connection.id)}">
       <div class="form-row">
         <label class="form-field"><span>Request URLs</span><select class="form-input" name="apiUrlMode">
@@ -143,7 +170,7 @@ export async function mount(outlet) {
         <div class="plugin-status"><span class="status-pill ${statusClass(connection.status)}">${connection.status === "CONNECTED" ? icon("check", 12) : connection.status === "ERROR" ? icon("alert", 12) : ""}${statusLabel(connection.status, busy)}</span></div>
         <div class="plugin-actions">
           ${busy ? '<div class="install-progress"><div class="install-progress-bar"></div></div>' : `<button class="btn btn-ghost" type="button" data-action="backfill" data-id="${escapeAttr(connection.id)}" ${connection.status === "CONNECTED" ? "" : "disabled"}>${isApi ? "Refresh knowledge" : "Backfill"}</button>`}
-          ${isApi ? `<button class="btn btn-ghost ${state.editingAuth === connection.id ? "is-active" : ""}" type="button" data-action="edit-auth" data-id="${escapeAttr(connection.id)}">Edit settings</button>` : ""}
+          <button class="btn btn-ghost ${state.editingAuth === connection.id ? "is-active" : ""}" type="button" data-action="edit-auth" data-id="${escapeAttr(connection.id)}">Edit settings</button>
           ${toggle(connection.status !== "DISABLED", connection.status === "DISABLED" ? "Disabled" : "Enabled", "toggle-connection", connection.id)}
           <button class="btn btn-ghost" type="button" data-action="delete-connection" data-id="${escapeAttr(connection.id)}" aria-label="Delete ${escapeAttr(connection.name)}">${icon("trash", 14)}</button>
         </div>
@@ -172,7 +199,7 @@ export async function mount(outlet) {
   // Background refreshes can wait until this short-lived editor is closed; form
   // interactions still call render() directly when their dependent fields change.
   function renderBackground() {
-    if (!state.formOpen) render();
+    if (!state.formOpen && !state.editingAuth) render();
   }
 
   async function load() {
@@ -258,9 +285,13 @@ export async function mount(outlet) {
       render();
     } else if (action === "edit-auth") {
       state.editingAuth = state.editingAuth === id ? "" : id;
+      state.editAuthMode = state.editingAuth
+        ? state.connections.find((connection) => connection.id === id)?.authMode || "BASIC"
+        : "";
       render();
     } else if (action === "cancel-auth") {
       state.editingAuth = "";
+      state.editAuthMode = "";
       render();
     } else {
       const connection = state.connections.find((item) => item.id === id);
@@ -301,6 +332,9 @@ export async function mount(outlet) {
       render();
     } else if (event.target.id === "auth-mode") {
       state.authMode = event.target.value;
+      render();
+    } else if (event.target.id === "edit-auth-mode") {
+      state.editAuthMode = event.target.value;
       render();
     } else if (event.target.id === "spec-file") {
       state.specFile = event.target.files?.[0] || null;
@@ -344,7 +378,7 @@ export async function mount(outlet) {
             username: data.username || "",
             password: data.password || "",
             specUrl: data.specUrl,
-            authMode: state.formType === "API_COLLECTION" ? state.authMode : undefined,
+            authMode: state.authMode,
             apiKeyHeader: data.apiKeyHeader,
             apiUrlMode: data.apiUrlMode,
           });
@@ -354,7 +388,8 @@ export async function mount(outlet) {
         await load();
         watchJob(result.id, result.jobId);
       } else if (form.classList.contains("connection-auth-form")) {
-        await api.updateConnection(form.dataset.connectionId, {
+        const result = await api.updateConnection(form.dataset.connectionId, {
+          name: data.name || undefined,
           authMode: data.authMode,
           username: data.username || undefined,
           password: data.password || undefined,
@@ -362,8 +397,10 @@ export async function mount(outlet) {
           apiUrlMode: data.apiUrlMode,
         });
         state.editingAuth = "";
-        state.notice = "Connection settings saved; URLs are being re-imported and verified.";
+        state.editAuthMode = "";
+        state.notice = "Connection settings saved; the source is being verified.";
         await load();
+        watchJob(form.dataset.connectionId, result.jobId);
       }
     } catch (error) {
       state.error = message(error, "Could not save connection");

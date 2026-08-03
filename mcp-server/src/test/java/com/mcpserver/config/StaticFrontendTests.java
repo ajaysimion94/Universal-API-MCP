@@ -120,6 +120,15 @@ class StaticFrontendTests {
     }
 
     @Test
+    void searchAutocompleteOpensAboveTheComposer() throws IOException {
+        String components = Files.readString(STATIC.resolve("components.css"));
+
+        assertThat(components)
+                .contains("inset: auto 0 calc(100% + 5px) 0;")
+                .doesNotContain("inset: calc(100% + 5px) 0 auto 0;");
+    }
+
+    @Test
     void connectionImportOffersBaseOverrideAndSourceUrlPolicies() throws IOException {
         String connections = Files.readString(STATIC.resolve("pages/connections.js"));
 
@@ -129,5 +138,20 @@ class StaticFrontendTests {
                 .contains("value=\"SOURCE_URLS\"")
                 .contains("Keep source URLs")
                 .contains("apiUrlMode: data.apiUrlMode");
+    }
+
+    @Test
+    void atlassianConnectionsExposeEditableBasicAndPatSettings() throws IOException {
+        String connections = Files.readString(STATIC.resolve("pages/connections.js"));
+
+        assertThat(connections)
+                .contains("Cloud token / password")
+                .contains("Data Center PAT")
+                .contains("state.editingAuth === connection.id")
+                .contains("id=\"edit-auth-mode\"")
+                .contains("name: data.name || undefined")
+                .contains("authMode: state.authMode");
+        assertThat(connections)
+                .doesNotContain("${isApi ? `<button class=\"btn btn-ghost ${state.editingAuth");
     }
 }

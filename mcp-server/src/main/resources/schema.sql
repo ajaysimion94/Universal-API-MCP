@@ -71,6 +71,14 @@ CREATE TABLE IF NOT EXISTS connections (
 
 CREATE INDEX IF NOT EXISTS idx_connections_type ON connections(type);
 
+-- Opaque callback credentials for externally reachable Server/DC webhooks. The token is encrypted
+-- with the same local AES key as connector credentials and is never returned by the REST API.
+CREATE TABLE IF NOT EXISTS connection_webhook_tokens (
+    connection_id     TEXT PRIMARY KEY,
+    token_encrypted   TEXT NOT NULL,
+    created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
 -- Durable event queue for webhook intake and delta-poll results, replacing the Postgres-outbox
 -- design in docs/plan.md (superseded — see DECISIONS.md). A single background worker
 -- (EventQueueWorker) claims PENDING rows; PENDING/PROCESSING rows are replayed on startup so a

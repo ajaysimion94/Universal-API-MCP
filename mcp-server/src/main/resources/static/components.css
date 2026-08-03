@@ -6787,7 +6787,7 @@
 
 .search-autocomplete {
   position: absolute;
-  inset: calc(100% + 5px) 0 auto 0;
+  inset: auto 0 calc(100% + 5px) 0;
   z-index: 20;
   padding: var(--space-3xs);
   border: 1px solid var(--border-strong);
