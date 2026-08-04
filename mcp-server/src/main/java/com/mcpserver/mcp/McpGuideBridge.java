@@ -2,7 +2,7 @@ package com.mcpserver.mcp;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.mcpserver.guides.GuideCatalog;
+import com.mcpserver.help.HelpCatalog;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpSyncServer;
 import io.modelcontextprotocol.spec.McpSchema;
@@ -29,13 +29,13 @@ public class McpGuideBridge {
     private static final Logger log = LoggerFactory.getLogger(McpGuideBridge.class);
 
     private final McpSyncServer mcpServer;
-    private final GuideCatalog guideCatalog;
+    private final HelpCatalog helpCatalog;
     private final ObjectMapper objectMapper;
     private boolean registered;
 
-    public McpGuideBridge(McpSyncServer mcpServer, GuideCatalog guideCatalog, ObjectMapper objectMapper) {
+    public McpGuideBridge(McpSyncServer mcpServer, HelpCatalog helpCatalog, ObjectMapper objectMapper) {
         this.mcpServer = mcpServer;
-        this.guideCatalog = guideCatalog;
+        this.helpCatalog = helpCatalog;
         this.objectMapper = objectMapper;
     }
 
@@ -50,7 +50,7 @@ public class McpGuideBridge {
                 "Enterprise MCP operating guide",
                 "Required workflow and safety rules for an MCP client using this server.",
                 "text/markdown",
-                guideCatalog.llmGuideMarkdown()));
+                helpCatalog.llmGuideMarkdown()));
         mcpServer.addResource(resource(
                 LLM_PLAYBOOK_URI,
                 "enterprise-mcp-llm-playbook",
@@ -121,7 +121,7 @@ public class McpGuideBridge {
 
     private String serializePlaybook() {
         try {
-            return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(guideCatalog.llmPlaybook());
+            return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(helpCatalog.llmPlaybook());
         } catch (JsonProcessingException ex) {
             throw new IllegalStateException("Could not serialize MCP LLM playbook", ex);
         }

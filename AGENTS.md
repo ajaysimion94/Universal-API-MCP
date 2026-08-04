@@ -130,7 +130,7 @@ Open **http://127.0.0.1:8080**. Static UI changes appear after a browser refresh
 - **Routes live in `static/app.js`; pages export `mount()` from `static/pages/`.** Return cleanup functions for timers/listeners.
 - **CSS is split:** `styles.css` holds OKLCH design tokens + base reset; `components.css` holds component styles. Use the tokens; do not hardcode colors.
 - **Design direction:** refined utilitarian, dark theme, amber accent. Fonts: Hanken Grotesk (UI) and JetBrains Mono (paths/IDs/metadata). See `.impeccable.md` for the full anti-reference list (no gradient text, glassmorphism, glow, side-stripe borders).
-- **Routes (`static/app.js`):** `/` search, `/files`, `/plugins`, `/connections`, `/apps`, `/insights`, `/guide`. Deep routes are forwarded by `WebMvcConfig`.
+- **Routes (`static/app.js`):** `/` search, `/files`, `/plugins`, `/connections`, `/apps`, `/insights`, `/help`, `/tutorial` (`/guide` redirects to `/help`). Deep routes are forwarded by `WebMvcConfig`.
 
 ## Testing
 

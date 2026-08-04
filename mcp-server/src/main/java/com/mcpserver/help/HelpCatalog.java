@@ -1,4 +1,4 @@
-package com.mcpserver.guides;
+package com.mcpserver.help;
 
 import org.springframework.stereotype.Component;
 
@@ -7,25 +7,28 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * One small, intentionally stable catalogue for the in-app guide, REST clients, and MCP client
- * orientation resources. Runtime guidance lives here rather than in the SPA so an MCP client sees
- * the same safety and workflow rules as a person using the web application.
+ * One small, intentionally stable catalogue of reference topics for the in-app Help page, REST
+ * clients, and MCP client orientation resources. Runtime guidance lives here rather than in the SPA
+ * so an MCP client sees the same safety and workflow rules as a person using the web application.
+ *
+ * <p>The MCP-facing text still calls itself an "operating guide": that name is part of the resource
+ * URIs clients bind to, so it stays even though the human-facing page is now Help.
  */
 @Component
-public class GuideCatalog {
+public class HelpCatalog {
 
-    public record GuideSummary(String id, String title, String summary, String audience) {
+    public record TopicSummary(String id, String title, String summary, String audience) {
     }
 
-    public record GuideSection(String title, String body, List<String> steps, String code, String note) {
+    public record TopicSection(String title, String body, List<String> steps, String code, String note) {
     }
 
-    public record GuideArticle(String id, String title, String summary, String audience,
-                               List<GuideSection> sections) {
+    public record HelpTopic(String id, String title, String summary, String audience,
+                            List<TopicSection> sections) {
     }
 
-    private final List<GuideArticle> articles = List.of(
-            new GuideArticle(
+    private final List<HelpTopic> articles = List.of(
+            new HelpTopic(
                     "start",
                     "Get started",
                     "The shortest path from an empty workspace to cited answers.",
@@ -45,7 +48,7 @@ public class GuideCatalog {
                                             "Refine the question when the cited passages do not answer it."), null,
                                     "This local app returns grounded search context; it does not send your prompts or files to a third-party answer provider.")
                     )),
-            new GuideArticle(
+            new HelpTopic(
                     "knowledge",
                     "Knowledge and web search",
                     "How files, RAG evidence, and the optional web source fit together.",
@@ -61,7 +64,7 @@ public class GuideCatalog {
                                             "Open the resulting URL before relying on a web claim."), null,
                                     "Web augmentation degrades gracefully when SearXNG is unavailable; local RAG evidence remains available.")
                     )),
-            new GuideArticle(
+            new HelpTopic(
                     "api-tools",
                     "API tools and insights",
                     "Connect an API, invoke an imported request deliberately, then explore safe read data.",
@@ -83,7 +86,7 @@ public class GuideCatalog {
                                             "Qualify a request with its app when two apps share a request name.",
                                             "Run it, inspect the data table, then save it to the library."), null, null)
                     )),
-            new GuideArticle(
+            new HelpTopic(
                     "queries",
                     "Query system (RQL)",
                     "Turn imported read requests — from one app or several — into rows you can filter, aggregate, and chart.",
@@ -119,7 +122,7 @@ public class GuideCatalog {
                                     "See docs/query-language-reference.md for the full grammar, every diagnostic code, and the "
                                             + "mapping from .filter report keywords to their RQL spelling.")
                     )),
-            new GuideArticle(
+            new HelpTopic(
                     "insights",
                     "Build an insight",
                     "A short path from one request to a saved insight with KPIs, a chart, and a table.",
@@ -154,7 +157,7 @@ public class GuideCatalog {
                                             "Name the insight and press Save; reopen it any time from the library."),
                                     "---\ntitle: API activity\nparams:\n  minUser: { type: number, default: 1 }\n---", null)
                     )),
-            new GuideArticle(
+            new HelpTopic(
                     "mcp-clients",
                     "Connect an MCP client",
                     "A protocol-level checklist for ChatGPT, Claude, an IDE extension, or another MCP-compatible client.",
@@ -176,7 +179,7 @@ public class GuideCatalog {
                                     List.of("Search before making unsupported claims.", "Describe a proposed write and show its preview.",
                                             "Only then use the confirmation token supplied by that exact preview."), null, null)
                     )),
-            new GuideArticle(
+            new HelpTopic(
                     "development",
                     "Develop and operate",
                     "The everyday build, test, and troubleshooting commands for maintainers.",
@@ -201,17 +204,17 @@ public class GuideCatalog {
                     ))
     );
 
-    public List<GuideSummary> summaries() {
+    public List<TopicSummary> summaries() {
         return articles.stream()
-                .map(article -> new GuideSummary(article.id(), article.title(), article.summary(), article.audience()))
+                .map(article -> new TopicSummary(article.id(), article.title(), article.summary(), article.audience()))
                 .toList();
     }
 
-    public List<GuideArticle> articles() {
+    public List<HelpTopic> articles() {
         return articles;
     }
 
-    public Optional<GuideArticle> find(String id) {
+    public Optional<HelpTopic> find(String id) {
         return articles.stream().filter(article -> article.id().equals(id)).findFirst();
     }
 
@@ -277,7 +280,7 @@ public class GuideCatalog {
         );
     }
 
-    private static GuideSection section(String title, String body, List<String> steps, String code, String note) {
-        return new GuideSection(title, body, steps, code, note);
+    private static TopicSection section(String title, String body, List<String> steps, String code, String note) {
+        return new TopicSection(title, body, steps, code, note);
     }
 }

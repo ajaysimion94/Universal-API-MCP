@@ -1,16 +1,16 @@
-package com.mcpserver.guides;
+package com.mcpserver.help;
 
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class GuideCatalogTests {
+class HelpCatalogTests {
 
-    private final GuideCatalog catalog = new GuideCatalog();
+    private final HelpCatalog catalog = new HelpCatalog();
 
     @Test
-    void exposesArticlesForPeopleAndMcpClientInstructions() {
-        assertThat(catalog.summaries()).extracting(GuideCatalog.GuideSummary::id)
+    void exposesTopicsForPeopleAndMcpClientInstructions() {
+        assertThat(catalog.summaries()).extracting(HelpCatalog.TopicSummary::id)
                 .containsExactly("start", "knowledge", "api-tools", "queries", "insights", "mcp-clients", "development");
         assertThat(catalog.find("mcp-clients")).isPresent();
         assertThat(catalog.llmGuideMarkdown())

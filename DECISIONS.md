@@ -886,3 +886,44 @@ queue/database.
 `repositories/ChunkRepository.java`; `schema.sql` (`connection_webhook_tokens`);
 `JiraConnectorTests`, `ConfluenceConnectorTests`, `ConnectionPollingSchedulerTests`,
 `WebhookTokenServiceTests`; `static/pages/connections.js`
+
+### 2026-08-04 — The tutorials become the Help page's main content, and "guide" finishes becoming "help"
+
+**Decision:** Two changes to the surface introduced on 2026-07-31.
+
+First, the tutorial catalogue grew from 2 walkthroughs (8 steps, 1 example) to 7 walkthroughs
+(34 steps, 55 examples) covering the first grounded answer, the query bar, Confluence/Jira ingestion,
+importing an API and its approval path, building an insight, RQL across apps, and connecting an MCP
+client. The step model gained structure to carry that: `List<TutorialExample> examples` replaces the
+single `code` string, where an example is `{ label, description, language, code, result }`; a step
+also carries `List<TutorialFix> troubleshooting` (`{ symptom, fix }`); and a tutorial declares
+`level`, `prerequisites`, and `nextTutorials`. Summaries advertise `level` and `examples` so the Help
+cards and the picker can say what a reader is choosing between. The tutorial page renders each
+example as a labelled unit with a language chip, a copy button, and its expected result, puts the
+catalogue in a sticky rail, and ends on cross-links to related walkthroughs.
+
+Second, the 2026-07-31 rename was only half done: the route was `/help` but the code underneath still
+said guide. `com.mcpserver.guides` → `com.mcpserver.help`, `GuideCatalog` → `HelpCatalog` (records
+`TopicSummary`/`HelpTopic`/`TopicSection`), `GuideController` → `HelpController`, `GET /api/guides` →
+`GET /api/help`, and the `.guide-*` CSS classes → `.help-*`. All moves used `git mv` so history
+follows. `/guide` still resolves to `/help`.
+
+**Why:** A tutorial with one snippet per step is an outline — a reader can copy it but cannot check
+themselves, which is the thing that makes a walkthrough trustworthy. Pairing every example with what
+the application should do in response is what makes it verifiable, and it is why the example count is
+an asserted property rather than incidental. The topics the walkthroughs now cover are the ones where
+getting it wrong is expensive (credentials, the write-approval contract, cross-app queries), so those
+are where worked examples earn their space.
+
+Two things deliberately keep the "guide" name: the MCP resource URIs
+(`mcp://enterprise-mcp/guides/operating-guide`, `…/llm-playbook.json`) and `McpGuideBridge`. Those are
+a protocol contract clients bind to, and "operating guide" is the right name for an LLM-facing
+document regardless of what the human page is called. Renaming them would break clients to satisfy
+internal consistency.
+
+**Status:** active
+
+**Refs:** `help/TutorialCatalog.java`, `help/HelpCatalog.java` (both were `guides/`);
+`controllers/HelpController.java` (was `GuideController`); `static/pages/tutorial.js`,
+`static/pages/help.js`, `static/api.js`, `static/components.css`; `TutorialCatalogTests`,
+`HelpCatalogTests`, `HelpNavigationTests`; `docs/user-guide.md`, `AGENTS.md`

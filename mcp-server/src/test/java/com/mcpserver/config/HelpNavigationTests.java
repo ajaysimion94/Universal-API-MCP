@@ -103,4 +103,30 @@ class HelpNavigationTests {
                 .contains("api.listTutorials(")
                 .contains("/tutorial?id=");
     }
+
+    /**
+     * The catalogue carries labelled examples with their expected result; a page that renders only
+     * the code would drop the half of each example that lets a reader check themselves.
+     */
+    @Test
+    void theTutorialPageRendersEveryPartOfAnExample() throws IOException {
+        String tutorial = Files.readString(STATIC.resolve("pages/tutorial.js"));
+
+        assertThat(tutorial)
+                .contains("item.examples")
+                .contains("tutorial-example-label")
+                .contains("tutorial-example-result")
+                .contains("item.troubleshooting");
+    }
+
+    /** The page was renamed from Guide to Help; its classes and API calls should not still say guide. */
+    @Test
+    void nothingInTheHelpSurfaceStillCallsItselfAGuide() throws IOException {
+        for (String module : new String[] { "pages/help.js", "pages/tutorial.js" }) {
+            assertThat(Files.readString(STATIC.resolve(module)))
+                    .as("%s should use the help naming", module)
+                    .doesNotContain("guide-")
+                    .doesNotContain("api/guides");
+        }
+    }
 }

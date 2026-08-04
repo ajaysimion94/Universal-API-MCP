@@ -1,6 +1,6 @@
 package com.mcpserver.controllers;
 
-import com.mcpserver.guides.TutorialCatalog;
+import com.mcpserver.help.TutorialCatalog;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;

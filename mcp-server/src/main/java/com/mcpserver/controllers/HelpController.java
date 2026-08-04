@@ -1,6 +1,6 @@
 package com.mcpserver.controllers;
 
-import com.mcpserver.guides.GuideCatalog;
+import com.mcpserver.help.HelpCatalog;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -11,26 +11,26 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 import java.util.Map;
 
-/** REST projection of the shared, runtime guide catalogue used by the web UI. */
+/** REST projection of the shared, runtime help catalogue used by the web UI. */
 @RestController
-@RequestMapping("/api/guides")
-public class GuideController {
+@RequestMapping("/api/help")
+public class HelpController {
 
-    private final GuideCatalog guideCatalog;
+    private final HelpCatalog helpCatalog;
 
-    public GuideController(GuideCatalog guideCatalog) {
-        this.guideCatalog = guideCatalog;
+    public HelpController(HelpCatalog helpCatalog) {
+        this.helpCatalog = helpCatalog;
     }
 
     @GetMapping
-    public List<GuideCatalog.GuideSummary> list() {
-        return guideCatalog.summaries();
+    public List<HelpCatalog.TopicSummary> list() {
+        return helpCatalog.summaries();
     }
 
     @GetMapping("/{id}")
-    public GuideCatalog.GuideArticle get(@PathVariable String id) {
-        return guideCatalog.find(id)
-                .orElseThrow(() -> new IllegalArgumentException("Guide article not found: " + id));
+    public HelpCatalog.HelpTopic get(@PathVariable String id) {
+        return helpCatalog.find(id)
+                .orElseThrow(() -> new IllegalArgumentException("Help topic not found: " + id));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

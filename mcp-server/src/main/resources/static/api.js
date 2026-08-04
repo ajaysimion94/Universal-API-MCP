@@ -181,8 +181,8 @@ export const api = {
   deleteInsight: async (id) =>
     noContent(await fetch(`/api/insights/${id}`, { method: "DELETE" }), "Delete failed"),
 
-  listGuides: () => send("/api/guides"),
-  getGuide: (id) => send(`/api/guides/${encodeURIComponent(id)}`),
+  listHelpTopics: () => send("/api/help"),
+  getHelpTopic: (id) => send(`/api/help/${encodeURIComponent(id)}`),
   listTutorials: () => send("/api/tutorials"),
   getTutorial: (id) => send(`/api/tutorials/${encodeURIComponent(id)}`),
 };

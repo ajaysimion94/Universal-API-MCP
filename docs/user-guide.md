@@ -34,8 +34,8 @@ expose it beyond a trusted internal network.
 | Connections | `/connections` | Confluence/Jira ingestion and API collection imports. |
 | Apps | `/apps` | Every imported request: enable, test, group, override auth. |
 | Insights | `/insights` | The insight workspace: saved-insight library and the last run's view, with the RQL/RQD editor behind **Edit** (`/reports` and `/dashboards` redirect here). |
-| Help | `/help` | Reference topics, shared with MCP clients, plus links to the walkthroughs. Reached from the **?** button in the top bar rather than the main nav; `/guide` redirects here. |
-| Tutorial | `/tutorial` | Step-by-step walkthroughs with a route link and a check for every step. Progress is ticked off locally. |
+| Help | `/help` | The tutorial catalogue plus reference topics shared with MCP clients (`GET /api/help`). Reached from the **?** button in the top bar rather than the main nav; `/guide` redirects here. |
+| Tutorial | `/tutorial` | Seven step-by-step walkthroughs. Every step carries a route link, worked examples with their expected result, a check, and its own troubleshooting. Progress is ticked off locally. |
 
 ---
 
@@ -306,7 +306,7 @@ The recommended session start:
 1. `initialize`, then `resources/list`.
 2. Read `mcp://enterprise-mcp/guides/operating-guide` (human-readable) and
    `mcp://enterprise-mcp/guides/llm-playbook.json` (structured) — both are generated from the same
-   catalog that powers the in-app Guide, so a client and a person see the same workflow and safety
+   catalog that powers the in-app Help page, so a client and a person see the same workflow and safety
    rules.
 3. `tools/list` — the enabled tool surface changes at runtime.
 4. Use `search-knowledge-base` for grounded context, and honour the preview/`confirm-action` contract
