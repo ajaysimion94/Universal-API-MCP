@@ -3,6 +3,7 @@ package com.mcpserver.connectors;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.mcpserver.repositories.ChunkRepository;
 import com.mcpserver.services.IngestionService;
+import com.mcpserver.services.SearchService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,6 +32,10 @@ class ConfluenceConnectorTests {
     private ChunkRepository chunkRepository;
     @Autowired
     private IngestionService ingestionService;
+    @Autowired
+    private SourceCatalogRepository catalogRepository;
+    @Autowired
+    private SearchService searchService;
 
     private WireMockServer wireMock;
 
@@ -87,7 +92,9 @@ class ConfluenceConnectorTests {
     void testConnectionThrowsWithStructuredMessageOnAuthFailure() {
         stubFor(get(urlPathEqualTo("/wiki/api/v2/users/current"))
                 .willReturn(aResponse().withStatus(401).withBody("Unauthorized")));
-        Connection c = newConnection().withDeploymentType(DeploymentType.CLOUD);
+        Connection c = newConnection().withDeploymentType(DeploymentType.CLOUD)
+                .withStatus(ConnectionStatus.CONNECTED, null);
+        connectionRepository.save(c);
 
         assertThatThrownBy(() -> connector.testConnection(c))
                 .isInstanceOf(IllegalStateException.class)
@@ -110,8 +117,10 @@ class ConfluenceConnectorTests {
     }
 
     @Test
-    void backfillIngestsPagesAsSearchableChunks() throws Exception {
-        Connection c = newConnection().withDeploymentType(DeploymentType.CLOUD);
+    void backfillCatalogsMetadataAndTitleSearchLazilyFetchesContent() throws Exception {
+        Connection c = newConnection().withDeploymentType(DeploymentType.CLOUD)
+                .withStatus(ConnectionStatus.CONNECTED, null);
+        connectionRepository.save(c);
         String pageId = "pg-" + UUID.randomUUID();
         // Unique-per-run token: the dev SQLite DB persists across test runs (gitignored, not
         // cleaned between runs), so a shared phrase like "frobnicator" accumulates enough matches
@@ -123,9 +132,26 @@ class ConfluenceConnectorTests {
 
         connector.backfill(c, (done, total) -> {});
 
+        CatalogResource catalogued = catalogRepository.find(c.id(), "confluence", pageId).orElseThrow();
+        assertThat(catalogued.title()).isEqualTo("Runbook Alpha");
+        assertThat(catalogued.containerExternalId()).isEqualTo("ENG");
+        assertThat(catalogued.apiPath()).contains("/pages/" + pageId);
+        assertThat(catalogued.webUrl()).contains("/spaces/ENG/pages/" + pageId);
+        assertThat(catalogued.contentState()).isEqualTo(CatalogContentState.METADATA_ONLY);
+        assertThat(chunkRepository.lexicalSearch(uniqueTerm, 10)).isEmpty();
+
+        stubFor(get(urlPathEqualTo("/wiki/api/v2/pages/" + pageId))
+                .withQueryParam("body-format", equalTo("storage"))
+                .willReturn(okJson(pageJson(pageId, "Runbook Alpha", "ENG",
+                        "<p>Restart the " + uniqueTerm + " service when it hangs.</p>",
+                        "2024-01-01T00:00:00.000Z"))));
+        searchService.search("Runbook Alpha", 10, List.of());
+
         List<com.mcpserver.models.Chunk> hits = chunkRepository.lexicalSearch(uniqueTerm, 10);
         assertThat(hits).anyMatch(h -> h.sourceFileId().equals(c.id() + ":" + pageId));
         assertThat(hits).anyMatch(h -> "confluence".equals(h.sourceSystem()) && pageId.equals(h.externalId()));
+        assertThat(catalogRepository.find(c.id(), "confluence", pageId).orElseThrow().contentState())
+                .isEqualTo(CatalogContentState.INDEXED);
     }
 
     @Test
@@ -145,7 +171,8 @@ class ConfluenceConnectorTests {
     @Test
     void pollDeltaReplacesChunksInPlaceOnEdit() throws Exception {
         Connection c = newConnection().withDeploymentType(DeploymentType.CLOUD);
-        connectionRepository.save(c.withSyncCursor("2020-01-01T00:00:00.000Z"));
+        connectionRepository.save(c.withSyncCursor("2020-01-01T00:00:00.000Z")
+                .withStatus(ConnectionStatus.CONNECTED, null));
         String pageId = "pg-" + UUID.randomUUID();
         String suffix = pageId.replace("-", "");
         String originalTerm = "originalincident" + suffix;
@@ -158,6 +185,11 @@ class ConfluenceConnectorTests {
         stubCloudInventory(pageId);
         connector.pollDelta(connectionRepository.findById(c.id()).orElseThrow());
 
+        stubFor(get(urlPathEqualTo("/wiki/api/v2/pages/" + pageId))
+                .willReturn(okJson(pageJson(pageId, "Runbook Beta", "ENG",
+                        "<p>" + originalTerm + " notes.</p>", "2024-01-01T00:00:00.000Z"))));
+        searchService.search("Runbook Beta", 10, List.of());
+
         assertThat(chunkRepository.lexicalSearch(originalTerm, 10))
                 .anyMatch(h -> h.sourceFileId().equals(c.id() + ":" + pageId));
 
@@ -167,6 +199,13 @@ class ConfluenceConnectorTests {
                 .willReturn(okJson(searchResultsJson(pageId, "Runbook Beta", "ENG",
                         "<p>" + updatedTerm + " steps.</p>", "2024-06-01T00:00:00.000Z"))));
         connector.pollDelta(connectionRepository.findById(c.id()).orElseThrow());
+
+        assertThat(chunkRepository.lexicalSearch(originalTerm, 10))
+                .noneMatch(h -> h.sourceFileId().equals(c.id() + ":" + pageId));
+        stubFor(get(urlPathEqualTo("/wiki/api/v2/pages/" + pageId))
+                .willReturn(okJson(pageJson(pageId, "Runbook Beta", "ENG",
+                        "<p>" + updatedTerm + " steps.</p>", "2024-06-01T00:00:00.000Z"))));
+        searchService.search("Runbook Beta", 10, List.of());
 
         assertThat(chunkRepository.lexicalSearch(updatedTerm, 10))
                 .anyMatch(h -> h.sourceFileId().equals(c.id() + ":" + pageId));
@@ -179,7 +218,8 @@ class ConfluenceConnectorTests {
 
     @Test
     void pollDeltaFetchesEveryResultPageBeforeAdvancingCursor() throws Exception {
-        Connection c = newConnection().withDeploymentType(DeploymentType.CLOUD);
+        Connection c = newConnection().withDeploymentType(DeploymentType.CLOUD)
+                .withStatus(ConnectionStatus.CONNECTED, null);
         connectionRepository.save(c.withSyncCursor("2020-01-01T00:00:00.000Z"));
         String pageId = "pg-" + UUID.randomUUID();
         String uniqueTerm = "secondpageupdate" + pageId.replace("-", "");
@@ -196,8 +236,7 @@ class ConfluenceConnectorTests {
 
         connector.pollDelta(connectionRepository.findById(c.id()).orElseThrow());
 
-        assertThat(chunkRepository.lexicalSearch(uniqueTerm, 10))
-                .anyMatch(h -> h.sourceFileId().equals(c.id() + ":" + pageId));
+        assertThat(catalogRepository.find(c.id(), "confluence", pageId)).isPresent();
         assertThat(Instant.parse(connectionRepository.findById(c.id()).orElseThrow().syncCursor()))
                 .isEqualTo(Instant.parse("2024-06-02T00:00:00.000Z"));
         verify(getRequestedFor(urlPathEqualTo("/wiki/api/v2/pages"))
@@ -206,12 +245,18 @@ class ConfluenceConnectorTests {
 
     @Test
     void webhookPayloadPurgesChunksWhenPageNoLongerExists() throws Exception {
-        Connection c = newConnection().withDeploymentType(DeploymentType.CLOUD);
+        Connection c = newConnection().withDeploymentType(DeploymentType.CLOUD)
+                .withStatus(ConnectionStatus.CONNECTED, null);
+        connectionRepository.save(c);
         String pageId = "pg-" + UUID.randomUUID();
         String uniqueTerm = "tobedeleted" + pageId.replace("-", "");
         stubFor(get(urlPathEqualTo("/wiki/api/v2/pages"))
                 .willReturn(okJson(pageListJson(pageId, "Runbook Gamma", "ENG", "<p>" + uniqueTerm + ".</p>"))));
         connector.backfill(c, (done, total) -> {});
+        stubFor(get(urlPathEqualTo("/wiki/api/v2/pages/" + pageId))
+                .willReturn(okJson(pageJson(pageId, "Runbook Gamma", "ENG",
+                        "<p>" + uniqueTerm + ".</p>", "2024-01-01T00:00:00.000Z"))));
+        searchService.search("Runbook Gamma", 10, List.of());
         assertThat(chunkRepository.lexicalSearch(uniqueTerm, 10))
                 .anyMatch(h -> h.sourceFileId().equals(c.id() + ":" + pageId));
 
@@ -221,6 +266,7 @@ class ConfluenceConnectorTests {
 
         assertThat(chunkRepository.lexicalSearch(uniqueTerm, 10))
                 .noneMatch(h -> h.sourceFileId().equals(c.id() + ":" + pageId));
+        assertThat(catalogRepository.find(c.id(), "confluence", pageId)).isEmpty();
     }
 
     @Test
@@ -262,6 +308,17 @@ class ConfluenceConnectorTests {
                 "_links":{"webui":"/spaces/%s/pages/%s"}}],
                 "_links":{"base":"https://example.atlassian.net/wiki"}}
                 """.formatted(id, title, spaceKey, storageHtml.replace("\"", "\\\""), when, spaceKey, id);
+    }
+
+    private static String pageJson(String id, String title, String spaceKey, String storageHtml, String when) {
+        return """
+                {"id":"%s","title":"%s","spaceId":"%s",
+                "body":{"storage":{"value":"%s"}},
+                "version":{"createdAt":"%s"},
+                "_links":{"base":"https://example.atlassian.net/wiki",
+                "webui":"/spaces/%s/pages/%s"}}
+                """.formatted(id, title, spaceKey, storageHtml.replace("\"", "\\\""),
+                when, spaceKey, id);
     }
 
     private static String fullSearchPageJson() {

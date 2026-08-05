@@ -37,6 +37,7 @@ public class ConnectionService {
     private final ConnectionRepository connectionRepository;
     private final ChunkRepository chunkRepository;
     private final IngestionEventRepository eventRepository;
+    private final SourceCatalogRepository sourceCatalogRepository;
     private final CredentialCipher credentialCipher;
     private final WebhookTokenService webhookTokenService;
     private final ApiToolService apiToolService;
@@ -58,6 +59,7 @@ public class ConnectionService {
     public ConnectionService(ConnectionRepository connectionRepository,
                               ChunkRepository chunkRepository,
                               IngestionEventRepository eventRepository,
+                              SourceCatalogRepository sourceCatalogRepository,
                               CredentialCipher credentialCipher,
                               WebhookTokenService webhookTokenService,
                               ApiToolService apiToolService,
@@ -70,6 +72,7 @@ public class ConnectionService {
         this.connectionRepository = connectionRepository;
         this.chunkRepository = chunkRepository;
         this.eventRepository = eventRepository;
+        this.sourceCatalogRepository = sourceCatalogRepository;
         this.credentialCipher = credentialCipher;
         this.webhookTokenService = webhookTokenService;
         this.apiToolService = apiToolService;
@@ -229,6 +232,7 @@ public class ConnectionService {
     public void delete(String connectionId) {
         findById(connectionId); // 404s if missing
         chunkRepository.deleteBySourceFileIdPrefix(connectionId + ":");
+        sourceCatalogRepository.deleteByConnectionId(connectionId);
         cacheService.invalidateSearchResults();
         apiToolService.deleteByConnectionId(connectionId); // also removes TOOL memberships
         toolGroupRepository.deleteMembersForConnection(connectionId);

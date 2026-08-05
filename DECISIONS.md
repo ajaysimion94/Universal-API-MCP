@@ -927,3 +927,29 @@ internal consistency.
 `controllers/HelpController.java` (was `GuideController`); `static/pages/tutorial.js`,
 `static/pages/help.js`, `static/api.js`, `static/components.css`; `TutorialCatalogTests`,
 `HelpCatalogTests`, `HelpNavigationTests`; `docs/user-guide.md`, `AGENTS.md`
+
+### 2026-08-04 — Jira and Confluence switch to metadata-first, title-triggered lazy ingestion
+
+**Decision:** Connecting or backfilling Jira/Confluence no longer downloads, chunks, or embeds every
+page/issue body. The connectors catalogue lightweight containers and resources in SQLite:
+`connector_containers` stores Confluence spaces/Jira projects; `connector_resources` plus
+`connector_resources_fts` stores page titles/issue summaries, external IDs, source versions,
+credentialed API paths, human-facing URLs, and `METADATA_ONLY`/`INDEXED` state. Before cached/local RAG
+retrieval, `ConnectorContentResolver` hydrates a bounded number (default 3) of metadata-only items only
+when the query contains the complete title or exactly matches the external key. Generic space/project
+queries do not hydrate their children. Deltas/webhooks update metadata; a version change purges stale
+chunks and returns the item to `METADATA_ONLY`; deletion/reconciliation removes catalogue rows and chunks.
+Full scans stream remote IDs through `connector_inventory` and use a SQLite anti-join for deletions, so
+reconciliation heap usage is bounded rather than retaining a tenant-sized Java set.
+
+**Why:** Eager body backfill makes connection time, ONNX embedding cost, SQLite growth, Jira comment
+fan-out, and remote API pressure proportional to the tenant's entire history. Metadata is small enough
+to index comprehensively and gives a fast discovery layer; fetching on a strong title/key intent makes
+content work proportional to what users actually request. Keeping both credentialed `api_path` and
+citation `web_url` separates machine retrieval from the location shown to a user.
+
+**Status:** active (supersedes eager Jira/Confluence body backfill and eager delta re-ingestion)
+
+**Refs:** `connectors/SourceCatalogRepository.java`, `ConnectorContentResolver.java`,
+`ConfluenceConnector.java`, `JiraConnector.java`; `schema.sql`; `SearchService.java`;
+`SourceCatalogRepositoryTests`, `ConfluenceConnectorTests`, `JiraConnectorTests`

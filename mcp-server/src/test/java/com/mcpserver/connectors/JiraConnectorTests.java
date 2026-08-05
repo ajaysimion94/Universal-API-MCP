@@ -3,6 +3,7 @@ package com.mcpserver.connectors;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.mcpserver.repositories.ChunkRepository;
 import com.mcpserver.services.IngestionService;
+import com.mcpserver.services.SearchService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,6 +32,10 @@ class JiraConnectorTests {
     private ChunkRepository chunkRepository;
     @Autowired
     private IngestionService ingestionService;
+    @Autowired
+    private SourceCatalogRepository catalogRepository;
+    @Autowired
+    private SearchService searchService;
 
     private WireMockServer wireMock;
 
@@ -105,8 +110,10 @@ class JiraConnectorTests {
     }
 
     @Test
-    void backfillIngestsIssuesAsSearchableChunks() throws Exception {
-        Connection c = newConnection();
+    void backfillCatalogsMetadataAndTitleSearchLazilyFetchesContent() throws Exception {
+        Connection c = newConnection().withDeploymentType(DeploymentType.CLOUD)
+                .withStatus(ConnectionStatus.CONNECTED, null);
+        connectionRepository.save(c);
         String key = "ENG-" + (int) (Math.random() * 100000);
         // Unique-per-run token: the dev SQLite DB persists across test runs (gitignored, not
         // cleaned between runs), so a shared phrase like "frobnicator crash" accumulates enough
@@ -118,14 +125,31 @@ class JiraConnectorTests {
 
         connector.backfill(c, (done, total) -> {});
 
+        CatalogResource catalogued = catalogRepository.find(c.id(), "jira", key).orElseThrow();
+        assertThat(catalogued.title()).isEqualTo("Fix the " + uniqueTerm);
+        assertThat(catalogued.containerExternalId()).isEqualTo("ENG");
+        assertThat(catalogued.apiPath()).contains("/issue/" + key);
+        assertThat(catalogued.webUrl()).endsWith("/browse/" + key);
+        assertThat(catalogued.contentState()).isEqualTo(CatalogContentState.METADATA_ONLY);
+        assertThat(chunkRepository.lexicalSearch(uniqueTerm, 10)).isEmpty();
+
+        stubFor(get(urlPathEqualTo("/rest/api/2/issue/" + key))
+                .willReturn(okJson(issueJson(key, "Fix the " + uniqueTerm, "ENG",
+                        "It crashes on startup.", "2024-01-01T12:00:00.000+0000"))));
+        searchService.search("Fix the " + uniqueTerm, 10, List.of());
+
         List<com.mcpserver.models.Chunk> hits = chunkRepository.lexicalSearch(uniqueTerm, 10);
         assertThat(hits).anyMatch(h -> h.sourceFileId().equals(c.id() + ":" + key));
         assertThat(hits).anyMatch(h -> "jira".equals(h.sourceSystem()) && key.equals(h.externalId()));
+        assertThat(catalogRepository.find(c.id(), "jira", key).orElseThrow().contentState())
+                .isEqualTo(CatalogContentState.INDEXED);
     }
 
     @Test
     void backfillCursorCoversChangesThatHappenDuringTheCrawl() throws Exception {
-        Connection c = newConnection();
+        Connection c = newConnection().withDeploymentType(DeploymentType.CLOUD)
+                .withStatus(ConnectionStatus.CONNECTED, null);
+        connectionRepository.save(c);
         String key = "ENG-" + (int) (Math.random() * 100000);
         stubFor(get(urlPathEqualTo("/rest/api/2/search"))
                 .willReturn(okJson(searchResultsJson(key, "Cursor coverage", "ENG",
@@ -140,7 +164,9 @@ class JiraConnectorTests {
 
     @Test
     void backfillRendersCloudAdfDescriptionAndComments() throws Exception {
-        Connection c = newConnection();
+        Connection c = newConnection().withDeploymentType(DeploymentType.CLOUD)
+                .withStatus(ConnectionStatus.CONNECTED, null);
+        connectionRepository.save(c);
         String key = "ENG-" + (int) (Math.random() * 100000);
         String suffix = key.replace("-", "");
         String descriptionTerm = "adfdescription" + suffix;
@@ -162,6 +188,10 @@ class JiraConnectorTests {
 
         connector.backfill(c, (done, total) -> {});
 
+        stubFor(get(urlPathEqualTo("/rest/api/2/issue/" + key))
+                .willReturn(okJson(issueWithAdfJson(key, descriptionTerm, commentTerm))));
+        searchService.search("ADF issue", 10, List.of());
+
         assertThat(chunkRepository.lexicalSearch(descriptionTerm, 10))
                 .anyMatch(h -> h.sourceFileId().equals(c.id() + ":" + key));
         assertThat(chunkRepository.lexicalSearch(commentTerm, 10))
@@ -170,7 +200,9 @@ class JiraConnectorTests {
 
     @Test
     void backfillFetchesDedicatedCommentPagesOnlyWhenInlineCommentsAreTruncated() throws Exception {
-        Connection c = newConnection().withDeploymentType(DeploymentType.CLOUD);
+        Connection c = newConnection().withDeploymentType(DeploymentType.CLOUD)
+                .withStatus(ConnectionStatus.CONNECTED, null);
+        connectionRepository.save(c);
         String key = "ENG-" + (int) (Math.random() * 100000);
         String uniqueTerm = "paginatedcomment" + key.replace("-", "");
         stubFor(get(urlPathEqualTo("/rest/api/2/search"))
@@ -193,6 +225,10 @@ class JiraConnectorTests {
                         """.formatted(uniqueTerm))));
 
         connector.backfill(c, (done, total) -> {});
+
+        stubFor(get(urlPathEqualTo("/rest/api/2/issue/" + key))
+                .willReturn(okJson(issueWithTruncatedCommentsJson(key))));
+        searchService.search("Many comments", 10, List.of());
 
         assertThat(chunkRepository.lexicalSearch(uniqueTerm, 10))
                 .anyMatch(h -> h.sourceFileId().equals(c.id() + ":" + key));
@@ -220,9 +256,8 @@ class JiraConnectorTests {
 
         connector.backfill(c, (done, total) -> {});
 
-        List<com.mcpserver.models.Chunk> hits = chunkRepository.lexicalSearch(uniqueTerm, 10);
-        assertThat(hits).anyMatch(h -> h.sourceFileId().equals(c.id() + ":" + key1));
-        assertThat(hits).anyMatch(h -> h.sourceFileId().equals(c.id() + ":" + key2));
+        assertThat(catalogRepository.find(c.id(), "jira", key1)).isPresent();
+        assertThat(catalogRepository.find(c.id(), "jira", key2)).isPresent();
         verify(0, getRequestedFor(urlPathEqualTo("/rest/api/2/search")));
     }
 
@@ -241,8 +276,8 @@ class JiraConnectorTests {
 
         connector.backfill(c, (done, total) -> {});
 
-        assertThat(chunkRepository.lexicalSearch(uniqueTerm, 10))
-                .anyMatch(h -> h.sourceFileId().equals(c.id() + ":" + key));
+        assertThat(catalogRepository.find(c.id(), "jira", key).orElseThrow().title())
+                .isEqualTo(uniqueTerm);
     }
 
     @Test
@@ -261,8 +296,8 @@ class JiraConnectorTests {
 
         connector.backfill(c, (done, total) -> {});
 
-        assertThat(chunkRepository.lexicalSearch(uniqueTerm, 10))
-                .anyMatch(h -> h.sourceFileId().equals(c.id() + ":" + key));
+        assertThat(catalogRepository.find(c.id(), "jira", key).orElseThrow().title())
+                .isEqualTo(uniqueTerm);
     }
 
     @Test
@@ -287,7 +322,8 @@ class JiraConnectorTests {
     @Test
     void createThenEditSameIssueReplacesChunksInPlace() throws Exception {
         Connection c = newConnection();
-        connectionRepository.save(c.withSyncCursor("2020-01-01T00:00:00.000Z"));
+        connectionRepository.save(c.withSyncCursor("2020-01-01T00:00:00.000Z")
+                .withStatus(ConnectionStatus.CONNECTED, null));
         String key = "ENG-" + (int) (Math.random() * 100000);
         String suffix = key.replace("-", "");
         String initialTerm = "initialreport" + suffix;
@@ -298,6 +334,11 @@ class JiraConnectorTests {
                         initialTerm + " from support.", "2024-01-01T00:00:00.000+0000"))));
         connector.pollDelta(connectionRepository.findById(c.id()).orElseThrow());
 
+        stubFor(get(urlPathEqualTo("/rest/api/2/issue/" + key))
+                .willReturn(okJson(issueJson(key, "Login button broken", "ENG",
+                        initialTerm + " from support.", "2024-01-01T00:00:00.000+0000"))));
+        searchService.search("Login button broken", 10, List.of());
+
         assertThat(chunkRepository.lexicalSearch(initialTerm, 10))
                 .anyMatch(h -> h.sourceFileId().equals(c.id() + ":" + key));
 
@@ -305,6 +346,14 @@ class JiraConnectorTests {
                 .willReturn(okJson(searchResultsJson(key, "Login button broken", "ENG",
                         "Root cause identified: " + staleTerm + ".", "2024-06-01T00:00:00.000+0000"))));
         connector.pollDelta(connectionRepository.findById(c.id()).orElseThrow());
+
+        assertThat(chunkRepository.lexicalSearch(initialTerm, 10))
+                .noneMatch(h -> h.sourceFileId().equals(c.id() + ":" + key));
+        stubFor(get(urlPathEqualTo("/rest/api/2/issue/" + key))
+                .willReturn(okJson(issueJson(key, "Login button broken", "ENG",
+                        "Root cause identified: " + staleTerm + ".",
+                        "2024-06-01T00:00:00.000+0000"))));
+        searchService.search("Login button broken", 10, List.of());
 
         assertThat(chunkRepository.lexicalSearch(staleTerm, 10))
                 .anyMatch(h -> h.sourceFileId().equals(c.id() + ":" + key));
@@ -314,13 +363,19 @@ class JiraConnectorTests {
 
     @Test
     void webhookDeletedEventPurgesChunks() throws Exception {
-        Connection c = newConnection();
+        Connection c = newConnection().withDeploymentType(DeploymentType.CLOUD)
+                .withStatus(ConnectionStatus.CONNECTED, null);
+        connectionRepository.save(c);
         String key = "ENG-" + (int) (Math.random() * 100000);
         String uniqueTerm = "temporaryticket" + key.replace("-", "");
         stubFor(get(urlPathEqualTo("/rest/api/2/search"))
                 .willReturn(okJson(searchResultsJson(key, uniqueTerm, "ENG",
                         "Will be removed.", "2024-01-01T00:00:00.000+0000"))));
         connector.backfill(c, (done, total) -> {});
+        stubFor(get(urlPathEqualTo("/rest/api/2/issue/" + key))
+                .willReturn(okJson(issueJson(key, uniqueTerm, "ENG", "Will be removed.",
+                        "2024-01-01T00:00:00.000+0000"))));
+        searchService.search(uniqueTerm, 10, List.of());
         assertThat(chunkRepository.lexicalSearch(uniqueTerm, 10))
                 .anyMatch(h -> h.sourceFileId().equals(c.id() + ":" + key));
 
@@ -330,6 +385,7 @@ class JiraConnectorTests {
 
         assertThat(chunkRepository.lexicalSearch(uniqueTerm, 10))
                 .noneMatch(h -> h.sourceFileId().equals(c.id() + ":" + key));
+        assertThat(catalogRepository.find(c.id(), "jira", key)).isEmpty();
     }
 
     @Test
@@ -360,6 +416,46 @@ class JiraConnectorTests {
                   "description":"%s","updated":"%s","comment":{"comments":[]}
                 }}]}
                 """.formatted(key, summary, projectKey, description, updated);
+    }
+
+    private static String issueJson(String key, String summary, String projectKey,
+                                    String description, String updated) {
+        return """
+                {"key":"%s","fields":{
+                  "summary":"%s","status":{"name":"Open"},"assignee":{"displayName":"Ada"},
+                  "priority":{"name":"High"},"labels":["bug"],"project":{"key":"%s"},
+                  "description":"%s","updated":"%s","comment":{"comments":[]}
+                }}
+                """.formatted(key, summary, projectKey, description, updated);
+    }
+
+    private static String issueWithAdfJson(String key, String descriptionTerm, String commentTerm) {
+        return """
+                {"key":"%s","fields":{
+                  "summary":"ADF issue","status":{"name":"Open"},
+                  "assignee":{"displayName":"Ada"},"priority":{"name":"High"},
+                  "labels":[],"project":{"key":"ENG"},
+                  "description":{"type":"doc","version":1,"content":[
+                    {"type":"paragraph","content":[{"type":"text","text":"%s"}]}]},
+                  "updated":"2024-01-01T12:00:00.000+0000",
+                  "comment":{"comments":[{"author":{"displayName":"Grace"},
+                    "body":{"type":"doc","version":1,"content":[
+                      {"type":"paragraph","content":[{"type":"text","text":"%s"}]}]}}]}
+                }}
+                """.formatted(key, descriptionTerm, commentTerm);
+    }
+
+    private static String issueWithTruncatedCommentsJson(String key) {
+        return """
+                {"key":"%s","fields":{
+                  "summary":"Many comments","status":{"name":"Open"},
+                  "assignee":{"displayName":"Ada"},"priority":{"name":"High"},
+                  "labels":[],"project":{"key":"ENG"},"description":"Description",
+                  "updated":"2024-01-01T12:00:00.000+0000",
+                  "comment":{"startAt":0,"maxResults":1,"total":2,"comments":[
+                    {"author":{"displayName":"One"},"body":"first"}]}
+                }}
+                """.formatted(key);
     }
 
     /** Response shape for POST /rest/api/3/search/jql — no "total", cursor via nextPageToken. */

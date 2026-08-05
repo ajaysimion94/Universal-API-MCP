@@ -3,7 +3,6 @@ package com.mcpserver.connectors;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mcpserver.config.TlsHttpClientFactory;
-import com.mcpserver.repositories.ChunkRepository;
 import com.mcpserver.services.IngestionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,7 +20,6 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -50,12 +48,13 @@ public class JiraConnector implements SourceConnector {
     private static final int PAGE_SIZE = 25;
     private static final List<String> FIELDS_LIST = List.of(
             "summary", "description", "status", "assignee", "priority", "labels", "comment", "updated", "project");
+    private static final List<String> CATALOG_FIELDS = List.of("summary", "updated", "project");
     private static final String FIELDS_CSV = String.join(",", FIELDS_LIST);
     private static final DateTimeFormatter JQL_DATE = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm")
             .withZone(ZoneOffset.UTC);
 
     private final IngestionService ingestionService;
-    private final ChunkRepository chunkRepository;
+    private final SourceCatalogRepository catalogRepository;
     private final ConnectionRepository connectionRepository;
     private final CredentialCipher credentialCipher;
     private final WebhookTokenService webhookTokenService;
@@ -69,7 +68,7 @@ public class JiraConnector implements SourceConnector {
     private final Map<String, Instant> lastReconciledAt = new ConcurrentHashMap<>();
 
     public JiraConnector(IngestionService ingestionService,
-                          ChunkRepository chunkRepository,
+                          SourceCatalogRepository catalogRepository,
                           ConnectionRepository connectionRepository,
                           CredentialCipher credentialCipher,
                           WebhookTokenService webhookTokenService,
@@ -77,7 +76,7 @@ public class JiraConnector implements SourceConnector {
                           @Value("${connectors.webhook-base-url:}") String webhookBaseUrl,
                           @Value("${connectors.reconcile-interval-ms:86400000}") long reconcileIntervalMs) {
         this.ingestionService = ingestionService;
-        this.chunkRepository = chunkRepository;
+        this.catalogRepository = catalogRepository;
         this.connectionRepository = connectionRepository;
         this.credentialCipher = credentialCipher;
         this.webhookTokenService = webhookTokenService;
@@ -116,21 +115,25 @@ public class JiraConnector implements SourceConnector {
     @Override
     public void backfill(Connection connection, BackfillProgressSink sink) throws Exception {
         Instant crawlStartedAt = Instant.now();
-        Set<String> activeIssueKeys = new HashSet<>();
+        catalogRepository.beginInventory(connection.id(), "jira");
         String cursor = null;
         int processed = 0;
-        do {
-            IssuePage page = searchIssues(connection, "order by updated asc", cursor, PAGE_SIZE);
-            for (JsonNode issue : page.issues()) {
-                String key = issue.path("key").asText(null);
-                if (key != null) activeIssueKeys.add(key);
-                ingestIssue(connection, issue);
-                processed++;
-                sink.progress(processed, 0); // neither endpoint gives a reliable upfront total
-            }
-            cursor = page.nextCursor();
-        } while (cursor != null);
-        purgeMissing(connection, activeIssueKeys);
+        try {
+            do {
+                IssuePage page = searchIssues(connection, "order by updated asc", cursor, PAGE_SIZE, CATALOG_FIELDS);
+                for (JsonNode issue : page.issues()) {
+                    String key = issue.path("key").asText(null);
+                    catalogRepository.recordInventoryId(connection.id(), "jira", key);
+                    catalogIssue(connection, issue);
+                    processed++;
+                    sink.progress(processed, 0); // neither endpoint gives a reliable upfront total
+                }
+                cursor = page.nextCursor();
+            } while (cursor != null);
+            purgeMissing(connection);
+        } finally {
+            catalogRepository.clearInventory(connection.id(), "jira");
+        }
         lastReconciledAt.put(connection.id(), Instant.now());
         connectionRepository.save(connectionRepository.findById(connection.id())
                 .orElse(connection).withSyncCursor(crawlStartedAt.toString()));
@@ -172,9 +175,9 @@ public class JiraConnector implements SourceConnector {
         String latestSeen = connection.syncCursor();
         String pageCursor = null;
         do {
-            IssuePage page = searchIssues(connection, jql, pageCursor, PAGE_SIZE);
+            IssuePage page = searchIssues(connection, jql, pageCursor, PAGE_SIZE, CATALOG_FIELDS);
             for (JsonNode issue : page.issues()) {
-                ingestIssue(connection, issue);
+                catalogIssue(connection, issue);
                 String updated = issue.path("fields").path("updated").asText(null);
                 if (updated != null) {
                     String normalized = normalizeJiraTimestamp(updated);
@@ -271,24 +274,30 @@ public class JiraConnector implements SourceConnector {
         Instant last = lastReconciledAt.get(connection.id());
         if (last != null && last.plus(reconcileInterval).isAfter(now)) return;
 
-        Set<String> activeIssueKeys = new HashSet<>();
+        catalogRepository.beginInventory(connection.id(), "jira");
         String cursor = null;
-        do {
-            IssuePage page = searchIssues(connection, "order by key asc", cursor, 100, List.of("updated"));
-            for (JsonNode issue : page.issues()) {
-                String key = issue.path("key").asText(null);
-                if (key != null) activeIssueKeys.add(key);
-            }
-            cursor = page.nextCursor();
-        } while (cursor != null);
-        purgeMissing(connection, activeIssueKeys);
-        lastReconciledAt.put(connection.id(), now);
+        try {
+            do {
+                IssuePage page = searchIssues(connection, "order by key asc", cursor, 100, List.of("updated"));
+                for (JsonNode issue : page.issues()) {
+                    catalogRepository.recordInventoryId(connection.id(), "jira",
+                            issue.path("key").asText(null));
+                }
+                cursor = page.nextCursor();
+            } while (cursor != null);
+            purgeMissing(connection);
+            lastReconciledAt.put(connection.id(), now);
+        } finally {
+            catalogRepository.clearInventory(connection.id(), "jira");
+        }
     }
 
-    private void purgeMissing(Connection connection, Set<String> activeIssueKeys) {
-        Set<String> stale = chunkRepository.findExternalIds(connection.id(), "jira");
-        stale.removeAll(activeIssueKeys);
-        stale.forEach(key -> ingestionService.purgeSource(connection.id() + ":" + key));
+    private void purgeMissing(Connection connection) {
+        Set<String> stale = catalogRepository.findMissingFromInventory(connection.id(), "jira");
+        stale.forEach(key -> {
+            catalogRepository.deleteResource(connection.id(), "jira", key);
+            ingestionService.purgeSource(connection.id() + ":" + key);
+        });
         if (!stale.isEmpty()) {
             log.info("Jira reconciliation purged {} stale issue(s) for connection {}",
                     stale.size(), connection.id());
@@ -311,11 +320,14 @@ public class JiraConnector implements SourceConnector {
             return;
         }
         if (eventType.contains("deleted")) {
+            catalogRepository.deleteResource(connection.id(), "jira", issueKey);
             ingestionService.purgeSource(connection.id() + ":" + issueKey);
             return;
         }
-        HttpResponse<String> res = get(connection, "/issue/" + issueKey + "?fields=" + FIELDS_CSV);
+        HttpResponse<String> res = get(connection, "/issue/" + issueKey
+                + "?fields=" + String.join(",", CATALOG_FIELDS));
         if (res.statusCode() == 404) {
+            catalogRepository.deleteResource(connection.id(), "jira", issueKey);
             ingestionService.purgeSource(connection.id() + ":" + issueKey);
             return;
         }
@@ -323,7 +335,42 @@ public class JiraConnector implements SourceConnector {
             throw new IllegalStateException("Failed to refetch Jira issue " + issueKey
                     + " after webhook (HTTP " + res.statusCode() + ")");
         }
+        catalogIssue(connection, mapper.readTree(res.body()));
+    }
+
+    @Override
+    public void hydrate(Connection connection, CatalogResource resource) throws Exception {
+        HttpResponse<String> res = get(connection, resource.apiPath());
+        if (res.statusCode() == 404) {
+            catalogRepository.deleteResource(connection.id(), "jira", resource.externalId());
+            ingestionService.purgeSource(connection.id() + ":" + resource.externalId());
+            return;
+        }
+        if (res.statusCode() != 200) {
+            throw new IllegalStateException("Failed to lazily fetch Jira issue " + resource.externalId()
+                    + " (HTTP " + res.statusCode() + "): " + snippet(res.body()));
+        }
         ingestIssue(connection, mapper.readTree(res.body()));
+    }
+
+    private void catalogIssue(Connection connection, JsonNode issue) {
+        String key = issue.path("key").asText(null);
+        JsonNode fields = issue.path("fields");
+        if (key == null || fields.isMissingNode()) return;
+        String title = fields.path("summary").asText(key);
+        String projectKey = fields.path("project").path("key").asText(null);
+        String projectName = fields.path("project").path("name").asText(projectKey);
+        catalogRepository.upsertContainer(connection.id(), "jira", projectKey, projectName,
+                projectKey == null ? null : connection.baseUrl() + "/browse/" + projectKey);
+        String updated = fields.path("updated").asText(null);
+        Instant sourceUpdatedAt = updated == null ? null : Instant.parse(normalizeJiraTimestamp(updated));
+        SourceCatalogRepository.UpsertResult result = catalogRepository.upsertResource(
+                connection.id(), "jira", key, projectKey, projectName, title,
+                "/issue/" + URLEncoder.encode(key, StandardCharsets.UTF_8) + "?fields=" + FIELDS_CSV,
+                connection.baseUrl() + "/browse/" + key, sourceUpdatedAt);
+        if (result.invalidatedIndexedContent()) {
+            ingestionService.purgeSource(connection.id() + ":" + key);
+        }
     }
 
     private void ingestIssue(Connection connection, JsonNode issue) throws Exception {
@@ -360,9 +407,9 @@ public class JiraConnector implements SourceConnector {
         String updatedStr = fields.path("updated").asText(null);
         Instant sourceUpdatedAt = updatedStr == null ? null : Instant.parse(normalizeJiraTimestamp(updatedStr));
 
-        List<String> aclTags = List.of(
-                "connection:" + connection.id(),
-                "jira:project:" + (projectKey == null ? "unknown" : projectKey));
+        List<String> aclTags = new ArrayList<>(connection.aclScope());
+        aclTags.add("connection:" + connection.id());
+        aclTags.add("jira:project:" + (projectKey == null ? "unknown" : projectKey));
 
         String url = connection.baseUrl() + "/browse/" + key;
 

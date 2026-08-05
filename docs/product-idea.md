@@ -339,7 +339,10 @@ the trusted internal network only (§9).
 
 ### 6.1 Confluence, Jira, and SharePoint
 
-- Confluence and Jira ingest via their native webhooks plus scheduled delta syncs. Both connectors support
+- Confluence and Jira use **metadata-first lazy ingestion**. Initial backfill and ongoing webhook/delta
+  sync catalogue spaces/projects plus page titles/issue summaries, source versions, credentialed API
+  locations, and human-facing URLs. Page/issue bodies are fetched, chunked, and embedded only when a
+  search strongly matches the complete title or issue key (bounded per search). Both connectors support
   Cloud and Server/Data Center: provisioning auto-detects version and deployment type, registers webhooks
   programmatically where credentials permit, and falls back to CQL/JQL delta polling.
 - **SharePoint** is a first-class connector using the Microsoft Graph API with **standard** application
@@ -353,8 +356,10 @@ the trusted internal network only (§9).
     webhook subscriptions on `driveItem` / `listItem` for near-real-time updates.
   - ACL mapping: site permission groups (Owners/Members/Visitors) + item-level permission overrides fetched
     at sync time; broken inheritance respected.
-- A separate **backfill crawler** performs the initial historical import for every newly connected source.
-- **Update/delete sync:** edits replace chunks in place (same `external_id`); deletes purge via cascade.
+- A separate **backfill crawler** performs the initial metadata catalogue import for every newly connected
+  source without downloading the entire content history.
+- **Update/delete sync:** edits mark already hydrated content stale and purge its old chunks; the next title
+  match rehydrates it. Deletes purge both catalogue pointers and chunks.
 - **Subscription lifecycle:** Graph subscriptions expire quickly — a renewal scheduler and a
   lifecycle-notification endpoint are mandatory (shared by SharePoint and Teams).
 

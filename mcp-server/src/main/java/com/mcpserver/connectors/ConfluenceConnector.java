@@ -3,7 +3,6 @@ package com.mcpserver.connectors;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mcpserver.config.TlsHttpClientFactory;
-import com.mcpserver.repositories.ChunkRepository;
 import com.mcpserver.services.IngestionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,7 +19,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
-import java.util.HashSet;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -44,7 +43,7 @@ public class ConfluenceConnector implements SourceConnector {
             .withZone(ZoneOffset.UTC);
 
     private final IngestionService ingestionService;
-    private final ChunkRepository chunkRepository;
+    private final SourceCatalogRepository catalogRepository;
     private final ConnectionRepository connectionRepository;
     private final CredentialCipher credentialCipher;
     private final WebhookTokenService webhookTokenService;
@@ -55,7 +54,7 @@ public class ConfluenceConnector implements SourceConnector {
     private final Map<String, Instant> lastReconciledAt = new ConcurrentHashMap<>();
 
     public ConfluenceConnector(IngestionService ingestionService,
-                                ChunkRepository chunkRepository,
+                                SourceCatalogRepository catalogRepository,
                                 ConnectionRepository connectionRepository,
                                 CredentialCipher credentialCipher,
                                 WebhookTokenService webhookTokenService,
@@ -63,7 +62,7 @@ public class ConfluenceConnector implements SourceConnector {
                                 @Value("${connectors.webhook-base-url:}") String webhookBaseUrl,
                                 @Value("${connectors.reconcile-interval-ms:86400000}") long reconcileIntervalMs) {
         this.ingestionService = ingestionService;
-        this.chunkRepository = chunkRepository;
+        this.catalogRepository = catalogRepository;
         this.connectionRepository = connectionRepository;
         this.credentialCipher = credentialCipher;
         this.webhookTokenService = webhookTokenService;
@@ -105,20 +104,25 @@ public class ConfluenceConnector implements SourceConnector {
     @Override
     public void backfill(Connection connection, BackfillProgressSink sink) throws Exception {
         Instant crawlStartedAt = Instant.now();
-        Set<String> activePageIds = new HashSet<>();
-        int processed = connection.deploymentType() == DeploymentType.CLOUD
-                ? backfillCloud(connection, sink, activePageIds)
-                : backfillServer(connection, sink, activePageIds);
-        purgeMissing(connection, activePageIds);
+        catalogSpaces(connection);
+        catalogRepository.beginInventory(connection.id(), "confluence");
+        int processed;
+        try {
+            processed = connection.deploymentType() == DeploymentType.CLOUD
+                    ? backfillCloud(connection, sink)
+                    : backfillServer(connection, sink);
+            purgeMissing(connection);
+        } finally {
+            catalogRepository.clearInventory(connection.id(), "confluence");
+        }
         lastReconciledAt.put(connection.id(), Instant.now());
         connectionRepository.save(connectionRepository.findById(connection.id())
                 .orElse(connection).withSyncCursor(crawlStartedAt.toString()));
         log.info("Confluence backfill complete for connection {}: {} pages", connection.id(), processed);
     }
 
-    private int backfillCloud(Connection connection, BackfillProgressSink sink,
-                              Set<String> activePageIds) throws Exception {
-        String next = "/pages?status=current&body-format=storage&limit=" + PAGE_SIZE;
+    private int backfillCloud(Connection connection, BackfillProgressSink sink) throws Exception {
+        String next = "/pages?status=current&limit=" + PAGE_SIZE;
         int processed = 0;
         while (next != null) {
             HttpResponse<String> res = get(connection, DeploymentType.CLOUD, next);
@@ -127,8 +131,8 @@ public class ConfluenceConnector implements SourceConnector {
             String responseBase = response.path("_links").path("base").asText(null);
             for (JsonNode page : response.path("results")) {
                 String pageId = page.path("id").asText(null);
-                if (pageId != null) activePageIds.add(pageId);
-                ingestPage(connection, page, responseBase);
+                catalogRepository.recordInventoryId(connection.id(), "confluence", pageId);
+                catalogPage(connection, page, responseBase);
                 sink.progress(++processed, 0);
             }
             next = cloudNext(res, response);
@@ -136,12 +140,11 @@ public class ConfluenceConnector implements SourceConnector {
         return processed;
     }
 
-    private int backfillServer(Connection connection, BackfillProgressSink sink,
-                               Set<String> activePageIds) throws Exception {
+    private int backfillServer(Connection connection, BackfillProgressSink sink) throws Exception {
         int start = 0;
         int processed = 0;
         while (true) {
-            String path = "/content?type=page&status=current&expand=body.storage,version,space"
+            String path = "/content?type=page&status=current&expand=version,space"
                     + "&start=" + start + "&limit=" + PAGE_SIZE;
             HttpResponse<String> res = get(connection, DeploymentType.SERVER_DC, path);
             if (res.statusCode() != 200) throw fetchFailure("backfill", res);
@@ -150,8 +153,8 @@ public class ConfluenceConnector implements SourceConnector {
             String responseBase = response.path("_links").path("base").asText(null);
             for (JsonNode page : results) {
                 String pageId = page.path("id").asText(null);
-                if (pageId != null) activePageIds.add(pageId);
-                ingestPage(connection, page, responseBase);
+                catalogRepository.recordInventoryId(connection.id(), "confluence", pageId);
+                catalogPage(connection, page, responseBase);
                 sink.progress(++processed, 0);
             }
             if (results.size() < PAGE_SIZE) break;
@@ -201,7 +204,7 @@ public class ConfluenceConnector implements SourceConnector {
     private String pollCloudDelta(Connection connection) throws Exception {
         Instant cursor = Instant.parse(connection.syncCursor());
         Instant latest = cursor;
-        String next = "/pages?status=current&body-format=storage&sort=-modified-date&limit=" + PAGE_SIZE;
+        String next = "/pages?status=current&sort=-modified-date&limit=" + PAGE_SIZE;
         boolean reachedCursor = false;
         while (next != null && !reachedCursor) {
             HttpResponse<String> res = get(connection, DeploymentType.CLOUD, next);
@@ -214,7 +217,7 @@ public class ConfluenceConnector implements SourceConnector {
                     reachedCursor = true;
                     break;
                 }
-                ingestPage(connection, page, responseBase);
+                catalogPage(connection, page, responseBase);
                 if (updated != null && updated.isAfter(latest)) latest = updated;
             }
             next = reachedCursor ? null : cloudNext(res, response);
@@ -229,14 +232,14 @@ public class ConfluenceConnector implements SourceConnector {
         int start = 0;
         while (true) {
             String path = "/content/search?cql=" + URLEncoder.encode(cql, StandardCharsets.UTF_8)
-                    + "&expand=body.storage,version,space&start=" + start + "&limit=" + PAGE_SIZE;
+                    + "&expand=version,space&start=" + start + "&limit=" + PAGE_SIZE;
             HttpResponse<String> res = get(connection, DeploymentType.SERVER_DC, path);
             if (res.statusCode() != 200) throw fetchFailure("delta poll", res);
             JsonNode response = mapper.readTree(res.body());
             JsonNode results = response.path("results");
             String responseBase = response.path("_links").path("base").asText(null);
             for (JsonNode page : results) {
-                ingestPage(connection, page, responseBase);
+                catalogPage(connection, page, responseBase);
                 Instant updated = pageUpdatedAt(page);
                 if (updated != null && updated.isAfter(latest)) latest = updated;
             }
@@ -252,12 +255,17 @@ public class ConfluenceConnector implements SourceConnector {
         Instant now = Instant.now();
         Instant last = lastReconciledAt.get(connection.id());
         if (last != null && last.plus(reconcileInterval).isAfter(now)) return;
-        purgeMissing(connection, fetchActivePageIds(connection));
-        lastReconciledAt.put(connection.id(), now);
+        catalogRepository.beginInventory(connection.id(), "confluence");
+        try {
+            scanActivePageIds(connection);
+            purgeMissing(connection);
+            lastReconciledAt.put(connection.id(), now);
+        } finally {
+            catalogRepository.clearInventory(connection.id(), "confluence");
+        }
     }
 
-    private Set<String> fetchActivePageIds(Connection connection) throws Exception {
-        Set<String> ids = new HashSet<>();
+    private void scanActivePageIds(Connection connection) throws Exception {
         if (connection.deploymentType() == DeploymentType.CLOUD) {
             String next = "/pages?status=current&limit=" + INVENTORY_PAGE_SIZE;
             while (next != null) {
@@ -266,7 +274,7 @@ public class ConfluenceConnector implements SourceConnector {
                 JsonNode response = mapper.readTree(res.body());
                 for (JsonNode page : response.path("results")) {
                     String id = page.path("id").asText(null);
-                    if (id != null) ids.add(id);
+                    catalogRepository.recordInventoryId(connection.id(), "confluence", id);
                 }
                 next = cloudNext(res, response);
             }
@@ -279,19 +287,20 @@ public class ConfluenceConnector implements SourceConnector {
                 JsonNode results = mapper.readTree(res.body()).path("results");
                 for (JsonNode page : results) {
                     String id = page.path("id").asText(null);
-                    if (id != null) ids.add(id);
+                    catalogRepository.recordInventoryId(connection.id(), "confluence", id);
                 }
                 if (results.size() < PAGE_SIZE) break;
                 start += results.size();
             }
         }
-        return ids;
     }
 
-    private void purgeMissing(Connection connection, Set<String> activePageIds) {
-        Set<String> stale = chunkRepository.findExternalIds(connection.id(), "confluence");
-        stale.removeAll(activePageIds);
-        stale.forEach(id -> ingestionService.purgeSource(connection.id() + ":" + id));
+    private void purgeMissing(Connection connection) {
+        Set<String> stale = catalogRepository.findMissingFromInventory(connection.id(), "confluence");
+        stale.forEach(id -> {
+            catalogRepository.deleteResource(connection.id(), "confluence", id);
+            ingestionService.purgeSource(connection.id() + ":" + id);
+        });
         if (!stale.isEmpty()) {
             log.info("Confluence reconciliation purged {} stale page(s) for connection {}",
                     stale.size(), connection.id());
@@ -308,10 +317,11 @@ public class ConfluenceConnector implements SourceConnector {
             return;
         }
         String path = connection.deploymentType() == DeploymentType.CLOUD
-                ? "/pages/" + pageId + "?body-format=storage"
-                : "/content/" + pageId + "?expand=body.storage,version,space";
+                ? "/pages/" + pageId
+                : "/content/" + pageId + "?expand=version,space";
         HttpResponse<String> res = get(connection, connection.deploymentType(), path);
         if (res.statusCode() == 404) {
+            catalogRepository.deleteResource(connection.id(), "confluence", pageId);
             ingestionService.purgeSource(connection.id() + ":" + pageId);
             return;
         }
@@ -320,7 +330,49 @@ public class ConfluenceConnector implements SourceConnector {
                     + " after webhook (HTTP " + res.statusCode() + ")");
         }
         JsonNode response = mapper.readTree(res.body());
-        ingestPage(connection, response, response.path("_links").path("base").asText(null));
+        catalogPage(connection, response, response.path("_links").path("base").asText(null));
+    }
+
+    @Override
+    public void hydrate(Connection connection, CatalogResource resource) throws Exception {
+        HttpResponse<String> res = get(connection, connection.deploymentType(), resource.apiPath());
+        if (res.statusCode() == 404) {
+            catalogRepository.deleteResource(connection.id(), "confluence", resource.externalId());
+            ingestionService.purgeSource(connection.id() + ":" + resource.externalId());
+            return;
+        }
+        if (res.statusCode() != 200) {
+            throw new IllegalStateException("Failed to lazily fetch Confluence page "
+                    + resource.externalId() + " (HTTP " + res.statusCode() + ")");
+        }
+        JsonNode page = mapper.readTree(res.body());
+        ingestPage(connection, page, page.path("_links").path("base").asText(null));
+    }
+
+    private void catalogPage(Connection connection, JsonNode page, String responseBase) {
+        String pageId = page.path("id").asText(null);
+        if (pageId == null) return;
+        String title = page.path("title").asText("Untitled");
+        String space = page.path("space").path("key").asText(page.path("spaceId").asText(null));
+        String containerName = catalogRepository.findContainerName(connection.id(), "confluence", space)
+                .orElse(space == null ? "Unknown space" : space);
+        catalogRepository.upsertContainer(connection.id(), "confluence", space, containerName, null);
+
+        String webui = page.path("_links").path("webui").asText("");
+        String base = responseBase;
+        if (base == null || base.isBlank()) {
+            base = connection.baseUrl() + (connection.deploymentType() == DeploymentType.CLOUD ? "/wiki" : "");
+        }
+        String url = webui.isBlank() ? null : joinUrl(base, webui);
+        String apiPath = connection.deploymentType() == DeploymentType.CLOUD
+                ? "/pages/" + pageId + "?body-format=storage"
+                : "/content/" + pageId + "?expand=body.storage,version,space";
+        SourceCatalogRepository.UpsertResult result = catalogRepository.upsertResource(
+                connection.id(), "confluence", pageId, space, containerName, title,
+                apiPath, url, pageUpdatedAt(page));
+        if (result.invalidatedIndexedContent()) {
+            ingestionService.purgeSource(connection.id() + ":" + pageId);
+        }
     }
 
     private void ingestPage(Connection connection, JsonNode page, String responseBase) {
@@ -338,15 +390,57 @@ public class ConfluenceConnector implements SourceConnector {
         String url = webui.isBlank() ? null : joinUrl(base, webui);
         Instant sourceUpdatedAt = pageUpdatedAt(page);
 
-        List<String> aclTags = List.of(
-                "connection:" + connection.id(),
-                "confluence:space:" + (space == null ? "unknown" : space));
+        List<String> aclTags = new ArrayList<>(connection.aclScope());
+        aclTags.add("connection:" + connection.id());
+        aclTags.add("confluence:space:" + (space == null ? "unknown" : space));
 
         ingestionService.ingest(
                 connection.id() + ":" + pageId, title, space,
                 storageValue.getBytes(StandardCharsets.UTF_8), "text/html", aclTags,
                 "confluence", pageId, url, sourceUpdatedAt
         );
+    }
+
+    private void catalogSpaces(Connection connection) {
+        try {
+            if (connection.deploymentType() == DeploymentType.CLOUD) {
+                String next = "/spaces?limit=" + INVENTORY_PAGE_SIZE;
+                while (next != null) {
+                    HttpResponse<String> res = get(connection, DeploymentType.CLOUD, next);
+                    if (res.statusCode() != 200) return;
+                    JsonNode response = mapper.readTree(res.body());
+                    String responseBase = response.path("_links").path("base").asText(null);
+                    for (JsonNode space : response.path("results")) {
+                        String id = space.path("id").asText(space.path("key").asText(null));
+                        String name = space.path("name").asText(space.path("key").asText(id));
+                        String webui = space.path("_links").path("webui").asText("");
+                        String url = webui.isBlank() ? null : joinUrl(
+                                responseBase == null ? connection.baseUrl() + "/wiki" : responseBase, webui);
+                        catalogRepository.upsertContainer(connection.id(), "confluence", id, name, url);
+                    }
+                    next = cloudNext(res, response);
+                }
+            } else {
+                int start = 0;
+                while (true) {
+                    HttpResponse<String> res = get(connection, DeploymentType.SERVER_DC,
+                            "/space?start=" + start + "&limit=" + INVENTORY_PAGE_SIZE);
+                    if (res.statusCode() != 200) return;
+                    JsonNode results = mapper.readTree(res.body()).path("results");
+                    for (JsonNode space : results) {
+                        String key = space.path("key").asText(null);
+                        catalogRepository.upsertContainer(connection.id(), "confluence", key,
+                                space.path("name").asText(key), null);
+                    }
+                    if (results.size() < INVENTORY_PAGE_SIZE) break;
+                    start += results.size();
+                }
+            }
+        } catch (Exception e) {
+            // Page metadata still carries a space id/key, so a space-list failure degrades to that
+            // identifier instead of failing a potentially very large catalogue crawl.
+            log.warn("Could not catalogue Confluence spaces for {}: {}", connection.id(), e.getMessage());
+        }
     }
 
     private Instant pageUpdatedAt(JsonNode page) {

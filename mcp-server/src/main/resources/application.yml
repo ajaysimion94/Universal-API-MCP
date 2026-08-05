@@ -81,6 +81,7 @@ connectors:
   poll-interval-ms: 300000   # 5 minutes — delta-poll cadence for every CONNECTED connection
   poll-concurrency: 4        # independent sources fetch concurrently; one source never overlaps itself
   reconcile-interval-ms: 86400000 # daily full-ID inventory purges remote deletions/permission removals
+  lazy-title-match-limit: 3  # bound remote body fetches triggered by one strong title/key search match
   # Publicly reachable base URL Confluence/Jira Server-DC would POST webhooks to (e.g. behind a
   # reverse proxy). Blank (the default, since server.address is 127.0.0.1 — trusted network only)
   # means webhook registration is skipped and every connection relies on delta polling only.

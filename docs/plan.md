@@ -153,10 +153,11 @@ E2E test checklist:
 **Goal:** AI clients get grounded, cited context from enterprise knowledge — first real value. ACL tags
 are **captured** on every chunk (enforcement activates in Phase 6).
 
-**E2E flow:** a page is created/edited in Confluence, Jira, or SharePoint → webhook or delta poll picks it
-up → durable event queue (SQLite `ingestion_events` table) → ingestion pipeline → ACL-tagged, embedded
-chunks appear in the SQLite chunk store within minutes → an AI client requests context for a query →
-hybrid search (vector + lexical, RRF-merged)
+**E2E flow:** a page is created/edited in Confluence or Jira → webhook (durable SQLite
+`ingestion_events` queue) or delta poll picks up its lightweight metadata → the space/project, title,
+source version, and content locations land in the SQLite connector catalogue → a strong title/key search
+lazily fetches only that body → the ingestion pipeline writes ACL-tagged embedded chunks → hybrid search
+(vector + lexical, RRF-merged)
 → cross-encoder rerank → cited context payload returned. Also: an admin uploads a PDF and the AI client
 gets cited context from it minutes later.
 
@@ -180,12 +181,14 @@ Build checklist:
   every resource (gating activates in Phase 6)
 - [x] Confluence connector: Cloud REST v2 + Server/DC REST v1 detection, cursor/CQL delta polling,
   webhook registration (Server/DC only — Cloud webhook registration needs a Connect/Forge app, so
-  Cloud relies on polling), backfill, daily full-ID reconciliation for deletes/permission removals,
-  Cloud Basic email/API-token and Server/DC Basic or Bearer-PAT auth.
+  Cloud relies on polling), metadata-only space/page-title catalogue with indexed content locations,
+  bounded title-triggered lazy body hydration, daily full-ID reconciliation for deletes/permission
+  removals, Cloud Basic email/API-token and Server/DC Basic or Bearer-PAT auth.
   `connectors/ConfluenceConnector.java`
 - [x] Jira connector: Cloud + Server/DC detection, modern cursor/legacy offset JQL polling, webhook
-  registration (Server/DC only, same Cloud limitation as Confluence), backfill, update-in-place,
-  daily full-ID reconciliation for deletes/permission removals, and Basic/Bearer-PAT auth.
+  registration (Server/DC only, same Cloud limitation as Confluence), metadata-only project/issue-title
+  catalogue with indexed content locations, bounded title/key-triggered lazy body hydration, stale-content
+  invalidation, daily full-ID reconciliation for deletes/permission removals, and Basic/Bearer-PAT auth.
   `connectors/JiraConnector.java`
 - [ ] **SharePoint connector** — deferred (no Microsoft Graph/Entra tenant available to build
   against). `ConnectionType`/`SourceConnector` reserve a `SHAREPOINT` slot so adding it later
@@ -214,17 +217,19 @@ Build checklist:
   collapsed by default into separate counts; users can expand the evidence and then individual RAG files.
   `#`/`@` tool invocations remain the pure deterministic action path. Browser-native HTML/CSS/JS
   lives directly in the JAR's static resources (no Node toolchain or separate web server).
-- [x] Update/delete sync: edits replace chunks in place (same `source_file_id`); webhook events purge
-  immediately and scheduled full-ID reconciliation catches polling-only deletes and permission
-  removals. True for upload, Confluence, and Jira; SharePoint pending
+- [x] Update/delete sync: edits mark hydrated connector content stale and purge its old chunks; the next
+  strong title/key search rehydrates it under the same `source_file_id`. Webhook deletes purge immediately
+  and scheduled full-ID reconciliation catches polling-only deletes and permission removals. True for
+  upload, Confluence, and Jira; SharePoint pending
 - [ ] PII-redaction and retention policies per source, applied before embedding
 
 E2E test checklist:
-- [x] Create a Confluence page → ACL-tagged chunks present in the SQLite chunk store within the sync
-  SLA (verified via WireMock'd Cloud API in `ConfluenceConnectorTests` + a live E2E pass against a
-  local fake Confluence server: create connection → verify → backfill → confirm via `/api/search`);
+- [x] Create a Confluence page → its space/title/API path/web URL appear in the metadata catalogue without
+  body ingestion → search the full title → only that page is fetched and ACL-tagged chunks become
+  searchable (verified by `backfillCatalogsMetadataAndTitleSearchLazilyFetchesContent`);
   Server/DC path (auto-detected, polling) covered by `detectsServerDcDeploymentWhenCloudPathFails`
-- [x] Create and edit a Jira issue → chunks appear, then update in place
+- [x] Create and edit a Jira issue → project/summary/location metadata appears without body ingestion;
+  search the summary/key → content hydrates, and a later edit invalidates then replaces it lazily
   (`JiraConnectorTests#createThenEditSameIssueReplacesChunksInPlace`)
 - [ ] Create a SharePoint page → ACL-tagged chunks appear within the sync SLA; upload a file to a doc
   library → Tika-extracted chunks indexed; create a list item → `field: value` chunks ingested

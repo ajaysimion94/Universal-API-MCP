@@ -2,9 +2,9 @@ package com.mcpserver.connectors;
 
 /**
  * A connector to a remote knowledge source (Confluence, Jira, ...). Implementations write
- * fetched content through {@code IngestionService.ingest()}/{@code enqueue()} — the same
- * source-agnostic pipeline manual file upload uses — so connector-sourced content needs no
- * changes anywhere downstream of ingestion (chunking, embedding, search).
+ * Remote metadata is catalogued first. Implementations fetch content through
+ * {@code IngestionService.ingest()}/{@code enqueue()} only when a search strongly matches a
+ * catalogued title, so a large tenant does not download and embed its complete history on connect.
  */
 public interface SourceConnector {
 
@@ -16,7 +16,7 @@ public interface SourceConnector {
     /** Validates the stored credentials against the source system; throws with a clear message on failure. */
     void testConnection(Connection connection) throws Exception;
 
-    /** Full historical crawl. Reports progress via {@code sink} so the async job endpoint can be polled. */
+    /** Full metadata catalogue crawl. Page/issue bodies are not fetched by this operation. */
     void backfill(Connection connection, BackfillProgressSink sink) throws Exception;
 
     /**
@@ -27,9 +27,14 @@ public interface SourceConnector {
      */
     void registerWebhook(Connection connection) throws Exception;
 
-    /** Polls for changes since {@code connection.syncCursor()} and ingests/purges accordingly. */
+    /** Polls metadata changes since {@code connection.syncCursor()} and marks changed content stale. */
     void pollDelta(Connection connection) throws Exception;
 
-    /** Parses an inbound webhook payload and applies it (ingest or purge) directly. */
+    /** Parses an inbound webhook payload and applies its metadata update or deletion. */
     void handleWebhookPayload(Connection connection, String rawPayload) throws Exception;
+
+    /** Fetches one catalogued item's body and writes its searchable chunks. */
+    default void hydrate(Connection connection, CatalogResource resource) throws Exception {
+        throw new UnsupportedOperationException(type() + " does not support lazy content hydration");
+    }
 }

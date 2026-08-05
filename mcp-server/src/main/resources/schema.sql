@@ -99,6 +99,68 @@ CREATE TABLE IF NOT EXISTS ingestion_events (
 CREATE INDEX IF NOT EXISTS idx_ingestion_events_status ON ingestion_events(status);
 CREATE INDEX IF NOT EXISTS idx_ingestion_events_connection_id ON ingestion_events(connection_id);
 
+-- Lightweight remote-content catalogue. Connector backfills store only containers (Confluence
+-- spaces / Jira projects) and item metadata (page title / issue summary + remote locations); body
+-- content is fetched and embedded lazily when a strong title/key match is searched. Keeping this
+-- separate from chunks lets very large tenants be discoverable without eagerly downloading and
+-- embedding their complete history.
+CREATE TABLE IF NOT EXISTS connector_containers (
+    id                    TEXT PRIMARY KEY,
+    connection_id         TEXT NOT NULL,
+    source_system         TEXT NOT NULL,
+    external_id           TEXT NOT NULL,
+    name                  TEXT NOT NULL,
+    web_url               TEXT,
+    cataloged_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE (connection_id, source_system, external_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_connector_containers_connection
+    ON connector_containers(connection_id, source_system);
+CREATE INDEX IF NOT EXISTS idx_connector_containers_name
+    ON connector_containers(name COLLATE NOCASE);
+
+CREATE TABLE IF NOT EXISTS connector_resources (
+    id                    TEXT PRIMARY KEY,
+    connection_id         TEXT NOT NULL,
+    source_system         TEXT NOT NULL,
+    external_id           TEXT NOT NULL,
+    container_external_id TEXT,
+    container_name        TEXT,
+    title                 TEXT NOT NULL,
+    api_path              TEXT NOT NULL,
+    web_url               TEXT,
+    source_updated_at     TEXT,
+    content_state         TEXT NOT NULL DEFAULT 'METADATA_ONLY',
+    content_indexed_at    TEXT,
+    cataloged_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE (connection_id, source_system, external_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_connector_resources_connection
+    ON connector_resources(connection_id, source_system);
+CREATE INDEX IF NOT EXISTS idx_connector_resources_container
+    ON connector_resources(connection_id, source_system, container_external_id);
+CREATE INDEX IF NOT EXISTS idx_connector_resources_title
+    ON connector_resources(title COLLATE NOCASE);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS connector_resources_fts USING fts5(
+    title,
+    container_name,
+    catalog_id UNINDEXED,
+    tokenize = 'porter unicode61'
+);
+
+-- Bounded-memory backfill/reconciliation scratch inventory. Remote IDs stream into this table and
+-- an anti-join finds catalogue/chunk rows not seen in the completed scan; connectors never retain a
+-- tenant-sized HashSet on the JVM heap. A new scan clears any rows stranded by a prior crash.
+CREATE TABLE IF NOT EXISTS connector_inventory (
+    connection_id TEXT NOT NULL,
+    source_system TEXT NOT NULL,
+    external_id   TEXT NOT NULL,
+    PRIMARY KEY (connection_id, source_system, external_id)
+);
+
 -- Spec source for API_COLLECTION connections (Postman collection / OpenAPI spec import).
 -- spec_document keeps the raw spec text so re-import/diff needs no file storage; specs are
 -- small text documents, fine for SQLite.

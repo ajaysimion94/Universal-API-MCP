@@ -1,6 +1,7 @@
 package com.mcpserver.services;
 
 import com.mcpserver.cache.CacheService;
+import com.mcpserver.connectors.ConnectorContentResolver;
 import com.mcpserver.learning.FeedbackMemory;
 import com.mcpserver.learning.LearningModel;
 import com.mcpserver.learning.LearningService;
@@ -16,6 +17,7 @@ import com.mcpserver.repositories.ChunkRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -44,6 +46,7 @@ public class SearchService implements SearchPipeline {
     private final int lexicalTopK;
     private final int webResultCount;
     private final float minimumRelevanceScore;
+    private ConnectorContentResolver connectorContentResolver;
 
     public SearchService(EmbeddingClient embeddingClient,
                          ChunkRepository chunkRepository,
@@ -69,6 +72,11 @@ public class SearchService implements SearchPipeline {
         this.lexicalTopK = lexicalTopK;
         this.minimumRelevanceScore = minimumRelevanceScore;
         this.webResultCount = webResultCount;
+    }
+
+    @Autowired(required = false)
+    void setConnectorContentResolver(ConnectorContentResolver connectorContentResolver) {
+        this.connectorContentResolver = connectorContentResolver;
     }
 
     @Override
@@ -99,6 +107,16 @@ public class SearchService implements SearchPipeline {
         int safeTopN = Math.min(topN, MAX_RESULTS);
         long startedAt = System.nanoTime();
         LearningService.RankingDecision decision = learningService.decide(query);
+
+        // Resolve metadata-only connector entries before consulting the result cache. Hydration
+        // invalidates the cache through IngestionService; checking the cache first could preserve a
+        // stale "no results" response after the matching remote page was fetched.
+        if (connectorContentResolver != null) {
+            int hydrated = connectorContentResolver.hydrateTitleMatches(query);
+            if (hydrated > 0) {
+                log.info("Lazy connector hydration fetched {} title-matched item(s) for '{}'", hydrated, query);
+            }
+        }
 
         // Lexical FTS5 search always works (built into SQLite); the vector leg needs
         // both the embedding model and the sqlite-vec store. Degrade gracefully.
@@ -254,7 +272,8 @@ public class SearchService implements SearchPipeline {
     /** Whether anything has been ingested at all (lexical-only chunks count). */
     public boolean hasIndexedChunks() {
         try {
-            return chunkRepository.count() > 0;
+            return chunkRepository.count() > 0
+                    || (connectorContentResolver != null && connectorContentResolver.hasCatalogEntries());
         } catch (Exception e) {
             return false;
         }

@@ -127,6 +127,10 @@ resource processing. There is no separate frontend build and no `-Dskip.frontend
 | `rag.web.max-response-bytes` | `2097152` | Hard response-body download cap |
 | `rag.web.max-content-chars` | `20000` | Extracted text cap per page |
 | `rag.web.min-relevance-score` | `0.20` | Minimum calibrated score for a web result |
+| `connectors.poll-interval-ms` | `300000` | Jira/Confluence metadata delta-poll interval |
+| `connectors.poll-concurrency` | `4` | Maximum sources polling concurrently |
+| `connectors.reconcile-interval-ms` | `86400000` | Full remote-ID reconciliation interval |
+| `connectors.lazy-title-match-limit` | `3` | Maximum metadata-only bodies hydrated by one strong title/key search |
 
 ### Internal HTTPS APIs and corporate certificates
 
@@ -168,8 +172,18 @@ mode when creating the connection or under **Connections → Edit settings**.
 
 Connector polling defaults to four concurrent sources (`connectors.poll-concurrency`) while preventing
 the same connection from overlapping itself. `connectors.reconcile-interval-ms` defaults to one day;
-the reconciliation inventory removes indexed pages/issues deleted remotely or no longer visible to
+the reconciliation inventory removes catalogued pages/issues deleted remotely or no longer visible to
 the connector account.
+
+Connection and backfill operations are metadata-only: Confluence spaces/pages and Jira projects/issues
+are stored in `connector_containers`, `connector_resources`, and the FTS5 title index, together with their
+credentialed API path and human-facing URL. Body content is not downloaded or embedded at connection
+time. Before normal RAG retrieval, a search that contains a complete catalogued page title or exactly
+matches a Jira issue key hydrates at most `connectors.lazy-title-match-limit` bodies (default `3`). A
+generic project or space query never fans out into fetching every item. Unchanged hydrated items remain
+local; a metadata version change purges stale chunks and makes the item eligible for lazy hydration again.
+Backfill and reconciliation stream IDs through `connector_inventory`; deletion detection uses a SQLite
+anti-join and therefore does not retain the tenant's complete ID set on the JVM heap.
 
 Server/DC webhook registration requires `connectors.webhook-base-url`. Every registered callback URL
 contains a random per-connection token stored encrypted in SQLite; requests without the exact token
