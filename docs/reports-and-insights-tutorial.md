@@ -58,7 +58,9 @@ matches.
 
 ## Step 3 — Your first query
 
-Open **Insights**. Pick your collection in the **API collection** picker at the top right.
+Open **Insights**. Pick your collection in the **API collection** picker at the top right, then press
+**Code** — this step writes the query by hand, which is the part no visual editor replaces. (Once it
+has run, **Design** lets you add and bind the visuals by clicking; see Step 7.)
 
 If the collection already has an enabled GET request, the editor pre-fills a starter document for it.
 Replace the RQL block with the smallest thing that can work — one request, one limit:
@@ -142,6 +144,15 @@ failing the run.
 
 `data`, `x`, and `y` are all required (`RQI020`). Every chart ships with a collapsible data table
 underneath it, so the numbers behind a bar are always one click away.
+
+`<LineChart>` and `<PieChart>` take the same three props, so switching a chart's type is a one-word
+edit that keeps its bindings.
+
+**Or build it by clicking.** Press **Design** and the result becomes a canvas: choose *Bar chart*
+from the Visualizations pane to place one, then drag `userId` and `posts` from the Fields pane onto
+its **Axis** and **Values** wells and type a title. Design mode writes each change back into the
+document, so pressing **Code** afterwards shows the same tag you would have typed — which is why an
+insight built by clicking still reviews as a diff.
 
 Two things the document will refuse: `y2` (dual axes, `RQI011`) and `color` (`RQI013`). Series colours
 come from the insight palette so that a colour always means the same entity. If you need a second

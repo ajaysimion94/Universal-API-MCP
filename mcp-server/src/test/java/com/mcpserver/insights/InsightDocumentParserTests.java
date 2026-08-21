@@ -1,5 +1,6 @@
 package com.mcpserver.insights;
 
+import com.mcpserver.reports.RqlModel;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -46,5 +47,25 @@ class InsightDocumentParserTests {
 
         assertThat(document.diagnostics()).extracting(diagnostic -> diagnostic.code())
                 .contains("RQI011", "RQI013");
+    }
+
+    @Test
+    void parsesLineAndPieChartsWithTheSharedChartProps() {
+        InsightModel.Document document = parser.parse("""
+                <LineChart data={rows} x="day" y="total" title="Trend" />
+                <PieChart data={rows} x="kind" y="total" title="Mix" />
+                """);
+
+        assertThat(document.components()).extracting(InsightModel.Component::type)
+                .containsExactly("LineChart", "PieChart");
+        assertThat(document.diagnostics()).isEmpty();
+    }
+
+    @Test
+    void everyChartTypeRequiresTheSharedDataAndFieldProps() {
+        assertThat(parser.parse("<LineChart data={rows} x=\"day\" />").diagnostics())
+                .extracting(RqlModel.Diagnostic::code).contains("RQI020");
+        assertThat(parser.parse("<PieChart data={rows} y=\"total\" />").diagnostics())
+                .extracting(RqlModel.Diagnostic::code).contains("RQI020");
     }
 }

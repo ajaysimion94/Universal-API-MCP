@@ -33,7 +33,7 @@ expose it beyond a trusted internal network.
 | Plugins | `/plugins` | Install and run the local search infrastructure. |
 | Connections | `/connections` | Confluence/Jira ingestion and API collection imports. |
 | Apps | `/apps` | Every imported request: enable, test, group, override auth. |
-| Insights | `/insights` | The insight workspace: saved-insight library and the last run's view, with the RQL/RQD editor behind **Edit** (`/reports` and `/dashboards` redirect here). |
+| Insights | `/insights` | The insight workspace: saved-insight library and the last run's view, in **View**, **Design**, or **Code** mode (`/reports` and `/dashboards` redirect here). |
 | Help | `/help` | The tutorial catalogue plus reference topics shared with MCP clients (`GET /api/help`). Reached from the **?** button in the top bar rather than the main nav; `/guide` redirects here. |
 | Tutorial | `/tutorial` | Seven step-by-step walkthroughs. Every step carries a route link, worked examples with their expected result, a check, and its own troubleshooting. Progress is ticked off locally. |
 
@@ -253,11 +253,29 @@ Covered in full by the [tutorial](reports-and-insights-tutorial.md) and the
 
 - The Insights page opens as a **library on the left and the last result on the right**. It reopens
   whichever insight you last had open, showing the result of its previous run — so the page starts
-  on answers, not an empty panel. **Edit** reveals the document; **Run insight** fetches fresh data
-  and saves the new result with the insight.
+  on answers, not an empty panel. **Run insight** fetches fresh data and saves the new result with
+  the insight.
+- **Three modes, one document.** **View** reads the insight. **Design** turns the result into a
+  canvas: pick a visual from the Visualizations pane, click a block to select it, then bind columns
+  by dragging them from the Fields pane onto a well (or choosing them from the well's list) and set
+  its title in the same pane. **Code** shows the `.rqd` source. Design writes its changes straight
+  into that source, so the two modes never disagree and anything built by clicking stays reviewable
+  as a diff. Field names come from the last run, so run an insight once before binding.
 - A restored result is labelled `Saved result · ran <time>`, and says `Document edited since this
   run` once you change the source, so old numbers are never mistaken for current ones. Opening an
   insight never re-runs it on its own.
+- **The status bar** along the bottom answers "what state is this insight in" without opening
+  anything: when it last ran and whether that result is stale, how many datasets and rows came back,
+  how many requests were issued and what they cost (or `cached`), the analyzer's error and warning
+  counts, whether the document has unsaved changes, which app bare request names resolve against,
+  how many parameters it declares, and — in Design mode — the selected visual and its binding.
+  Segments colour themselves from their own state, and **Checks** and **Document** are clickable:
+  the first opens Code where the diagnostics are listed, the second saves.
+- **While a run is in flight** a progress bar appears above the result with a live elapsed clock and
+  what the previous run of this document cost. It is deliberately indeterminate — a `lookup` stage
+  issues one request per row, so the total is not known when the run starts, and a filling bar would
+  be guessing. The previous result stays on screen, dimmed, because it is still the truth until the
+  new one arrives.
 - **One insight can span several apps.** Qualify a request with its app (`request "CRM: List
   customers"`), scope a section with `use collection "CRM";`, or leave names bare and let them
   resolve across every connected collection. A name that exists in two apps is reported, not guessed.

@@ -31,6 +31,9 @@ public class InsightService {
      */
     static final int MAX_LAST_RUN_BYTES = 512 * 1024;
 
+    /** Chart components, which all share the one-category hint (RQI310). */
+    private static final java.util.Set<String> CHART_TYPES = java.util.Set.of("BarChart", "LineChart", "PieChart");
+
     private final InsightDocumentParser parser = new InsightDocumentParser();
     private final ObjectMapper json = new ObjectMapper();
     private final ReportQueryService reportQueryService;
@@ -175,11 +178,11 @@ public class InsightService {
         execution.datasets().forEach((name, dataset) -> datasets.put(name,
                 new DatasetData(dataset.columns(), dataset.rows(), dataset.schema())));
         for (Component component : document.components()) {
-            if (component.type().equals("BarChart")) {
+            if (CHART_TYPES.contains(component.type())) {
                 DatasetData data = datasets.get(datasetName(component));
                 if (data != null && data.rows().size() == 1) {
                     diagnostics.add(new Diagnostic(component.span(), Severity.INFO, "RQI310",
-                            "One bar — use <Stat> when a single number is the point."));
+                            "One category — use <Stat> when a single number is the point."));
                 }
             }
         }

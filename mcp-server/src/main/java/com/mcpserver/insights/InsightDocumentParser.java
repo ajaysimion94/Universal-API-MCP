@@ -26,12 +26,17 @@ public class InsightDocumentParser {
     private static final Pattern TAG_START = Pattern.compile("<(/?)([A-Z][A-Za-z0-9]*)");
     private static final Pattern PROPERTY = Pattern.compile("([A-Za-z][A-Za-z0-9]*)\\s*=\\s*(?:\\{([^{}]*)}|\\\"([^\\\"]*)\\\")");
     private static final Set<String> SUPPORTED = Set.of(
-            "Filter", "KpiRow", "Stat", "BarChart", "DataTable",
+            "Filter", "KpiRow", "Stat", "BarChart", "LineChart", "PieChart", "DataTable",
             // Summary blocks, ported from the report automation engine's Summary sheet.
             "Text", "KeyValue", "LabelValue", "QuickTable", "LabelTable", "Metrics", "Status");
 
-    /** Components that own a plotted axis; a filter nested inside one is rejected (RQI012). */
-    private static final Set<String> CHARTS = Set.of("BarChart");
+    /**
+     * Components that own a plotted axis; a filter nested inside one is rejected (RQI012). Every chart
+     * takes the same {@code data}/{@code x}/{@code y} triple — a pie reads {@code x} as the slice label
+     * rather than an axis, but keeping one prop vocabulary is what lets the design surface swap a
+     * chart's type without rewriting its field bindings.
+     */
+    private static final Set<String> CHARTS = Set.of("BarChart", "LineChart", "PieChart");
 
     /**
      * The props each component reads. Anything else is silently inert, so it is reported (RQI014)
@@ -41,6 +46,8 @@ public class InsightDocumentParser {
     private static final Map<String, Set<String>> KNOWN_PROPS = Map.ofEntries(
             Map.entry("Stat", Set.of("value", "label")),
             Map.entry("BarChart", Set.of("data", "x", "y", "title")),
+            Map.entry("LineChart", Set.of("data", "x", "y", "title")),
+            Map.entry("PieChart", Set.of("data", "x", "y", "title")),
             Map.entry("DataTable", Set.of("data", "title", "columns")),
             Map.entry("Text", Set.of("value")),
             Map.entry("KeyValue", Set.of("label", "value")),
@@ -155,9 +162,9 @@ public class InsightDocumentParser {
                             "<" + type + "> does not read '" + prop + "'; it has no effect."));
                 }
             }
-            if (type.equals("BarChart") && (!props.containsKey("data") || !props.containsKey("x") || !props.containsKey("y"))) {
+            if (CHARTS.contains(type) && (!props.containsKey("data") || !props.containsKey("x") || !props.containsKey("y"))) {
                 diagnostics.add(new Diagnostic(span, Severity.ERROR, "RQI020",
-                        "<BarChart> requires data, x, and y props."));
+                        "<" + type + "> requires data, x, and y props."));
             }
             if (type.equals("DataTable") && !props.containsKey("data")) {
                 diagnostics.add(new Diagnostic(span, Severity.ERROR, "RQI021",

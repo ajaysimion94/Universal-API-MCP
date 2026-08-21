@@ -304,6 +304,20 @@ class InsightServiceTests {
         assertThat(result.diagnostics()).extracting(RqlModel.Diagnostic::code).doesNotContain("RQI310");
     }
 
+    @Test
+    void dataHintsToUseAStatForTheOtherChartTypesToo() {
+        RqlModel.Dataset dataset = new RqlModel.Dataset("mix", List.of(Map.of("kind", "open", "total", 3)));
+        when(reportQueryService.execute(anyString(), any(), anyMap())).thenReturn(
+                new RqlModel.Execution(Map.of("mix", dataset), List.of(), List.of()));
+
+        InsightModel.Data result = service.data(
+                "<PieChart data={mix} x=\"kind\" y=\"total\" />\n<LineChart data={mix} x=\"kind\" y=\"total\" />",
+                "conn-1", Map.of());
+
+        assertThat(result.diagnostics()).extracting(RqlModel.Diagnostic::code)
+                .containsExactly("RQI310", "RQI310");
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────────
 
     /** A real .rqd document — bare RQL is prose to the parser, leaving an empty program. */

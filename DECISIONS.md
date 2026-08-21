@@ -953,3 +953,71 @@ citation `web_url` separates machine retrieval from the location shown to a user
 **Refs:** `connectors/SourceCatalogRepository.java`, `ConnectorContentResolver.java`,
 `ConfluenceConnector.java`, `JiraConnector.java`; `schema.sql`; `SearchService.java`;
 `SourceCatalogRepositoryTests`, `ConfluenceConnectorTests`, `JiraConnectorTests`
+
+---
+
+### 2026-08-07 — Insights get a Power BI-style design surface, with the .rqd document still the source of truth
+
+**Decision:** The Insights workspace gains a third mode (`View` / `Design` / `Code`) rather than a
+second editor. Design mode adds the three panes a BI tool is recognised by — a Visualizations picker,
+field wells for the selected visual, and a Fields list of the run's dataset columns (click or drag to
+bind) — plus selection, reordering, and deletion directly on the canvas. Every one of those gestures
+edits the `.rqd` text: `setTagProp` rewrites a single prop inside the selected component's raw tag and
+`spliceSource` splices it back at the span the parser reported, shifting the spans that follow. There
+is no parallel dashboard model, no layout JSON, and no generated-file mode — Design and Code are two
+views of the same document, and switching between them mid-edit is lossless. Components are identified
+across re-parses by the source offset their tag starts at, not by their index in the outline.
+`LineChart` and `PieChart` join `BarChart` sharing one `data`/`x`/`y` prop vocabulary.
+
+**Why:** The document format was chosen precisely because click-built dashboards are unversionable and
+unreviewable (`docs/dashboard-design.md` §1), so a visual editor that owned its own model would trade
+away the reason for the format. Editing the text surgically instead of regenerating each tag keeps a
+Format-pane change readable as a one-prop diff rather than a whole-file reformat. Offsets rather than
+indices because a re-analysis can split or merge the prose around an edit, which silently shifts every
+index after it. One prop vocabulary across the charts is what lets a visual's type be swapped without
+rebinding its fields.
+
+**Deliberately not included:** a free-form drag-and-resize canvas (components remain a vertical block
+flow), and cross-filtering / slicers / drill-through. Both are large enough to be their own decision,
+and neither is required for the document to stay the source of truth. Field lists populate from the
+last run, so a brand-new document must be run once before its fields can be dragged — an upfront
+schema probe was not added.
+
+**Status:** active
+
+**Refs:** `static/pages/insights.js` (`CATALOG`, `setTagProp`, `spliceSource`, `editComponent`,
+`componentKey`), `static/components.css`; `InsightDocumentParser.java`, `InsightService.java`;
+`InsightWorkspaceTests`
+
+---
+
+### 2026-08-07 — Insight run progress stays indeterminate; workspace state moves to a status bar
+
+**Decision:** The Insights workspace gains a persistent status bar deriving every segment's value and
+tone from one pure function (`statusSegments`): run freshness, dataset/row counts, request count and
+cost, analyzer error/warning counts, saved/unsaved state, the bound app, declared parameters, and the
+Design-mode selection. Segments are omitted when they do not apply, and the two that lead somewhere
+(**Checks**, **Document**) are buttons. Run feedback becomes an explicit **indeterminate** progress
+bar carrying a live elapsed clock plus what the previous run of that document cost — no
+`aria-valuenow`, no percentage. `<Status />` gains per-request duration bars scaled to the slowest
+request; cache hits are labelled, never plotted.
+
+**Why:** A run's request count cannot be known when it starts — a `lookup` stage issues one request
+per row (`ReportQueryService.lookup`) — so any filling bar would be inventing its denominator, and a
+progress bar that does not track progress is worse than an honest spinner. Reporting elapsed time and
+the prior run's cost is the most that can be said truthfully. The status bar's rules live in a pure
+function because the failure mode that matters is a *wrong* readout — "Saved" over unsaved edits, or
+"Clean" over a broken binding — which is only preventable if the conditions are testable apart from
+the markup. Duration bars because a column of millisecond figures makes you compare numbers to find
+the expensive call.
+
+**Rejected:** a determinate bar fed by a run-progress side-channel (a completion callback threaded
+through `ReportQueryService` plus a polled endpoint). It would report real progress for documents
+without a `lookup` and still have to fall back to indeterminate for those with one, which buys a
+partial guarantee at the cost of a new endpoint and a callback through a shared service. Revisit if
+runs routinely grow long enough that elapsed time alone stops being useful.
+
+**Status:** active
+
+**Refs:** `static/pages/insights.js` (`statusSegments`, `statusBar`, `runProgress`, `tickElapsed`,
+`statusBlock`), `static/components.css`; `InsightWorkspaceTests`

@@ -428,7 +428,7 @@ editor underlines them live; execution returns the same list alongside whatever 
 | `RQI024` | Error | `<Text>` needs a `value` expression. |
 | `RQI025` | Error | `<QuickTable>` / `<LabelTable>` needs `rows`. |
 | `RQI101` | Error | A component references a dataset that no `let` defines. |
-| `RQI310` | Info | A bar chart with one bar — use `<Stat>` instead. |
+| `RQI310` | Info | A chart with one category — use `<Stat>` instead. |
 | `RQI311` | Info | `<Filter>` renders nothing; parameter controls come from front-matter `params`. |
 
 `RQI500` is produced by the web UI itself when the analyze request cannot reach the server.
@@ -498,13 +498,15 @@ Props are written `name={expression}` or `name="text"`.
 | --- | --- | --- |
 | `<Stat value={…} label="…" />` | `value` | One number. Consecutive stats collapse into a KPI row. |
 | `<BarChart data={ds} x="field" y="field" title="…" />` | `data`, `x`, `y` | SVG bars with a collapsible "Show chart data table" twin. Non-numeric `y` values are dropped. The axis charts the first 24 categories and says so when there are more; the twin carries up to 100 rows. |
+| `<LineChart data={ds} x="field" y="field" title="…" />` | `data`, `x`, `y` | Same props and same twin, drawn as a line with a marker per point. Charts the first 60 points; only every nth axis label is drawn once they would collide. |
+| `<PieChart data={ds} x="field" y="field" title="…" />` | `data`, `x`, `y` | Donut plus a legend with each slice's value and share. `x` is the slice label. Rows with a non-positive `y` are dropped — they have no arc. Slices beyond the palette's eight are summed into one `Other (n)` wedge; the twin still lists every row. |
 | `<DataTable data={ds} title="…" columns={["id AS \"Order\"", "total"]} />` | `data` | First 100 rows. `columns` is optional; `AS` renames the header without changing the field read. |
 | `<Text value={…} />` | `value` | A line of prose or a computed sentence. |
 | `<KeyValue label="…" value={…} />` | `label`, `value` | Label/value row with a bold label. |
 | `<LabelValue label="…" value={…} />` | `label`, `value` | Same, with a plain label. |
 | `<QuickTable title="…" headers={["Metric","Value"]} rows={[["Total", count(orders)]]} />` | `rows` | Inline table written in the document. Headers default to `Label`, `Value`. |
 | `<LabelTable title="…" rows={[["Open", count(open)]]} />` | `rows` | Same, with **no** header row unless `headers` is given. |
-| `<Status />` | — | One row per request this run issued: name, method, status code, success, duration. |
+| `<Status />` | — | One row per request this run issued: name, method, status code, success, duration, and a bar scaled to the slowest request so the expensive call is visible rather than deduced. A cache hit is labelled `cached` and not plotted — it issued no HTTP at all. |
 | `<Metrics />` | — | Aggregate execution stats: requests, succeeded, failed, rows returned, total duration. |
 | `<KpiRow>` | — | Accepted; grouping is automatic, so wrapping is cosmetic. |
 | `<Filter>` | — | Accepted but **not rendered**, and reported as inert (`RQI311`). Parameter inputs come from front-matter `params`. Nesting one inside a chart is an error (`RQI012`). |
@@ -642,9 +644,18 @@ Worth knowing before you plan around a capability:
   page load), so the numbers can be arbitrarily old; press **Run insight** to refresh. A result is
   not kept when it came from unsaved edits, or when it exceeds 512 KB — in both cases the run still
   displays in full and the preview says why it was not saved.
-- **One chart type.** `<BarChart>` is the only chart; line, area, and scatter forms in the design doc
-  are not implemented.
+- **Three chart types.** `<BarChart>`, `<LineChart>`, and `<PieChart>`; the area and scatter forms in
+  the design doc are not implemented.
 - **Cross-filtering is not implemented.** Parameters are the only interactive control.
+- **Design mode edits the document, not a layout.** The workspace's `Design` mode places visuals,
+  binds fields, and formats them by rewriting the `.rqd` source, so `Code` always shows exactly what
+  was built and the two never diverge. Components stay a vertical block flow — there is no free-form
+  drag-and-resize canvas.
+- **Field wells populate from the last run.** Column names come from executed datasets, so a document
+  that has never run offers no fields to bind and its data components are disabled in the picker.
+- **Run progress is indeterminate.** A run's request count is not knowable when it starts — a
+  `lookup` stage issues one request per row — so the workspace reports elapsed time and the previous
+  run's cost rather than a percentage. Per-request timings arrive with the result, in `<Status />`.
 - **`/reports` redirects to `/insights`** in the SPA; there is no separate report workspace yet.
 - **The library lists the 200 most recently updated insights.** Older ones stay saved and open by
   id, but do not appear in the panel.

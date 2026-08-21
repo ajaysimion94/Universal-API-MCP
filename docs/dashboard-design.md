@@ -1,8 +1,10 @@
 # Dashboards (RQD) — Design
 
-**Status:** initial live workspace implemented. `.rqd` front matter, fenced RQL, `Stat`,
-`BarChart`, and `DataTable` render in the SPA; filters, saved dashboards, the extended component
-catalog, cross-filtering, and Excel export remain planned.
+**Status:** live workspace implemented, with a visual design surface over the same document. `.rqd`
+front matter, fenced RQL, `Stat`, `BarChart`, `LineChart`, `PieChart`, `DataTable` and the summary
+blocks render in the SPA; the workspace's `Design` mode places and binds them by rewriting the
+document (see `DECISIONS.md`, 2026-08-07). Filters, cross-filtering, a free-form canvas, and Excel
+export remain planned.
 **Companion to:** [`report-query-design.md`](./report-query-design.md) — RQL, the query language this
 consumes. Read that first; this document assumes its dataset model.
 **Phase:** same caveat — ahead of the tracker. See RQL design §10.
@@ -190,7 +192,7 @@ accepted but raises `RQD302`, because a number on every point is chaos and goes 
 | Condition | Code | Message |
 | --- | --- | --- |
 | `<BarChart>` over a 1-row dataset | `RQD310` | "One bar — use `<Stat>`; the number is the chart." |
-| `<PieChart>` … | — | component does not exist; ≤ 6-segment part-to-whole is `<StackedBar>` |
+| `<PieChart>` | part-to-whole with a small number of categories | a crowded multi-series chart; use `<DataTable>` when the category count grows |
 | `colorBy` on a nominal field in a single-series bar | `RQD311` | "Value-ramp on nominal categories double-encodes bar length; use one hue." |
 | `scale="sequential"` with a `colorBy` of unordered categories | `RQD312` | "Sequential encodes magnitude; this field has no order." |
 | `<Heatmap>` with > 7 meaningful classes | `RQD313` | "Past ~7 bins adjacent classes blur; consider `<DataTable>`." |

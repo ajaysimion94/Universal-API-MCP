@@ -22,6 +22,15 @@ const SVG_PATHS = {
   route: '<circle cx="6" cy="19" r="2.5"></circle><circle cx="18" cy="5" r="2.5"></circle><path d="M8.5 19h6a3.5 3.5 0 0 0 0-7h-5a3.5 3.5 0 0 1 0-7h6"></path>',
   thumbUp: '<path d="M7 21V10l4.5-7a2.2 2.2 0 0 1 2.1 2.9L12.5 10H18a2.2 2.2 0 0 1 2.1 2.8l-1.5 5.5A2.2 2.2 0 0 1 16.5 21z"></path><path d="M3 21h4V10H3z"></path>',
   thumbDown: '<path d="M7 3v11l4.5 7a2.2 2.2 0 0 0 2.1-2.9L12.5 14H18a2.2 2.2 0 0 0 2.1-2.8l-1.5-5.5A2.2 2.2 0 0 0 16.5 3z"></path><path d="M3 3h4v11H3z"></path>',
+  chartBar: '<path d="M4 20V10m5 10V5m5 15v-7m5 7V8"></path>',
+  chartLine: '<path d="M4 19V4"></path><path d="M4 19h16"></path><path d="m7 15 4-5 3 3 5-7"></path>',
+  chartPie: '<path d="M12 3a9 9 0 1 0 9 9h-9z"></path><path d="M14.5 3.5A9 9 0 0 1 20.5 9.5h-6z"></path>',
+  table: '<path d="M3 5h18v14H3z"></path><path d="M3 10h18M9 10v9"></path>',
+  kpi: '<path d="M3 6h7v5H3z"></path><path d="M14 6h7v5h-7z"></path><path d="M3 15h18v3H3z"></path>',
+  text: '<path d="M5 6h14M5 12h14M5 18h9"></path>',
+  wand: '<path d="m4 20 9-9"></path><path d="M14 4.5 15 3l1 1.5L17.5 5l-1.5 1 .5 1.5L15 7l-1.5.5.5-1.5-1.5-1z"></path><path d="M13 11l3-3"></path>',
+  arrowUp: '<path d="M12 20V5m0 0-6 6m6-6 6 6"></path>',
+  arrowDown: '<path d="M12 4v15m0 0 6-6m-6 6-6-6"></path>',
   settings: '<circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"></path>',
 };
 
