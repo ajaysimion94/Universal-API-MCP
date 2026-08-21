@@ -24,6 +24,9 @@
         <!-- Skip downloading/bundling model + native libs + searxng source (-Dskip.bundle=true).
              The jar then relies on files already extracted on disk (dev loops only). -->
         <skip.bundle>false</skip.bundle>
+        <!-- Skip only the large ONNX model files (-Dskip.models=true). sqlite-vec and SearXNG
+             still ship, and the pinned model/tokenizer pairs can be uploaded from /plugins. -->
+        <skip.models>${skip.bundle}</skip.models>
         <bundled.dir>${project.build.outputDirectory}/bundled</bundled.dir>
         <sqlite-vec.version>0.1.9</sqlite-vec.version>
         <sqlite-vec.base>https://github.com/asg017/sqlite-vec/releases/download/v${sqlite-vec.version}/sqlite-vec-${sqlite-vec.version}-loadable</sqlite-vec.base>
@@ -173,6 +176,7 @@
                         <phase>generate-resources</phase>
                         <goals><goal>wget</goal></goals>
                         <configuration>
+                            <skip>${skip.models}</skip>
                             <url>https://huggingface.co/nomic-ai/nomic-embed-text-v1.5/resolve/main/onnx/model_quantized.onnx</url>
                             <outputDirectory>${bundled.dir}/model</outputDirectory>
                             <outputFileName>model_quantized.onnx</outputFileName>
@@ -184,6 +188,7 @@
                         <phase>generate-resources</phase>
                         <goals><goal>wget</goal></goals>
                         <configuration>
+                            <skip>${skip.models}</skip>
                             <url>https://huggingface.co/nomic-ai/nomic-embed-text-v1.5/resolve/main/tokenizer.json</url>
                             <outputDirectory>${bundled.dir}/model</outputDirectory>
                             <outputFileName>tokenizer.json</outputFileName>
@@ -195,6 +200,7 @@
                         <phase>generate-resources</phase>
                         <goals><goal>wget</goal></goals>
                         <configuration>
+                            <skip>${skip.models}</skip>
                             <url>https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2/resolve/main/onnx/model.onnx</url>
                             <outputDirectory>${bundled.dir}/reranker</outputDirectory>
                             <outputFileName>model.onnx</outputFileName>
@@ -206,6 +212,7 @@
                         <phase>generate-resources</phase>
                         <goals><goal>wget</goal></goals>
                         <configuration>
+                            <skip>${skip.models}</skip>
                             <url>https://huggingface.co/cross-encoder/ms-marco-MiniLM-L6-v2/resolve/main/tokenizer.json</url>
                             <outputDirectory>${bundled.dir}/reranker</outputDirectory>
                             <outputFileName>tokenizer.json</outputFileName>

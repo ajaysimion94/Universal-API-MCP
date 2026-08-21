@@ -1021,3 +1021,29 @@ runs routinely grow long enough that elapsed time alone stops being useful.
 
 **Refs:** `static/pages/insights.js` (`statusSegments`, `statusBar`, `runProgress`, `tickElapsed`,
 `statusBlock`), `static/components.css`; `InsightWorkspaceTests`
+
+---
+
+### 2026-08-21 — ONNX models may be omitted from the build and installed through verified local uploads
+
+**Decision:** Keep the zero-install `mvn package` behavior as the default, but add the narrower
+`-Dskip.models=true` build property. It omits only the Nomic embedding and MiniLM reranker model and
+tokenizer downloads; sqlite-vec and SearXNG remain bundled. The Plugins page exposes the four pinned
+Hugging Face download links and accepts one model/tokenizer pair at a time through
+`POST /api/plugins/models/{embedding|reranker}`. Uploads ignore client filenames for path selection,
+stream into temporary sibling files, enforce size/extension limits, verify the same SHA-256 values as
+the Maven build, release native ONNX sessions before replacement, and reload afterward. Replacement
+keeps recoverable sibling backups until both files are in place. Arbitrary bring-your-own models are
+not supported by this path; compatibility remains tied to the pinned model architecture and tokenizer.
+
+**Why:** Windows and enterprise build machines often cannot let Maven reach Hugging Face because of
+proxy/TLS policy, while an operator can still transfer approved artifacts through a browser or removable
+media. `-Dskip.bundle=true` was too broad for this workflow because it also removes sqlite-vec and
+SearXNG. Exact digest validation preserves the reproducibility and supply-chain guarantee of the
+original bundled build, and unloading first avoids Windows file-lock failures during replacement.
+
+**Status:** active
+
+**Refs:** `pom.xml` (`skip.models`); `plugins/OnnxModelUploadService.java`, `PluginController.java`,
+`NomicEmbeddingPlugin.java`; `rag/reranker/OnnxCrossEncoderReranker.java`;
+`static/pages/plugins.js`, `static/api.js`; `OnnxModelUploadServiceTests`, `StaticFrontendTests`

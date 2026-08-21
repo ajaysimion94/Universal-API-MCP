@@ -1834,6 +1834,121 @@
   gap: var(--space-2xs);
 }
 
+.model-management {
+  margin-top: var(--space-xl);
+  padding-top: var(--space-lg);
+  border-top: 1px solid var(--border);
+}
+
+.model-management-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.model-management-header h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  margin-bottom: var(--space-3xs);
+  color: var(--text);
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+.model-management-header .plugins-subtitle {
+  max-width: 72ch;
+}
+
+.model-build-hint {
+  flex-shrink: 0;
+  padding: var(--space-2xs) var(--space-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.model-list {
+  border-block: 1px solid var(--border);
+}
+
+.model-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: var(--space-sm) var(--space-lg);
+  padding: var(--space-md) 0;
+}
+
+.model-row + .model-row {
+  border-top: 1px solid var(--border);
+}
+
+.model-summary {
+  min-width: 0;
+}
+
+.model-name-row,
+.model-downloads,
+.model-file-pickers,
+.model-selected-files {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+}
+
+.model-name-row {
+  margin-bottom: var(--space-3xs);
+}
+
+.model-downloads {
+  align-self: start;
+}
+
+.model-file-meta {
+  margin-top: var(--space-3xs);
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}
+
+.model-upload-controls {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--border);
+}
+
+.model-file-pickers {
+  flex-wrap: wrap;
+}
+
+.model-file-picker {
+  cursor: pointer;
+}
+
+.model-selected-files {
+  flex-wrap: wrap;
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}
+
+.model-selected-files span {
+  min-width: 0;
+  max-width: min(420px, 100%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-upload-progress {
+  width: min(320px, 100%);
+}
+
 @media (max-width: 760px) {
   .plugin-row {
     grid-template-columns: 1fr auto;
@@ -1842,6 +1957,19 @@
   .plugin-actions {
     grid-column: 1 / -1;
     justify-content: flex-start;
+  }
+
+  .model-row {
+    grid-template-columns: 1fr;
+  }
+
+  .model-management-header {
+    flex-direction: column;
+  }
+
+  .model-downloads,
+  .model-upload-controls {
+    grid-column: auto;
   }
 
 }
@@ -2908,6 +3036,7 @@
 }
 
 .app-tree-row {
+  height: 40px;
   padding-right: var(--space-3xs);
 }
 

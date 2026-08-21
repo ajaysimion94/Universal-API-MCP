@@ -1,6 +1,9 @@
 package com.mcpserver.plugins;
 
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.HashMap;
 import java.util.List;
@@ -11,14 +14,29 @@ import java.util.Map;
 public class PluginController {
 
     private final PluginRegistry registry;
+    private final OnnxModelUploadService modelUploads;
 
-    public PluginController(PluginRegistry registry) {
+    public PluginController(PluginRegistry registry, OnnxModelUploadService modelUploads) {
         this.registry = registry;
+        this.modelUploads = modelUploads;
     }
 
     @GetMapping
     public List<Map<String, Object>> list() {
         return registry.getAll().stream().map(this::toMap).toList();
+    }
+
+    @GetMapping("/models")
+    public List<OnnxModelUploadService.ModelStatus> models() {
+        return modelUploads.statuses();
+    }
+
+    @PostMapping(value = "/models/{kind}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public OnnxModelUploadService.ModelStatus uploadModel(
+            @PathVariable String kind,
+            @RequestPart("model") MultipartFile model,
+            @RequestPart("tokenizer") MultipartFile tokenizer) {
+        return modelUploads.upload(kind, model, tokenizer);
     }
 
     @PostMapping("/{id}/install")
@@ -82,8 +100,13 @@ public class PluginController {
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
-    public org.springframework.http.ResponseEntity<Map<String, String>> handleIllegalArgument(IllegalArgumentException e) {
-        return org.springframework.http.ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+    public ResponseEntity<Map<String, String>> handleIllegalArgument(IllegalArgumentException e) {
+        return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+    }
+
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<Map<String, String>> handleIllegalState(IllegalStateException e) {
+        return ResponseEntity.status(409).body(Map.of("error", e.getMessage()));
     }
 
     private Map<String, Object> toMap(Plugin p) {

@@ -14,8 +14,9 @@ spring:
       continue-on-error: true
   servlet:
     multipart:
-      max-file-size: 100MB
-      max-request-size: 100MB
+      # The pinned Nomic ONNX model is ~131 MB; the Plugins page accepts it as a streamed upload.
+      max-file-size: 256MB
+      max-request-size: 300MB
 
 # RAG / search configuration
 rag:

@@ -92,6 +92,16 @@ export const api = {
   },
 
   listPlugins: () => send(PLUGINS),
+  listOnnxModels: () => send(`${PLUGINS}/models`),
+  async uploadOnnxModel(kind, model, tokenizer) {
+    const form = new FormData();
+    form.append("model", model);
+    form.append("tokenizer", tokenizer);
+    return json(await fetch(`${PLUGINS}/models/${encodeURIComponent(kind)}`, {
+      method: "POST",
+      body: form,
+    }));
+  },
   installPlugin: (id) => send(`${PLUGINS}/${id}/install`, "POST"),
   enablePlugin: (id) => send(`${PLUGINS}/${id}/enable`, "POST"),
   disablePlugin: (id) => send(`${PLUGINS}/${id}/disable`, "POST"),

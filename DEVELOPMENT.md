@@ -18,6 +18,7 @@ mvn spring-boot:run
 mvn test
 mvn -q compile
 mvn package -Dskip.bundle=true
+mvn clean package -Dskip.models=true  # bundles native libs/SearXNG; upload ONNX files from /plugins
 
 # one backend test
 mvn test -Dtest=FileServiceTests#canUploadFileAndItAppearsAsAChild

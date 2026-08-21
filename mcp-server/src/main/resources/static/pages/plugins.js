@@ -1,8 +1,15 @@
 import { api } from "../api.js";
-import { banner, escapeAttr, escapeHtml, icon, message, on, statusClass, toggle } from "../ui.js";
+import { banner, escapeAttr, escapeHtml, formatBytes, icon, message, on, statusClass, toggle } from "../ui.js";
 
 export async function mount(outlet) {
-  const state = { plugins: [], loading: true, error: "", jobs: new Map(), learning: null, notice: "" };
+  const state = {
+    plugins: [], loading: true, error: "", jobs: new Map(), learning: null, notice: "",
+    models: [], modelsLoading: true, modelsError: "", modelNotice: "", uploadingModel: "",
+    modelUploads: {
+      embedding: { model: null, tokenizer: null },
+      reranker: { model: null, tokenizer: null },
+    },
+  };
   const abort = new AbortController();
   let pollTimer = 0;
 
@@ -58,8 +65,68 @@ export async function mount(outlet) {
             </div>
           </div>`;
         }).join("")}</div>`}
+      ${modelPanel()}
       ${learningPanel()}
     </div>`;
+  }
+
+  function modelPanel() {
+    return `<section class="model-management" aria-labelledby="onnx-model-title">
+      <div class="model-management-header">
+        <div>
+          <h2 id="onnx-model-title">${icon("upload", 18)} ONNX model files</h2>
+          <p class="plugins-subtitle">For offline or Windows builds, download the pinned files and install them from this machine. Uploads are SHA-256 verified before replacing an active model.</p>
+        </div>
+        <span class="mono model-build-hint">mvn clean package -Dskip.models=true</span>
+      </div>
+      ${state.modelNotice ? banner(state.modelNotice, "status") : ""}
+      ${state.modelsError ? banner(state.modelsError) : ""}
+      ${state.modelsLoading ? '<div class="plugin-row-skeleton"><div class="skel-line skel-title"></div><div class="skel-line skel-desc"></div></div>' : `
+        <div class="model-list">${state.models.map(modelRow).join("")}</div>`}
+    </section>`;
+  }
+
+  function modelRow(model) {
+    const selected = state.modelUploads[model.kind] || {};
+    const uploading = state.uploadingModel === model.kind;
+    const canUpload = selected.model && selected.tokenizer && !state.uploadingModel;
+    const status = model.ready ? "ACTIVE" : model.installed ? "INSTALLED" : "NOT_INSTALLED";
+    const statusText = model.ready ? "Ready" : model.installed ? "Installed" : "Files missing";
+    const sizeText = model.installed
+      ? `${formatBytes(model.modelBytes)} model · ${formatBytes(model.tokenizerBytes)} tokenizer`
+      : `Expected ${model.modelFile} and ${model.tokenizerFile}`;
+    return `<article class="model-row">
+      <div class="model-summary">
+        <div class="model-name-row">
+          <span class="plugin-name">${escapeHtml(model.name)}</span>
+          <span class="status-pill ${statusClass(status)}">${model.ready ? icon("check", 12) : ""}${statusText}</span>
+        </div>
+        <p class="plugin-health mono">${escapeHtml(model.health)}</p>
+        <p class="model-file-meta mono">${escapeHtml(sizeText)}</p>
+      </div>
+      <div class="model-downloads" aria-label="Download ${escapeAttr(model.name)} files">
+        <a class="btn btn-ghost" href="${escapeAttr(model.modelDownloadUrl)}" target="_blank" rel="noreferrer">${icon("download", 14)} ONNX</a>
+        <a class="btn btn-ghost" href="${escapeAttr(model.tokenizerDownloadUrl)}" target="_blank" rel="noreferrer">${icon("download", 14)} Tokenizer</a>
+      </div>
+      <div class="model-upload-controls">
+        <div class="model-file-pickers">
+          <label class="btn btn-ghost model-file-picker">
+            ${icon("file", 14)} Choose ONNX
+            <input class="file-input-hidden" type="file" accept=".onnx,application/octet-stream" data-model-file="model" data-kind="${escapeAttr(model.kind)}">
+          </label>
+          <label class="btn btn-ghost model-file-picker">
+            ${icon("file", 14)} Choose tokenizer
+            <input class="file-input-hidden" type="file" accept=".json,application/json" data-model-file="tokenizer" data-kind="${escapeAttr(model.kind)}">
+          </label>
+          <button class="btn btn-primary" type="button" data-action="upload-model" data-kind="${escapeAttr(model.kind)}" ${canUpload ? "" : "disabled"}>${icon("upload", 14)} ${uploading ? "Uploading…" : "Upload files"}</button>
+        </div>
+        <div class="model-selected-files mono" aria-live="polite">
+          <span>ONNX: ${escapeHtml(selected.model?.name || "not selected")}</span>
+          <span>Tokenizer: ${escapeHtml(selected.tokenizer?.name || "not selected")}</span>
+        </div>
+        ${uploading ? '<div class="install-progress model-upload-progress"><div class="install-progress-bar"></div></div>' : ""}
+      </div>
+    </article>`;
   }
 
   /**
@@ -143,6 +210,18 @@ export async function mount(outlet) {
     render();
   }
 
+  async function loadModels() {
+    try {
+      state.models = await api.listOnnxModels();
+      state.modelsError = "";
+    } catch (error) {
+      state.modelsError = message(error, "Failed to load ONNX model status");
+    } finally {
+      state.modelsLoading = false;
+      render();
+    }
+  }
+
   async function pollJobs() {
     for (const [pluginId, jobId] of [...state.jobs]) {
       try {
@@ -167,7 +246,30 @@ export async function mount(outlet) {
     if (target.dataset.action === "dismiss-banner") {
       state.error = "";
       state.notice = "";
+      state.modelsError = "";
+      state.modelNotice = "";
       render();
+      return;
+    }
+    if (target.dataset.action === "upload-model") {
+      const kind = target.dataset.kind;
+      const selected = state.modelUploads[kind];
+      if (!selected?.model || !selected?.tokenizer || state.uploadingModel) return;
+      state.uploadingModel = kind;
+      state.modelsError = "";
+      state.modelNotice = "";
+      render();
+      try {
+        await api.uploadOnnxModel(kind, selected.model, selected.tokenizer);
+        state.modelUploads[kind] = { model: null, tokenizer: null };
+        state.modelNotice = `${kind === "embedding" ? "Embedding" : "Reranker"} model installed and verified.`;
+        await Promise.all([loadModels(), load()]);
+      } catch (error) {
+        state.modelsError = message(error, "Model upload failed");
+      } finally {
+        state.uploadingModel = "";
+        render();
+      }
       return;
     }
     if (target.dataset.action === "reset-memory") {
@@ -210,9 +312,17 @@ export async function mount(outlet) {
     }
   });
 
+  on(outlet, "change", "[data-model-file]", (_event, target) => {
+    const selected = state.modelUploads[target.dataset.kind];
+    if (!selected) return;
+    selected[target.dataset.modelFile] = target.files?.[0] || null;
+    state.modelNotice = "";
+    render();
+  });
+
   render();
   await load();
-  await loadLearning();
+  await Promise.all([loadModels(), loadLearning()]);
   return () => {
     abort.abort();
     clearInterval(pollTimer);

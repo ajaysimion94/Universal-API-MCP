@@ -82,12 +82,28 @@ swapping and very slow ingestion. On such machines:
 ```sh
 cd mcp-server
 mvn package                          # builds JAR + static UI + bundles model/native libs/searxng source (~390MB jar)
+mvn clean package -Dskip.models=true # leaves ONNX files out; keeps sqlite-vec + SearXNG bundled
 java -jar target/mcp-server.jar      # serves SPA + API on http://127.0.0.1:8080
 ```
 
 The first `mvn package` downloads the bundled artifacts (sha256-verified) into a cache under
 `~/.m2` — later builds, including after `mvn clean`, reuse it. `-Dskip.bundle=true` skips
 bundling for fast dev loops (the app then relies on already-extracted `models/` and `lib/`).
+
+For a Windows machine behind a proxy, or any offline build machine, use
+`mvn clean package -Dskip.models=true`. `clean` prevents files from an earlier full build remaining
+under `target/classes`. Start the resulting JAR, open **Plugins → ONNX model files**, and
+for each model:
+
+1. Use the page's **ONNX** and **Tokenizer** download links on a machine that can reach Hugging Face.
+2. Move the two downloaded files to the server machine if necessary.
+3. Choose both files in the matching row and select **Upload files**.
+
+The server streams uploads to disk, accepts at most a 256 MB model and 16 MB tokenizer, verifies the
+pinned SHA-256 values, then replaces and reloads the model. An arbitrary or corrupted ONNX file is
+rejected without changing the installed files. `-Dskip.models=true` affects only the two ONNX model
+bundles; sqlite-vec and the SearXNG source remain in the JAR. The existing `-Dskip.bundle=true` still
+skips every large/native bundle for development loops.
 
 Open **http://127.0.0.1:8080** — the universal search page (landing). Files & folders is at **/files**.
 Plugins is at **/plugins**.
@@ -107,7 +123,7 @@ resource processing. There is no separate frontend build and no `-Dskip.frontend
 | `server.address` | `127.0.0.1` | Trusted-network bind — do not expose publicly until Phase 6 |
 | `spring.datasource.url` | `jdbc:sqlite:./data/mcpserver.db` | SQLite database path |
 | `spring.sql.init.mode` | `always` | Runs `schema.sql` on startup (idempotent) |
-| `spring.servlet.multipart.max-file-size` | `100MB` | Upload limit |
+| `spring.servlet.multipart.max-file-size` | `256MB` | Per-file upload limit; accommodates the pinned Nomic ONNX model |
 | `http.tls.use-windows-root-store` | `true` | Add Windows Trusted Root Certification Authorities to outbound API trust |
 | `http.tls.ca-certificate-paths` | empty | Comma-separated PEM/DER corporate CA files; set with `MCP_TLS_CA_CERTIFICATE_PATHS` |
 | `http.tls.disable-certificate-validation` | `false` | Emergency certificate-chain bypass; set with `MCP_TLS_DISABLE_VERIFY=true` |

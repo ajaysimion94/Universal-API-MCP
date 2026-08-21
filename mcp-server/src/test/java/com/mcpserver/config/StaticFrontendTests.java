@@ -154,4 +154,31 @@ class StaticFrontendTests {
         assertThat(connections)
                 .doesNotContain("${isApi ? `<button class=\"btn btn-ghost ${state.editingAuth");
     }
+
+    @Test
+    void pluginsPageSupportsManualChecksumVerifiedOnnxUploads() throws IOException {
+        String plugins = Files.readString(STATIC.resolve("pages/plugins.js"));
+        String api = Files.readString(STATIC.resolve("api.js"));
+        String pom = Files.readString(Path.of("pom.xml"));
+        String application = Files.readString(Path.of("src/main/resources/application.yml"));
+
+        assertThat(plugins)
+                .contains("ONNX model files")
+                .contains("mvn clean package -Dskip.models=true")
+                .contains("data-action=\"upload-model\"")
+                .contains("data-model-file=\"model\"")
+                .contains("data-model-file=\"tokenizer\"")
+                .contains("api.uploadOnnxModel");
+        assertThat(api)
+                .contains("listOnnxModels")
+                .contains("uploadOnnxModel(kind, model, tokenizer)")
+                .contains("form.append(\"model\", model)")
+                .contains("form.append(\"tokenizer\", tokenizer)");
+        assertThat(pom)
+                .contains("<skip.models>${skip.bundle}</skip.models>")
+                .contains("<skip>${skip.models}</skip>");
+        assertThat(application)
+                .contains("max-file-size: 256MB")
+                .contains("max-request-size: 300MB");
+    }
 }

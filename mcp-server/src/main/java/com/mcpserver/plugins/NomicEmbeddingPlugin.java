@@ -112,6 +112,16 @@ public class NomicEmbeddingPlugin implements Plugin {
     @Override
     public boolean isReady() { return embeddingClient.isReady(); }
 
+    /** Releases Windows file handles before an uploaded model replaces the installed files. */
+    public void prepareForModelReplacement() {
+        embeddingClient.unload();
+    }
+
+    /** Loads a newly uploaded model immediately when semantic search is enabled. */
+    public void refreshAfterModelUpload() {
+        if (isEnabled()) embeddingClient.ensureLoaded();
+    }
+
     private boolean filesExist() {
         return Files.exists(Path.of(modelDir, modelFile)) && Files.exists(Path.of(modelDir, "tokenizer.json"));
     }
