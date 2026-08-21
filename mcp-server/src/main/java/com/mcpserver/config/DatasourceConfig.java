@@ -16,6 +16,7 @@ import javax.sql.DataSource;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.SQLException;
+import java.util.Optional;
 
 @Configuration
 public class DatasourceConfig {
@@ -24,13 +25,12 @@ public class DatasourceConfig {
 
     @Bean
     public DataSource dataSource(@Value("${spring.datasource.url}") String url) throws SQLException {
-        String dbPath = url.replace("jdbc:sqlite:", "");
-        Path parent = Path.of(dbPath).getParent();
-        if (parent != null) {
+        Optional<Path> parent = databaseParentDirectory(url);
+        if (parent.isPresent()) {
             try {
-                Files.createDirectories(parent);
+                Files.createDirectories(parent.get());
             } catch (Exception e) {
-                log.warn("Failed to create data directory {}: {}", parent, e.getMessage());
+                log.warn("Failed to create data directory {}: {}", parent.get(), e.getMessage());
             }
         }
         SQLiteConfig config = new SQLiteConfig();
@@ -45,6 +45,27 @@ public class DatasourceConfig {
         // a connection. Keep one shared embedded connection so vec0 stays loaded
         // for ingestion and search after the plugin activates it.
         return new SingleConnectionDataSource(connection, true);
+    }
+
+    /**
+     * Returns the parent directory only for a plain filesystem-backed SQLite URL.
+     *
+     * <p>SQLite also accepts non-filesystem locations such as {@code :memory:},
+     * {@code file::memory:?cache=shared}, and {@code :resource:...}. Passing those values to
+     * {@link Path#of(String, String...)} happens to work as a filename on Unix, but fails on
+     * Windows because a colon is not legal at index zero. SQLite itself understands these values,
+     * so directory preparation must leave them untouched.
+     */
+    static Optional<Path> databaseParentDirectory(String url) {
+        final String prefix = "jdbc:sqlite:";
+        if (url == null || !url.startsWith(prefix)) {
+            throw new IllegalArgumentException("SQLite datasource URL must start with " + prefix);
+        }
+        String location = url.substring(prefix.length());
+        if (location.isBlank() || location.startsWith(":") || location.startsWith("file:")) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(Path.of(location).getParent());
     }
 
     private void runSchema(java.sql.Connection connection) {
