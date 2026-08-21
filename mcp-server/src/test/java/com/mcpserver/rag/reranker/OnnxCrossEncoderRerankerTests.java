@@ -3,6 +3,7 @@ package com.mcpserver.rag.reranker;
 import com.mcpserver.models.Chunk;
 import com.mcpserver.plugins.BundledResourceExtractor;
 import com.mcpserver.rag.embedding.EmbeddingClient;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.Assumptions;
@@ -58,6 +59,7 @@ class OnnxCrossEncoderRerankerTests {
     }
 
     @Test
+    @Tag("onnx")
     void bundledCrossEncoderScoresRelevantPassageHigher() {
         Path bundled = Path.of("target/classes/bundled/reranker");
         Assumptions.assumeTrue(Files.exists(bundled.resolve("model.onnx")),
@@ -73,7 +75,9 @@ class OnnxCrossEncoderRerankerTests {
                         chunk("venus", "Venus", "Venus has a dense cloudy atmosphere", null),
                         chunk("mars", "Mars", "Mars is known as the red planet", null)));
 
-        assertThat(reranker.isModelReady()).isTrue();
+        assertThat(reranker.isModelReady())
+                .as("cross-encoder ONNX model should load; %s", reranker.loadError())
+                .isTrue();
         assertThat(ranked.get(0).chunk().sourceName()).isEqualTo("Mars");
         assertThat(ranked.get(0).score()).isGreaterThan(ranked.get(1).score());
         reranker.close();

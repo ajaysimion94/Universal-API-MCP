@@ -11,6 +11,7 @@ import com.mcpserver.rag.reranker.OnnxCrossEncoderReranker;
 import com.mcpserver.rag.reranker.Reranker;
 import com.mcpserver.rag.retrieval.RrfFusion;
 import com.mcpserver.rag.retrieval.TextSignals;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.yaml.snakeyaml.Yaml;
 
@@ -45,6 +46,7 @@ import static org.mockito.Mockito.mock;
  * Known gap: the corpus is scored one chunk per document, so chunk-level ranking within a long
  * document is not exercised by this gate.
  */
+@Tag("onnx")
 class GoldenSetRegressionTests {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -91,11 +93,15 @@ class GoldenSetRegressionTests {
         OnnxEmbeddingClient embeddings = new OnnxEmbeddingClient(
                 embeddingDir.toString(), "model_quantized.onnx", 768, 512);
         embeddings.ensureLoaded();
-        assertThat(embeddings.isReady()).isTrue();
+        assertThat(embeddings.isReady())
+                .as("embedding ONNX model should load; %s", embeddings.getLoadError())
+                .isTrue();
         OnnxCrossEncoderReranker reranker = new OnnxCrossEncoderReranker(
                 embeddings, mock(BundledResourceExtractor.class),
                 rerankerDir.toString(), "model.onnx", 256);
-        assertThat(reranker.isModelReady()).isTrue();
+        assertThat(reranker.isModelReady())
+                .as("cross-encoder ONNX model should load; %s", reranker.loadError())
+                .isTrue();
 
         List<Chunk> corpus = new ArrayList<>();
         for (DocumentFixture document : documents) {

@@ -61,14 +61,15 @@ and development. The durable references are [Developer Guide](docs/developer-gui
 
 ## Cross-platform
 
-The app is **fully cross-platform** — macOS, Linux, and Windows. No OS-specific setup is needed.
-All dependencies are embedded in the JAR or downloaded on demand via the **Plugins** page (`/plugins`):
+The app is cross-platform across macOS, Linux, and Windows x64. Windows semantic search additionally
+requires the Microsoft Visual C++ 2015–2022 Redistributable (x64). Application dependencies are
+embedded in the JAR or downloaded on demand via the **Plugins** page (`/plugins`):
 
 | Component | How it works |
 | --- | --- |
 | **Java 17+ / Maven 3.9+** | Java 17 is the compiled baseline; JDK 17, 20, 21, and newer can build and run the same JAR. No Node.js or npm installation is required. |
 | **SQLite + sqlite-vec** | Embedded in the JAR via `org.xerial:sqlite-jdbc`. The sqlite-vec native extension (~1-2MB) is downloaded by the Plugins page per OS/arch. |
-| **Nomic embedding + MiniLM reranker ONNX models** | Bundled into the JAR by default. `-Dskip.models=true` leaves them out; the Plugins page provides the pinned downloads and checksum-verified manual upload. ONNX Runtime auto-loads the right native library per platform. |
+| **Nomic embedding + MiniLM reranker ONNX models** | Bundled into the JAR by default. `-Dskip.models=true` leaves them out; the Plugins page provides the pinned downloads and checksum-verified manual upload. ONNX Runtime auto-loads the right native library per platform; Windows requires an x64 JDK and the [Microsoft Visual C++ 2015–2022 Redistributable (x64)](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170). |
 | **SearXNG (web toggle)** | Native Python process managed by the Plugins page. Requires Python 3.10+ installed on the system. |
 | **Shell syntax** | macOS/Linux: bash. Windows: PowerShell or cmd. The app commands are identical. |
 | **`application.yml` / `schema.sql` / REST API / SPA** | Identical on every OS. |

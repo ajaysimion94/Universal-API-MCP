@@ -105,6 +105,17 @@ rejected without changing the installed files. `-Dskip.models=true` affects only
 bundles; sqlite-vec and the SearXNG source remain in the JAR. The existing `-Dskip.bundle=true` still
 skips every large/native bundle for development loops.
 
+Windows semantic search requires an x64 JDK (`os.arch=amd64`) and the latest
+[Microsoft Visual C++ 2015–2022 Redistributable (x64)](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170).
+The ONNX Runtime DLL imports `VCRUNTIME140`, `VCRUNTIME140_1`, `MSVCP140`, and `MSVCP140_1`;
+uploading model files does not install these native prerequisites. If the ONNX tests fail, their
+assertion descriptions include the loader error. `UnsatisfiedLinkError` or `Can't find dependent
+libraries` normally indicates a missing/blocked redistributable or an architecture mismatch.
+For an intentionally keyword-only package, `mvn clean package -Dskip.models=true
+-DexcludedGroups=onnx` excludes only the two real-model checks while retaining the non-native test
+suite. Run the golden-set runner after fixing the prerequisite; an ONNX-excluded build does not
+verify semantic search.
+
 Open **http://127.0.0.1:8080** — the universal search page (landing). Files & folders is at **/files**.
 Plugins is at **/plugins**.
 
