@@ -111,6 +111,8 @@ The ONNX Runtime DLL imports `VCRUNTIME140`, `VCRUNTIME140_1`, `MSVCP140`, and `
 uploading model files does not install these native prerequisites. If the ONNX tests fail, their
 assertion descriptions include the loader error. `UnsatisfiedLinkError` or `Can't find dependent
 libraries` normally indicates a missing/blocked redistributable or an architecture mismatch.
+Run `mcp-server\scripts\check-onnx-prereqs.ps1` on the affected Windows machine to check the Java
+architecture, Visual C++ runtime DLLs, `dxcore.dll`, and the Universal CRT before rerunning Maven.
 For an intentionally keyword-only package, `mvn clean package -Dskip.models=true
 -DexcludedGroups=onnx` excludes only the two real-model checks while retaining the non-native test
 suite. Run the golden-set runner after fixing the prerequisite; an ONNX-excluded build does not

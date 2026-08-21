@@ -14,10 +14,10 @@ Run every command below from this folder.
 Check the Java architecture in PowerShell:
 
 ```powershell
-java -XshowSettings:properties -version 2>&1 | Select-String "os.arch"
+.\scripts\check-onnx-prereqs.ps1
 ```
 
-It should report `amd64`.
+It should report `amd64` and show every required DLL as present.
 
 ## Windows/offline build
 
