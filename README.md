@@ -26,7 +26,8 @@ cd mcp-server && mvn spring-boot:run
 
 # verification
 cd mcp-server && mvn test                                     # backend tests
-./scripts/run-eval.sh                                         # 50-query P@1/MRR/nDCG gate
+cd mcp-server && ./scripts/run-eval.sh                        # macOS/Linux P@1/MRR/nDCG gate
+cd mcp-server; .\scripts\run-eval.ps1                         # Windows PowerShell equivalent
 cd mcp-server && mvn -q compile                               # fast compile + static resource copy
 ```
 

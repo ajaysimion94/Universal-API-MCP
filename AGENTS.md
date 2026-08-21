@@ -137,7 +137,7 @@ Open **http://127.0.0.1:8080**. Static UI changes appear after a browser refresh
 ```sh
 cd mcp-server && mvn test
 cd mcp-server && mvn test -Dtest=FileServiceTests#canUploadFileAndItAppearsAsAChild
-./scripts/run-eval.sh
+cd mcp-server && ./scripts/run-eval.sh
 cd mcp-server && mvn package -Dskip.bundle=true
 ```
 

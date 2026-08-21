@@ -2,7 +2,9 @@
 
 `scripts/run-eval.sh <run-id>` scores retrieval against a fixed corpus and writes
 `eval-runs/<run-id>/report.json`. The gate runs in CI on every push
-(`GoldenSetRegressionTests`), and skips itself when the ONNX model bundle is absent.
+(`GoldenSetRegressionTests`). It uses either models bundled under `target/classes` or the pinned
+model/tokenizer pairs manually installed under `models`, so this entire directory can be shared and
+evaluated as part of the standalone `mcp-server` folder.
 
 ## Shape of the fixture
 

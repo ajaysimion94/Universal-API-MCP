@@ -1047,3 +1047,25 @@ original bundled build, and unloading first avoids Windows file-lock failures du
 **Refs:** `pom.xml` (`skip.models`); `plugins/OnnxModelUploadService.java`, `PluginController.java`,
 `NomicEmbeddingPlugin.java`; `rag/reranker/OnnxCrossEncoderReranker.java`;
 `static/pages/plugins.js`, `static/api.js`; `OnnxModelUploadServiceTests`, `StaticFrontendTests`
+
+---
+
+### 2026-08-22 — The Maven module is the complete shareable evaluation unit
+
+**Decision:** Keep golden-set fixtures, golden/replay runners, and generated reports inside
+`mcp-server/`: fixtures under `eval-harness/`, runners under `scripts/`, and ignored reports under
+`eval-runs/`. `GoldenSetRegressionTests` locates the module without assuming a launch directory and
+accepts either Maven-bundled ONNX files or the pinned model/tokenizer pairs manually installed under
+`models/`. The runners skip bundle downloads when all four local model files are present.
+
+**Why:** Operators distribute only the `mcp-server` folder, especially to Windows machines that
+cannot download ONNX artifacts during Maven builds. Keeping fixtures or runners in the repository
+parent produced `FileNotFoundException` even though the shared module and manually installed models
+were otherwise complete. The module must build, run, and execute its quality gate without sibling
+directories.
+
+**Status:** active
+
+**Refs:** `mcp-server/eval-harness/`, `mcp-server/scripts/run-eval.{sh,ps1}`,
+`mcp-server/scripts/run-replay.sh`, `GoldenSetRegressionTests`, `ReplayHarnessTests`,
+`.github/workflows/ci.yml`

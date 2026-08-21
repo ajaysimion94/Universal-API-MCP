@@ -16,6 +16,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -40,7 +41,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 class ReplayHarnessTests {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final Path REPO_ROOT = Path.of("..").toAbsolutePath().normalize();
+    private static final Path MODULE_ROOT = locateModuleRoot();
 
     /** Below this effective sample size an off-policy estimate is noise; report, assert nothing. */
     private static final double MIN_EFFECTIVE_SAMPLE = 30;
@@ -71,7 +72,7 @@ class ReplayHarnessTests {
             report.put("latency", latencySummary(corpus));
 
             String runId = System.getProperty("eval.run.id", Long.toString(System.currentTimeMillis()));
-            Path out = REPO_ROOT.resolve("eval-runs").resolve(runId).resolve("replay.json");
+            Path out = MODULE_ROOT.resolve("eval-runs").resolve(runId).resolve("replay.json");
             Files.createDirectories(out.getParent());
             MAPPER.writerWithDefaultPrettyPrinter().writeValue(out.toFile(), report);
 
@@ -79,6 +80,39 @@ class ReplayHarnessTests {
         } finally {
             dataSource.destroy();
         }
+    }
+
+    /** Locate the standalone Maven module from Surefire, an IDE, or either OS path syntax. */
+    private static Path locateModuleRoot() {
+        Optional<Path> fromWorkingDirectory = findModuleRoot(Path.of("").toAbsolutePath());
+        if (fromWorkingDirectory.isPresent()) return fromWorkingDirectory.get();
+        try {
+            Path classLocation = Path.of(ReplayHarnessTests.class.getProtectionDomain()
+                    .getCodeSource().getLocation().toURI());
+            Optional<Path> fromClassLocation = findModuleRoot(classLocation);
+            if (fromClassLocation.isPresent()) return fromClassLocation.get();
+        } catch (Exception ignored) {
+            // The clear exception below includes the working directory the operator can correct.
+        }
+        throw new IllegalStateException("Could not locate mcp-server from working directory "
+                + Path.of("").toAbsolutePath());
+    }
+
+    private static Optional<Path> findModuleRoot(Path start) {
+        Path current = Files.isDirectory(start) ? start : start.getParent();
+        while (current != null) {
+            if (Files.isRegularFile(current.resolve("pom.xml"))
+                    && Files.isDirectory(current.resolve("src/main"))) {
+                return Optional.of(current);
+            }
+            Path nestedModule = current.resolve("mcp-server");
+            if (Files.isRegularFile(nestedModule.resolve("pom.xml"))
+                    && Files.isDirectory(nestedModule.resolve("src/main"))) {
+                return Optional.of(nestedModule);
+            }
+            current = current.getParent();
+        }
+        return Optional.empty();
     }
 
     private static Map<String, Object> rewardSummary(List<Impression> corpus,

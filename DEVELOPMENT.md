@@ -115,13 +115,20 @@ mvn package
 
 ```sh
 cd mcp-server && mvn test
-./scripts/run-eval.sh
+cd mcp-server && ./scripts/run-eval.sh
+# Windows PowerShell
+cd mcp-server; .\scripts\run-eval.ps1
 ```
 
 - `@SpringBootTest` classes boot SQLite and the in-process ML seams and can take several seconds.
 - Tests use isolated SQLite configuration and do not intentionally modify
   `mcp-server/data/mcpserver.db`.
-- `scripts/run-eval.sh` is the judged retrieval regression gate.
+- `scripts/run-eval.sh` and `scripts/run-eval.ps1` are the macOS/Linux and Windows runners for the
+  judged retrieval regression gate inside the standalone `mcp-server` folder. The test accepts
+  either bundled model files or the pinned files manually installed under `models` from the Plugins
+  page; fixtures and generated `eval-runs` also stay inside the module.
+- `scripts/run-replay.sh` evaluates logged traffic from a safe database snapshot and also keeps its
+  snapshot and report under the module's ignored `eval-runs` directory.
 
 ## Troubleshooting
 

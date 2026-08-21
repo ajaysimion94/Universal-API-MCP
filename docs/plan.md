@@ -120,11 +120,11 @@ Build checklist:
   I/O; runtime tool mutation verified (`addTool` / `removeTool` / `notifyToolsListChanged`)
 - [ ] OpenTelemetry tracing wired in from the start — every MCP request and tool call spanned
 - [ ] Golden-set evaluation harness: ~50 real queries (search queries with relevant doc IDs; action queries
-  with expected tool + params) in `eval-harness/golden-set/`; search metrics (P@K, MRR, NDCG) and action
+  with expected tool + params) in `mcp-server/eval-harness/golden-set/`; search metrics (P@K, MRR, NDCG) and action
   metrics (tool match, param accuracy) scoring any pipeline implementing the `SearchPipeline` /
   `AnswerPipeline` seams; regression gate
   - [x] Retrieval slice: 50 judged search queries, P@1/MRR/nDCG@10 report, versioned thresholds, and
-    a failing regression gate (`scripts/run-eval.sh`)
+    a failing regression gate (`mcp-server/scripts/run-eval.sh`)
   - [ ] Action-query/tool-parameter slice
 - [x] CI pipeline: backend tests + retrieval golden-set regression gate and browser-native frontend syntax/smoke checks on every
   change (GitHub Actions, no Docker)
@@ -138,8 +138,8 @@ Build checklist:
 
 E2E test checklist:
 - [ ] AI client lists tools, calls a read tool, receives a schema-valid response
-- [ ] One command runs the golden set and emits a scored report (`scripts/run-eval.sh` →
-  `eval-runs/<run-id>/report.json`); a deliberately degraded stub makes the regression gate fail (exit 1)
+- [ ] One command runs the golden set and emits a scored report (`mcp-server/scripts/run-eval.sh` →
+  `mcp-server/eval-runs/<run-id>/report.json`); a deliberately degraded stub makes the regression gate fail (exit 1)
 - [ ] CI fails on a deliberately introduced regression (gate wired into the pipeline)
 - [ ] Every harness run produces traces; a single query can be followed span-by-span from input to score
 - [ ] Golden set and scores are versioned; two runs on the same input produce comparable reports
@@ -244,7 +244,7 @@ E2E test checklist:
   connector's `reconciliationPurges*` test; connection-delete cascade verified live via
   `/api/search` before/after `DELETE /api/connections/{id}`)
 - [x] Golden-set questions retrieve expected documents; P@1, MRR, and nDCG@10 meet the versioned
-  baseline (`scripts/run-eval.sh`)
+  baseline (`mcp-server/scripts/run-eval.sh`)
 - [x] Exact-match query (ticket ID, acronym) retrieves correctly via the lexical leg
   (`ChunkRepositorySearchTests`)
 - [ ] Upload a PDF → ask a question only it can answer → cited context appears within minutes; re-upload a

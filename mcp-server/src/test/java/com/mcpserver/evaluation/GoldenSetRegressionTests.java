@@ -24,6 +24,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -47,30 +48,38 @@ import static org.mockito.Mockito.mock;
 class GoldenSetRegressionTests {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final Path REPO_ROOT = Path.of("..").toAbsolutePath().normalize();
+    private static final Path MODULE_ROOT = locateModuleRoot();
 
     /** Mirrors the production filter in SearchService: a weak score survives on strong term overlap. */
     private static final double LEXICAL_RESCUE_COVERAGE = 0.30d;
 
     @Test
     void rankingMeetsGoldenSetBaseline() throws Exception {
-        Path embeddingDir = Path.of("target/classes/bundled/model");
-        Path rerankerDir = Path.of("target/classes/bundled/reranker");
-        assumeTrue(Files.exists(embeddingDir.resolve("model_quantized.onnx"))
-                        && Files.exists(rerankerDir.resolve("model.onnx")),
-                "model bundle was explicitly skipped; run scripts/run-eval.sh for the quality gate");
+        Optional<Path> embeddingDirCandidate = firstCompleteModelDirectory(
+                "model_quantized.onnx",
+                MODULE_ROOT.resolve("target/classes/bundled/model"),
+                MODULE_ROOT.resolve("models/nomic-embed-text-v1.5"));
+        Optional<Path> rerankerDirCandidate = firstCompleteModelDirectory(
+                "model.onnx",
+                MODULE_ROOT.resolve("target/classes/bundled/reranker"),
+                MODULE_ROOT.resolve("models/ms-marco-MiniLM-L6-v2"));
+        assumeTrue(embeddingDirCandidate.isPresent() && rerankerDirCandidate.isPresent(),
+                "ONNX model files were not found in the build output or mcp-server/models; "
+                        + "bundle them or upload both pinned model/tokenizer pairs from /plugins");
+        Path embeddingDir = embeddingDirCandidate.orElseThrow();
+        Path rerankerDir = rerankerDirCandidate.orElseThrow();
 
         List<DocumentFixture> documents = MAPPER.readValue(
-                REPO_ROOT.resolve("eval-harness/corpus/documents.json").toFile(),
+                MODULE_ROOT.resolve("eval-harness/corpus/documents.json").toFile(),
                 new TypeReference<>() {});
         List<GoldenQuery> queries = MAPPER.readValue(
-                REPO_ROOT.resolve("eval-harness/golden-set/search.json").toFile(),
+                MODULE_ROOT.resolve("eval-harness/golden-set/search.json").toFile(),
                 new TypeReference<>() {});
         List<GoldenQuery> negativeQueries = MAPPER.readValue(
-                REPO_ROOT.resolve("eval-harness/golden-set/negative-search.json").toFile(),
+                MODULE_ROOT.resolve("eval-harness/golden-set/negative-search.json").toFile(),
                 new TypeReference<>() {});
         Baseline baseline = MAPPER.readValue(
-                REPO_ROOT.resolve("eval-harness/golden-set/baseline.json").toFile(),
+                MODULE_ROOT.resolve("eval-harness/golden-set/baseline.json").toFile(),
                 Baseline.class);
         assertThat(queries).hasSize(baseline.queryCount());
         assertThat(negativeQueries).hasSize(baseline.negativeQueryCount());
@@ -173,7 +182,7 @@ class GoldenSetRegressionTests {
         double negativeRejectionAccuracy = negativeRejections / (double) negativeQueries.size();
 
         String runId = System.getProperty("eval.run.id", Long.toString(System.currentTimeMillis()));
-        Path reportPath = REPO_ROOT.resolve("eval-runs").resolve(runId).resolve("report.json");
+        Path reportPath = MODULE_ROOT.resolve("eval-runs").resolve(runId).resolve("report.json");
         Files.createDirectories(reportPath.getParent());
         Map<String, Object> report = new LinkedHashMap<>();
         report.put("runId", runId);
@@ -207,6 +216,49 @@ class GoldenSetRegressionTests {
                 .isGreaterThanOrEqualTo(baseline.minimumRecallAtCandidate());
         assertThat(negativeRejectionAccuracy).as("negative rejection accuracy; report: %s", reportPath)
                 .isGreaterThanOrEqualTo(baseline.minimumNegativeRejectionAccuracy());
+    }
+
+    private static Optional<Path> firstCompleteModelDirectory(String modelFile, Path... candidates) {
+        for (Path candidate : candidates) {
+            if (Files.isRegularFile(candidate.resolve(modelFile))
+                    && Files.isRegularFile(candidate.resolve("tokenizer.json"))) {
+                return Optional.of(candidate);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /** Locate the Maven module from Surefire, an IDE launched at the repository root, or Windows. */
+    private static Path locateModuleRoot() {
+        Optional<Path> fromWorkingDirectory = findModuleRoot(Path.of("").toAbsolutePath());
+        if (fromWorkingDirectory.isPresent()) return fromWorkingDirectory.get();
+        try {
+            Path classLocation = Path.of(GoldenSetRegressionTests.class.getProtectionDomain()
+                    .getCodeSource().getLocation().toURI());
+            Optional<Path> fromClassLocation = findModuleRoot(classLocation);
+            if (fromClassLocation.isPresent()) return fromClassLocation.get();
+        } catch (Exception ignored) {
+            // The clear exception below includes the working directory the operator can correct.
+        }
+        throw new IllegalStateException("Could not locate mcp-server from working directory "
+                + Path.of("").toAbsolutePath());
+    }
+
+    private static Optional<Path> findModuleRoot(Path start) {
+        Path current = Files.isDirectory(start) ? start : start.getParent();
+        while (current != null) {
+            if (Files.isRegularFile(current.resolve("pom.xml"))
+                    && Files.isDirectory(current.resolve("src/main"))) {
+                return Optional.of(current);
+            }
+            Path nestedModule = current.resolve("mcp-server");
+            if (Files.isRegularFile(nestedModule.resolve("pom.xml"))
+                    && Files.isDirectory(nestedModule.resolve("src/main"))) {
+                return Optional.of(nestedModule);
+            }
+            current = current.getParent();
+        }
+        return Optional.empty();
     }
 
     private static int relevantRank(List<String> rankedIds, List<String> relevantIds) {
