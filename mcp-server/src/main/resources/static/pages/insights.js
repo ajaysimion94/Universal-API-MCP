@@ -1,31 +1,46 @@
 import { api } from "../api.js";
 import { escapeAttr, escapeHtml, formatDate, icon, markdown, message, on } from "../ui.js";
 
-const EXAMPLE = `---
-title: API activity
-params:
-  minUser: { type: number, default: 1 }
+const EMPTY_INSIGHT = `---
+title: Untitled insight
 ---
 
-# API activity
+# Untitled insight
+
+Choose a connected GET request above to build a live starting point.
+`;
+
+function oneLine(value, fallback) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  return (text || fallback).slice(0, 120);
+}
+
+function rqlString(value) {
+  return String(value ?? "").replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+}
+
+/** A safe, useful draft based on a request that really exists in the connected app catalogue. */
+function requestStarter(tool, connection) {
+  const requestName = `${oneLine(connection.name, "App")}: ${oneLine(tool.displayName, tool.name || "Request")}`;
+  const title = oneLine(tool.displayName, tool.name || "API request");
+  return `---
+title: ${JSON.stringify(title)}
+---
+
+# ${title} overview
 
 \`\`\`rql
-let posts = request "List all posts"
-  |> where userId >= $minUser;
-
-let by_user = posts
-  |> group by userId agg count(*) as posts
-  |> order by posts desc;
+let rows = request "${rqlString(requestName)}";
 \`\`\`
 
 <KpiRow>
-  <Stat value={count(posts)} label="Posts" />
-  <Stat value={count(by_user)} label="Active users" />
+  <Stat value={count(rows)} label="Rows" />
 </KpiRow>
 
-<BarChart data={by_user} x="userId" y="posts" title="Posts per user" />
-<DataTable data={posts} columns={["id", "userId", "title"]} />
+<DataTable data={rows} />
+<Status />
 `;
+}
 
 // ── expression language ─────────────────────────────────────────────────────
 // The small value-expression language documented in docs/query-language-reference.md
@@ -986,8 +1001,10 @@ function saveStore(store) {
 
 export async function mount(outlet) {
   const state = {
-    source: EXAMPLE,
+    source: EMPTY_INSIGHT,
     connections: [],
+    tools: [],
+    starterToolId: "",
     connectionId: "",
     analysis: null,
     data: null,
@@ -1129,6 +1146,38 @@ export async function mount(outlet) {
     const errors = (state.analysis?.diagnostics || []).filter((item) => item.severity === "ERROR");
     if (!errors.length) return "";
     return `<button class="insight-run-error insight-run-error-action" type="button" data-action="show-diagnostics">${icon("alert", 15)} <span>${errors.length} issue${errors.length === 1 ? "" : "s"} in the document — open Code to see ${errors.length === 1 ? "it" : "them"}.</span></button>`;
+  }
+
+  function starterRequests() {
+    const connected = new Set(state.connections
+      .filter((connection) => connection.status === "CONNECTED")
+      .map((connection) => connection.id));
+    return state.tools.filter((tool) => connected.has(tool.connectionId)
+      && tool.enabled && !tool.pending && tool.method === "GET");
+  }
+
+  /** A draft should begin from the live catalogue, not from a hard-coded sample API. */
+  function starterPanel() {
+    if (state.activeId) return "";
+    const requests = starterRequests();
+    const connectedApps = state.connections.filter((connection) => connection.status === "CONNECTED");
+    if (!connectedApps.length) {
+      return `<section class="insight-starter is-empty" aria-label="Insight setup">${icon("puzzle", 16)}<div><strong>Connect an app to begin</strong><span>Insights run read requests from imported API collections.</span></div><a class="btn btn-ghost" href="/connections">Open Connections</a></section>`;
+    }
+    if (!requests.length) {
+      return `<section class="insight-starter is-empty" aria-label="Insight setup">${icon("hash", 16)}<div><strong>No enabled GET requests</strong><span>${plural(connectedApps.length, "connected app")} found. Enable a read request before building an insight.</span></div><a class="btn btn-ghost" href="/apps">Open Apps</a></section>`;
+    }
+    const selected = requests.some((tool) => tool.id === state.starterToolId)
+      ? state.starterToolId
+      : requests[0].id;
+    return `<section class="insight-starter" aria-labelledby="insight-starter-title">
+      <div class="insight-starter-copy">${icon("wand", 16)}<div><strong id="insight-starter-title">Start with a request</strong><span>${plural(connectedApps.length, "connected app")} · ${plural(requests.length, "read request")}</span></div></div>
+      <label><span class="sr-only">Starter request</span><select id="insight-starter-request">${requests.map((tool) => {
+        const connection = state.connections.find((item) => item.id === tool.connectionId);
+        return `<option value="${escapeAttr(tool.id)}" ${tool.id === selected ? "selected" : ""}>${escapeHtml(connection?.name || "App")} · ${escapeHtml(tool.displayName || tool.name)}</option>`;
+      }).join("")}</select></label>
+      <button class="btn btn-primary" type="button" data-action="use-starter">Build starter</button>
+    </section>`;
   }
 
   function editorPanel() {
@@ -1293,7 +1342,7 @@ export async function mount(outlet) {
           </div>
         </div>
       </header>
-      ${!usable.length ? '<div class="insight-connection-note">Import and connect an API collection on Connections to run an insight.</div>' : ""}
+      ${starterPanel()}
       ${hiddenDiagnosticsNote()}
       ${parameterControls()}
       <div class="insight-workspace ${state.mode === "code" ? "is-editing" : ""} ${state.mode === "design" ? "is-design" : ""}">
@@ -1473,14 +1522,50 @@ export async function mount(outlet) {
   }
 
   async function refresh() {
-    const [connections, saved] = await Promise.all([
+    const [connections, tools, saved] = await Promise.all([
       api.listConnections().catch(() => []),
+      api.listTools().catch(() => []),
       api.listInsights().catch(() => []),
     ]);
     state.connections = connections;
+    state.tools = tools;
     state.saved = saved;
     if (!state.connectionId) state.connectionId = connections.find((item) => item.status === "CONNECTED")?.id || "";
+    const requests = starterRequests();
+    if (!requests.some((tool) => tool.id === state.starterToolId)) state.starterToolId = requests[0]?.id || "";
     render();
+  }
+
+  function resetDraft(source = EMPTY_INSIGHT, name = "Untitled insight", connectionId = state.connectionId) {
+    invalidateRun();
+    invalidateAnalysis();
+    state.activeId = null;
+    state.name = name;
+    state.source = source;
+    state.connectionId = connectionId || "";
+    state.savedSource = "";
+    state.data = null;
+    state.analysis = null;
+    state.parameters = {};
+    state.changeRevision = 0;
+    state.runRevision = null;
+    state.outline = [];
+    state.selected = null;
+    state.lastRunAt = null;
+    state.dataFresh = false;
+    state.runNote = "";
+    state.error = "";
+    saveStore({ lastInsightId: null, mode: state.mode });
+  }
+
+  function useStarter() {
+    const tool = starterRequests().find((item) => item.id === state.starterToolId);
+    const connection = tool && state.connections.find((item) => item.id === tool.connectionId);
+    if (!tool || !connection) return;
+    const title = oneLine(tool.displayName, tool.name || "API request");
+    resetDraft(requestStarter(tool, connection), `${title} insight`, connection.id);
+    render();
+    analyze();
   }
 
   /**
@@ -1638,24 +1723,10 @@ export async function mount(outlet) {
       }
     } else if (action === "save-insight") {
       await saveInsight();
+    } else if (action === "use-starter") {
+      useStarter();
     } else if (action === "new-insight") {
-      invalidateRun();
-      invalidateAnalysis();
-      state.activeId = null;
-      state.name = "Untitled insight";
-      state.source = EXAMPLE;
-      state.savedSource = "";
-      state.data = null;
-      state.changeRevision = 0;
-      state.runRevision = null;
-      state.outline = [];
-      state.selected = null;
-      state.lastRunAt = null;
-      state.dataFresh = false;
-      state.runNote = "";
-      state.error = "";
-      state.parameters = {};
-      saveStore({ lastInsightId: null, mode: state.mode });
+      resetDraft();
       render();
       analyze();
     } else if (action === "open-insight") {
@@ -1677,21 +1748,7 @@ export async function mount(outlet) {
         }
         await api.deleteInsight(id);
         if (state.activeId === id) {
-          state.activeId = null;
-          state.name = "Untitled insight";
-          state.source = EXAMPLE;
-          state.savedSource = "";
-          state.data = null;
-          state.analysis = null;
-          state.outline = [];
-          state.selected = null;
-          state.changeRevision = 0;
-          state.runRevision = null;
-          state.lastRunAt = null;
-          state.dataFresh = false;
-          state.runNote = "";
-          state.parameters = {};
-          saveStore({ lastInsightId: null, mode: state.mode });
+          resetDraft();
         }
         state.saved = await api.listInsights();
       } catch (error) {
@@ -1734,6 +1791,8 @@ export async function mount(outlet) {
       state.connectionId = target.value;
       state.changeRevision += 1;
       analyze();
+    } else if (target.id === "insight-starter-request") {
+      state.starterToolId = target.value;
     } else if (target.dataset.wellSelect) {
       const well = target.dataset.wellSelect;
       const value = target.value;

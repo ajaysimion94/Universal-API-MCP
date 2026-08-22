@@ -24,9 +24,17 @@ function typeLabel(type) {
   }[type] || type;
 }
 
-function statusLabel(status, busy) {
-  if (busy && status === "PENDING") return "Verifying…";
-  return { PENDING: "Pending", CONNECTED: "Connected", ERROR: "Error", DISABLED: "Disabled" }[status] || status;
+function statusLabel(connection, busy) {
+  if (busy && connection.status === "PENDING") return "Verifying…";
+  if (connection.type === "API_COLLECTION" && connection.status === "CONNECTED") return "Imported";
+  return { PENDING: "Pending", CONNECTED: "Connected", ERROR: "Error", DISABLED: "Disabled" }[connection.status] || connection.status;
+}
+
+function healthLabel(connection) {
+  if (connection.status === "ERROR" && connection.lastError) return connection.lastError;
+  if (connection.lastSyncedAt) return `Last synced ${formatDate(connection.lastSyncedAt)}`;
+  if (connection.type === "API_COLLECTION") return "Definition imported · test the remote target in Apps";
+  return "Content sync not started yet";
 }
 
 export async function mount(outlet) {
@@ -73,6 +81,7 @@ export async function mount(outlet) {
         </div>
       </fieldset>
       <label class="form-field"><span>Base URL <small>(override, or fallback for relative source URLs)</small></span><input class="form-input" name="baseUrl" placeholder="https://api.example.com"></label>
+      <p class="url-policy-warning">The target API must already be running. <span class="mono">localhost</span> means the machine running MCP Server.</p>
       <p class="url-policy-warning">When source URLs are kept, stored connection credentials are sent to every preserved host.</p>
       <div class="form-row">
         <label class="form-field"><span>Authentication</span><select class="form-input" name="authMode" id="auth-mode">
@@ -124,6 +133,7 @@ export async function mount(outlet) {
         </select></label>
         <label class="form-field"><span>Base URL <small>(override or relative-URL fallback)</small></span><input class="form-input" name="baseUrl" value="${escapeAttr(connection.baseUrl || "")}"></label>
       </div>
+      <p class="url-policy-warning">The target API must already be running. <span class="mono">localhost</span> means the machine running MCP Server.</p>
       <div class="form-row">
         <label class="form-field"><span>Authentication</span><select class="form-input" name="authMode">
           ${["NONE", "BASIC", "BEARER", "API_KEY_HEADER"].map((mode) => `<option value="${mode}" ${connection.authMode === mode ? "selected" : ""}>${mode.replaceAll("_", " ")}</option>`).join("")}
@@ -165,11 +175,12 @@ export async function mount(outlet) {
         <div class="plugin-info">
           <div class="plugin-name-row"><span class="plugin-name">${escapeHtml(connection.name)}</span><span class="plugin-category mono optional">${typeLabel(connection.type)}</span>${connection.specFormat ? `<span class="plugin-category mono optional">${escapeHtml(connection.specFormat)}</span>` : ""}${isApi ? `<span class="plugin-category mono optional">${connection.apiUrlMode === "SOURCE_URLS" ? "source URLs" : "base override"}</span>` : ""}</div>
           <p class="plugin-description">${escapeHtml(connection.baseUrl || connection.specSourceUrl || "No base URL")}</p>
-          <div class="plugin-health mono">${escapeHtml(connection.status === "ERROR" && connection.lastError ? connection.lastError : connection.lastSyncedAt ? `Last synced ${formatDate(connection.lastSyncedAt)}` : isApi ? "Knowledge index not refreshed yet" : "Content sync not started yet")}${job?.itemsTotal ? ` — ${job.itemsProcessed}/${job.itemsTotal}` : busy ? " — working…" : ""}</div>
+          <div class="plugin-health mono">${escapeHtml(healthLabel(connection))}${job?.itemsTotal ? ` — ${job.itemsProcessed}/${job.itemsTotal}` : busy ? " — working…" : ""}</div>
         </div>
-        <div class="plugin-status"><span class="status-pill ${statusClass(connection.status)}">${connection.status === "CONNECTED" ? icon("check", 12) : connection.status === "ERROR" ? icon("alert", 12) : ""}${statusLabel(connection.status, busy)}</span></div>
+        <div class="plugin-status"><span class="status-pill ${statusClass(connection.status)}">${connection.status === "CONNECTED" ? icon("check", 12) : connection.status === "ERROR" ? icon("alert", 12) : ""}${statusLabel(connection, busy)}</span></div>
         <div class="plugin-actions">
           ${busy ? '<div class="install-progress"><div class="install-progress-bar"></div></div>' : `<button class="btn btn-ghost" type="button" data-action="backfill" data-id="${escapeAttr(connection.id)}" ${connection.status === "CONNECTED" ? "" : "disabled"}>${isApi ? "Refresh knowledge" : "Backfill"}</button>`}
+          ${isApi ? '<a class="btn btn-ghost" href="/apps">Test requests</a>' : ""}
           <button class="btn btn-ghost ${state.editingAuth === connection.id ? "is-active" : ""}" type="button" data-action="edit-auth" data-id="${escapeAttr(connection.id)}">Edit settings</button>
           ${toggle(connection.status !== "DISABLED", connection.status === "DISABLED" ? "Disabled" : "Enabled", "toggle-connection", connection.id)}
           <button class="btn btn-ghost" type="button" data-action="delete-connection" data-id="${escapeAttr(connection.id)}" aria-label="Delete ${escapeAttr(connection.name)}">${icon("trash", 14)}</button>

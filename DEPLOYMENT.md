@@ -158,6 +158,7 @@ resource processing. There is no separate frontend build and no `-Dskip.frontend
 | `rag.web.min-relevance-score` | `0.20` | Minimum calibrated score for a web result |
 | `connectors.poll-interval-ms` | `300000` | Jira/Confluence metadata delta-poll interval |
 | `connectors.poll-concurrency` | `4` | Maximum sources polling concurrently |
+| `connectors.polling.enabled` | `true` | Enables background Jira/Confluence delta polling; tests disable it |
 | `connectors.reconcile-interval-ms` | `86400000` | Full remote-ID reconciliation interval |
 | `connectors.lazy-title-match-limit` | `3` | Maximum metadata-only bodies hydrated by one strong title/key search |
 

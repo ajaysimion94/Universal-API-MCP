@@ -79,6 +79,8 @@ learning:
 
 # Confluence/Jira connectors (com.mcpserver.connectors)
 connectors:
+  polling:
+    enabled: true           # disable only when this process must not run background connector polls
   poll-interval-ms: 300000   # 5 minutes — delta-poll cadence for every CONNECTED connection
   poll-concurrency: 4        # independent sources fetch concurrently; one source never overlaps itself
   reconcile-interval-ms: 86400000 # daily full-ID inventory purges remote deletions/permission removals

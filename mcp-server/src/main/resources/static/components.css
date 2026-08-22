@@ -4521,6 +4521,53 @@
 
 .insight-run-error-action:hover { background: var(--danger-tint); }
 
+/* A new draft starts from a real read request in the live catalogue. This stays a compact setup
+   rail rather than another dashboard card: it is temporary workspace chrome, not insight output. */
+.insight-starter {
+  min-width: 0;
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: minmax(190px, 0.55fr) minmax(240px, 1fr) auto;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-2xs) var(--space-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+}
+
+.insight-starter-copy,
+.insight-starter.is-empty > div {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+}
+
+.insight-starter-copy > svg,
+.insight-starter.is-empty > svg { flex: 0 0 auto; color: var(--accent); }
+.insight-starter-copy > div,
+.insight-starter.is-empty > div { flex-direction: column; align-items: flex-start; gap: 1px; }
+.insight-starter strong { color: var(--text); font-size: var(--text-sm); font-weight: 600; }
+.insight-starter span { color: var(--text-muted); font-size: var(--text-xs); }
+.insight-starter label { min-width: 0; }
+
+.insight-starter select {
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--space-2xs);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  color: var(--text);
+  font: var(--text-sm) var(--font-sans);
+  text-overflow: ellipsis;
+}
+
+.insight-starter select:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 1px; }
+.insight-starter.is-empty { grid-template-columns: auto minmax(0, 1fr) auto; }
+
 /* Default is library + result; the editor is a third track only while editing. The editor panel is
    added and removed from the DOM rather than hidden, so the track count always matches the children. */
 .insight-workspace {
@@ -5481,6 +5528,10 @@ button.insight-status-segment:hover .insight-status-value { color: var(--text); 
 @media (max-width: 620px) {
   .insight-page { padding: var(--space-sm); }
   .insight-actions { align-items: stretch; flex-direction: column; }
+  .insight-starter,
+  .insight-starter.is-empty { grid-template-columns: minmax(0, 1fr); }
+  .insight-starter.is-empty > svg { display: none; }
+  .insight-starter .btn { width: 100%; justify-content: center; }
   .insight-connection-picker select,
   .insight-name-field input { width: 100%; min-width: 0; }
   /* The cluster's left rule only reads as grouping while the toolbar is a row. */
@@ -5706,6 +5757,7 @@ button.insight-status-segment:hover .insight-status-value { color: var(--text); 
 .tutorial-picker-progress { display: block; margin-top: 3px; color: var(--ok); font-size: var(--text-xs); }
 
 .tutorial-body {
+  min-width: 0;
   max-width: 78ch;
   padding: var(--space-md);
   border: 1px solid var(--border);
@@ -5809,6 +5861,9 @@ button.insight-status-segment:hover .insight-status-value { color: var(--text); 
 
 .tutorial-step-body h3 { font-size: var(--text-md); letter-spacing: -0.01em; }
 .tutorial-step-body > p { margin-top: 4px; color: var(--text-muted); font-size: var(--text-sm); line-height: 1.6; }
+.tutorial-step-body,
+.tutorial-examples,
+.tutorial-example { min-width: 0; max-width: 100%; }
 
 .tutorial-actions {
   margin: var(--space-2xs) 0 0;
@@ -5820,6 +5875,7 @@ button.insight-status-segment:hover .insight-status-value { color: var(--text); 
 .tutorial-actions li + li { margin-top: 3px; }
 
 .tutorial-code {
+  max-width: 100%;
   overflow-x: auto;
   margin-top: var(--space-2xs);
   padding: var(--space-2xs) var(--space-xs);
@@ -5874,8 +5930,10 @@ button.insight-status-segment:hover .insight-status-value { color: var(--text); 
 }
 
 .tutorial-example figcaption {
+  min-width: 0;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-2xs);
 }
 
@@ -7164,6 +7222,7 @@ button.insight-status-segment:hover .insight-status-value { color: var(--text); 
   .nav-link,
   .search-history-item-main,
   .search-history-item-delete,
+  .tutorial-example-copy,
   .tool-ac-item {
     min-height: 44px;
   }

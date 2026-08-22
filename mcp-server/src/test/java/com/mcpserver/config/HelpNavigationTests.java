@@ -119,6 +119,17 @@ class HelpNavigationTests {
                 .contains("item.troubleshooting");
     }
 
+    @Test
+    void tutorialExamplesContainWideCodeInsteadOfOverflowingTheMobilePage() throws IOException {
+        String styles = Files.readString(STATIC.resolve("components.css"));
+
+        assertThat(styles)
+                .contains(".tutorial-step-body,\n.tutorial-examples,\n.tutorial-example { min-width: 0; max-width: 100%; }")
+                .contains(".tutorial-code {\n  max-width: 100%;\n  overflow-x: auto;")
+                .contains(".tutorial-example figcaption {\n  min-width: 0;")
+                .contains("flex-wrap: wrap;");
+    }
+
     /** The page was renamed from Guide to Help; its classes and API calls should not still say guide. */
     @Test
     void nothingInTheHelpSurfaceStillCallsItselfAGuide() throws IOException {

@@ -3,6 +3,7 @@ package com.mcpserver.connectors;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -25,6 +26,10 @@ import java.util.stream.Collectors;
  * so disabling a connection pauses its polling with no extra bookkeeping.
  */
 @Component
+@ConditionalOnProperty(
+        name = "connectors.polling.enabled",
+        havingValue = "true",
+        matchIfMissing = true)
 public class ConnectionPollingScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(ConnectionPollingScheduler.class);
@@ -71,7 +76,8 @@ public class ConnectionPollingScheduler {
             try {
                 connector.pollDelta(current);
             } catch (Exception e) {
-                log.warn("Delta poll failed for connection {} ({}): {}", current.id(), current.type(), e.getMessage());
+                log.warn("Delta poll failed for connection {} ({})",
+                        current.id(), current.type(), e);
             }
         } finally {
             activeConnections.remove(connection.id());

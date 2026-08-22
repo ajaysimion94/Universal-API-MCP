@@ -333,10 +333,17 @@ export async function mount(outlet) {
   function responsePanel(result) {
     if (!result) return "";
     const headers = Object.entries(result.headers || {});
+    const successful = result.status >= 200 && result.status < 300;
+    const responseBody = result.body === undefined || result.body === null || result.body === ""
+      ? successful
+        ? "Response body is empty."
+        : `Remote API returned HTTP ${result.status} with an empty response body.`
+      : result.body;
     return `<section class="tool-result-panel">
-      <header class="tool-result-header"><div><span class="status-pill ${result.status >= 200 && result.status < 300 ? "status-active" : "status-error"}">HTTP ${escapeHtml(result.status)}</span><span class="mono">${escapeHtml(result.latencyMs)} ms</span>${result.contentType ? `<span class="mono rb-response-meta">${escapeHtml(result.contentType)}</span>` : ""}</div><button class="btn btn-ghost btn-sm" type="button" data-action="clear-response">Clear</button></header>
-      ${headers.length ? `<details class="rb-response-headers"><summary>${headers.length} response headers</summary><div class="rb-kv-table rb-kv-table-readonly">${headers.map(([name, values]) => `<div class="rb-kv-row"><span class="rb-kv-key mono">${escapeHtml(name)}</span><span class="rb-kv-value mono">${escapeHtml(Array.isArray(values) ? values.join(", ") : values)}</span></div>`).join("")}</div></details>` : ""}
-      <pre class="tool-result-body"><code>${escapeHtml(result.body || "")}</code></pre>${result.truncated ? '<p class="rb-hint">Response display was truncated by the server.</p>' : ""}
+      <header class="tool-result-header"><div><span class="status-pill ${successful ? "status-active" : "status-error"}">HTTP ${escapeHtml(result.status)}</span><span class="mono">${escapeHtml(result.latencyMs)} ms</span>${result.contentType ? `<span class="mono rb-response-meta">${escapeHtml(result.contentType)}</span>` : ""}</div><button class="btn btn-ghost btn-sm" type="button" data-action="clear-response">Clear</button></header>
+      ${result.request ? `<div class="rb-url-bar rb-url-bar-readout"><span class="mono rb-response-meta">Request</span><code class="rb-url-readout">${escapeHtml(result.request)}</code></div>` : ""}
+      ${headers.length ? `<details class="rb-response-headers" ${successful ? "" : "open"}><summary>${headers.length} response headers</summary><div class="rb-kv-table rb-kv-table-readonly">${headers.map(([name, values]) => `<div class="rb-kv-row"><span class="rb-kv-key mono">${escapeHtml(name)}</span><span class="rb-kv-value mono">${escapeHtml(Array.isArray(values) ? values.join(", ") : values)}</span></div>`).join("")}</div></details>` : ""}
+      <pre class="tool-result-body"><code>${escapeHtml(responseBody)}</code></pre>${result.truncated ? '<p class="rb-hint">Response display was truncated by the server.</p>' : ""}
     </section>`;
   }
 
@@ -424,6 +431,7 @@ export async function mount(outlet) {
       state.loading = false;
       saveTabs();
       render();
+      if (selectedTool()) schedulePreview();
     }
   }
 

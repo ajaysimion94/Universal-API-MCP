@@ -137,7 +137,29 @@ class StaticFrontendTests {
                 .contains("value=\"CONNECTION_BASE\"")
                 .contains("value=\"SOURCE_URLS\"")
                 .contains("Keep source URLs")
+                .contains("localhost</span> means the machine running MCP Server")
                 .contains("apiUrlMode: data.apiUrlMode");
+    }
+
+    @Test
+    void importedApiDefinitionsDoNotClaimTheirRemoteTargetsAreConnected() throws IOException {
+        String connections = Files.readString(STATIC.resolve("pages/connections.js"));
+
+        assertThat(connections)
+                .contains("return \"Imported\"")
+                .contains("Definition imported · test the remote target in Apps")
+                .contains("href=\"/apps\">Test requests</a>");
+    }
+
+    @Test
+    void appsRequestBuilderExposesResolvedTargetsAndRemoteErrors() throws IOException {
+        String apps = Files.readString(STATIC.resolve("pages/apps.js"));
+
+        assertThat(apps)
+                .contains("if (selectedTool()) schedulePreview();")
+                .contains("result.request")
+                .contains("Remote API returned HTTP ${result.status} with an empty response body.")
+                .contains("successful ? \"\" : \"open\"");
     }
 
     @Test

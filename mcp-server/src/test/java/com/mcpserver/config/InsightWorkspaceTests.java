@@ -149,13 +149,33 @@ class InsightWorkspaceTests {
     @Test
     void deletingTheActiveInsightResetsItsCanvasBeforeAnalyzingTheNewDraft() throws IOException {
         String page = page();
+        int reset = page.indexOf("function resetDraft(");
+        assertThat(reset).isGreaterThan(-1);
+        String resetBody = page.substring(reset, page.indexOf("\n  }", reset));
+        assertThat(resetBody).contains("state.analysis = null")
+                .contains("state.outline = []")
+                .contains("state.selected = null");
+
         int delete = page.indexOf("} else if (action === \"delete-insight\")");
         assertThat(delete).isGreaterThan(-1);
         String body = page.substring(delete, page.indexOf("} else if (action === \"show-diagnostics\")", delete));
-        assertThat(body).contains("state.analysis = null")
-                .contains("state.outline = []")
-                .contains("state.selected = null")
+        assertThat(body).contains("resetDraft();")
                 .contains("if (!state.activeId) analyze();");
+    }
+
+    @Test
+    void aNewDraftStartsCleanAndCanBeBuiltFromAnActualReadRequest() throws IOException {
+        String page = page();
+
+        assertThat(page)
+                .contains("const EMPTY_INSIGHT")
+                .contains("api.listTools()")
+                .contains("tool.method === \"GET\"")
+                .contains("tool.enabled && !tool.pending")
+                .contains("function requestStarter(")
+                .contains("data-action=\"use-starter\"")
+                .contains("<DataTable data={rows} />")
+                .doesNotContain("List all posts");
     }
 
     /** Selection survives a re-analysis only if it is keyed by source offset, not by list index. */

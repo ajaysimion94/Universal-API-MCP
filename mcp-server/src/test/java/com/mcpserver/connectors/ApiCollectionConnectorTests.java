@@ -226,6 +226,14 @@ class ApiCollectionConnectorTests {
     }
 
     @Test
+    void probeFailuresRemainIdentifiableWhenTheExceptionHasNoMessage() {
+        assertThat(ApiCollectionConnector.failureDetail(new java.net.ConnectException()))
+                .isEqualTo("ConnectException");
+        assertThat(ApiCollectionConnector.failureDetail(new IllegalStateException("blocked")))
+                .isEqualTo("IllegalStateException: blocked");
+    }
+
+    @Test
     void knowledgeSourceRefreshIngestsToolResponseWithAclTags() throws Exception {
         String marker = "zzmarker" + UUID.randomUUID().toString().replace("-", "");
         stubFor(get(urlPathEqualTo("/pets"))

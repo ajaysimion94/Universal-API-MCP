@@ -249,7 +249,14 @@ public class ApiCollectionConnector implements SourceConnector {
             log.info("Base URL probe for {} → HTTP {}", connection.baseUrl(), response.statusCode());
         } catch (Exception e) {
             log.info("Base URL probe for {} failed ({}) — not fatal, tools may still work",
-                    connection.baseUrl(), e.getMessage());
+                    connection.baseUrl(), failureDetail(e));
+            log.debug("Base URL probe stack trace for {}", connection.baseUrl(), e);
         }
+    }
+
+    static String failureDetail(Throwable error) {
+        return error.getMessage() == null || error.getMessage().isBlank()
+                ? error.getClass().getSimpleName()
+                : error.getClass().getSimpleName() + ": " + error.getMessage();
     }
 }
