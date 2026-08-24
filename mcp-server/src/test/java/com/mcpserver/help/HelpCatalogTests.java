@@ -24,4 +24,13 @@ class HelpCatalogTests {
         assertThat(catalog.llmPlaybook().get("availableResources").toString())
                 .contains("mcp://enterprise-mcp/guides/operating-guide");
     }
+
+    @Test
+    void developmentGuideDescribesTheReactBuild() {
+        String development = catalog.find("development").orElseThrow().toString();
+        assertThat(development)
+                .contains("Vite")
+                .contains("npm run typecheck")
+                .contains("-Dskip.frontend=true");
+    }
 }

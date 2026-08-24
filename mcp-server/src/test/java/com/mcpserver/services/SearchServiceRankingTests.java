@@ -1,6 +1,7 @@
 package com.mcpserver.services;
 
 import com.mcpserver.cache.CacheService;
+import com.mcpserver.connectors.ConnectorContentResolver;
 import com.mcpserver.learning.FeedbackMemory;
 import com.mcpserver.learning.LearningService;
 import com.mcpserver.models.Chunk;
@@ -168,6 +169,25 @@ class SearchServiceRankingTests {
                 .extracting(SearchPipeline.SearchResult::sourceKind).containsExactly("local");
         assertThat(service.search("migration", 3, List.of(), true))
                 .extracting(SearchPipeline.SearchResult::sourceKind).containsExactly("web", "local");
+    }
+
+    @Test
+    void localMissDiscoversHydratesAndRerunsTheLocalPipelineOnce() {
+        ConnectorContentResolver resolver = mock(ConnectorContentResolver.class);
+        service.setConnectorContentResolver(resolver);
+        Chunk discovered = chunk("discovered", "remote-runbook.md", "remote miss evidence");
+        when(repository.lexicalSearch(eq("remote miss"), anyInt()))
+                .thenReturn(List.of(), List.of(discovered));
+        when(reranker.rerank(eq("remote miss"), anyList())).thenAnswer(invocation ->
+                invocation.<List<Chunk>>getArgument(1).stream()
+                        .map(chunk -> new Reranker.ScoredChunk(chunk, 0.5f)).toList());
+        when(resolver.discoverAndHydrate("remote miss")).thenReturn(1);
+
+        List<SearchPipeline.SearchResult> results = service.search("remote miss", 5, List.of(), false);
+
+        assertThat(results).extracting(SearchPipeline.SearchResult::sourceName)
+                .containsExactly("remote-runbook.md");
+        verify(resolver).discoverAndHydrate("remote miss");
     }
 
     private static Chunk chunk(String id, String name, String content) {

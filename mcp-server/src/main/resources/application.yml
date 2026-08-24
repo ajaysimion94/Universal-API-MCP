@@ -14,12 +14,15 @@ spring:
       continue-on-error: true
   servlet:
     multipart:
-      # The pinned Nomic ONNX model is ~131 MB; the Plugins page accepts it as a streamed upload.
+      # Supports large document and API-spec uploads without loading them into JSON payloads.
       max-file-size: 256MB
       max-request-size: 300MB
 
 # RAG / search configuration
 rag:
+  models:
+    auto-download: true
+    download-timeout: 10m
   embedding:
     model-dir: ${user.dir}/models/nomic-embed-text-v1.5
     model-file: model_quantized.onnx
@@ -51,6 +54,11 @@ rag:
     max-response-bytes: 2097152
     max-content-chars: 20000
     min-relevance-score: 0.20
+
+# Plugin lifecycle. Required bundled plugins initialize automatically. Once an optional plugin
+# has been installed and left enabled, the server restores it on subsequent application starts.
+plugins:
+  auto-start-enabled: true
 
 # Feedback-driven adaptive ranking (com.mcpserver.learning).
 # Capture and the feedback memory are on by default: capture is pure-write and happens off the
@@ -85,6 +93,8 @@ connectors:
   poll-concurrency: 4        # independent sources fetch concurrently; one source never overlaps itself
   reconcile-interval-ms: 86400000 # daily full-ID inventory purges remote deletions/permission removals
   lazy-title-match-limit: 3  # bound remote body fetches triggered by one strong title/key search match
+  remote-discovery-limit: 3  # hard global hydration budget after a local search miss
+  remote-discovery-timeout-ms: 5000 # per-request timeout; discovery retries once on 429/5xx
   # Publicly reachable base URL Confluence/Jira Server-DC would POST webhooks to (e.g. behind a
   # reverse proxy). Blank (the default, since server.address is 127.0.0.1 — trusted network only)
   # means webhook registration is skipped and every connection relies on delta polling only.

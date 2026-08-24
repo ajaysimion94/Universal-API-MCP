@@ -62,6 +62,9 @@ public class InsightDocumentParser {
     /** Reported on their own, so they must not also be counted as unknown props. */
     private static final Set<String> REJECTED_PROPS = Set.of("y2", "color");
 
+    /** Layout metadata used by the no-code dashboard grid. Components still render from their normal props. */
+    private static final Set<String> LAYOUT_PROPS = Set.of("gridX", "gridY", "gridW", "gridH");
+
     private final ObjectMapper yaml = new ObjectMapper(new YAMLFactory());
 
     public Document parse(String source) {
@@ -75,17 +78,19 @@ public class InsightDocumentParser {
         List<Component> components = withProse(text, components(text, scan, diagnostics), scan.spans());
         StringBuilder rql = new StringBuilder();
         int rqlStartOffset = 0;
+        int rqlEndOffset = 0;
         boolean firstRqlBlock = true;
         Matcher blocks = RQL_BLOCK.matcher(text);
         while (blocks.find()) {
             if (firstRqlBlock) {
                 rqlStartOffset = blocks.start(1);
+                rqlEndOffset = blocks.end(1);
                 firstRqlBlock = false;
             }
             if (!rql.isEmpty()) rql.append('\n');
             rql.append(blocks.group(1));
         }
-        return new Document(title, connection, parameters, rql.toString(), rqlStartOffset,
+        return new Document(title, connection, parameters, rql.toString(), rqlStartOffset, rqlEndOffset,
                 markdown(text, scan.spans()), components, diagnostics);
     }
 
@@ -157,7 +162,7 @@ public class InsightDocumentParser {
             Set<String> known = KNOWN_PROPS.get(type);
             if (known != null) {
                 for (String prop : props.keySet()) {
-                    if (known.contains(prop) || REJECTED_PROPS.contains(prop)) continue;
+                    if (known.contains(prop) || LAYOUT_PROPS.contains(prop) || REJECTED_PROPS.contains(prop)) continue;
                     diagnostics.add(new Diagnostic(span, Severity.WARNING, "RQI014",
                             "<" + type + "> does not read '" + prop + "'; it has no effect."));
                 }

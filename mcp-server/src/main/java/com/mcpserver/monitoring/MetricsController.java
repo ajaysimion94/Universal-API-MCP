@@ -33,6 +33,7 @@ public class MetricsController {
         summary.put("totalToolExecutions", getTimerCount("tool.execution.time"));
         summary.put("totalErrors", getCounterValue("tool.errors.total"));
         summary.put("totalSearches", getTimerCount("search.latency"));
+        summary.put("connectorOperations", getCounterValue("connector.operation.total"));
         summary.put("cache", cacheService.stats());
         
         return summary;

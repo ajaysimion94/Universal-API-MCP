@@ -25,7 +25,7 @@ import java.util.regex.Pattern;
 @Component
 public class PostmanCollectionParser implements SpecParser {
 
-    /** Variables conventionally holding the API root — replaced by the connection's baseUrl. */
+    /** Variables conventionally holding the API root declared by the collection. */
     private static final Pattern BASE_URL_VAR =
             Pattern.compile("^\\{\\{(baseUrl|base_url|host|url|server)}}", Pattern.CASE_INSENSITIVE);
     private static final Pattern TEMPLATE_VAR = Pattern.compile("\\{\\{([^}]+)}}");
@@ -271,8 +271,8 @@ public class PostmanCollectionParser implements SpecParser {
         Matcher baseVar = BASE_URL_VAR.matcher(pathPart);
         if (preserveSourceUrls) {
             // A conventional but unresolved {{baseUrl}} is not itself a source host. Keep the
-            // request path and let ApiCollectionConnector resolve it against the explicit fallback
-            // base URL. Other unresolved authority variables are ambiguous and unsafe to preserve.
+            // request path and let ApiCollectionConnector resolve it against the API URL detected
+            // from this collection. Other unresolved authority variables are unsafe to preserve.
             if (baseVar.find()) {
                 pathPart = pathPart.substring(baseVar.end());
             } else if (pathPart.matches("^\\{\\{[^}]+}}.*")) {

@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -90,6 +91,45 @@ class ReportQueryServiceTests {
 
         assertThat(execution.datasets().get("rows").rows())
                 .singleElement().satisfies(row -> assertThat(row).containsEntry("id", 2L));
+    }
+
+    @Test
+    void completionsReplacePartialKeywordsAndStagesAtTheCaret() {
+        when(connections.findAll()).thenReturn(List.of());
+        String statement = "le";
+
+        RqlModel.Analysis statementAnalysis = service.analyze(statement, null, statement.length());
+
+        assertThat(statementAnalysis.completions())
+                .anySatisfy(completion -> {
+                    assertThat(completion.label()).isEqualTo("let");
+                    assertThat(completion.insertText()).isEqualTo("let ");
+                    assertThat(completion.replaceSpan().startOffset()).isZero();
+                    assertThat(completion.replaceSpan().endOffset()).isEqualTo(2);
+                });
+
+        String pipeline = "let rows = orders |> ord";
+        RqlModel.Analysis pipelineAnalysis = service.analyze(pipeline, null, pipeline.length());
+
+        assertThat(pipelineAnalysis.completions())
+                .anySatisfy(completion -> {
+                    assertThat(completion.label()).isEqualTo("order by");
+                    assertThat(completion.replaceSpan().startOffset()).isEqualTo(pipeline.lastIndexOf("ord"));
+                    assertThat(completion.replaceSpan().endOffset()).isEqualTo(pipeline.length());
+                });
+    }
+
+    @Test
+    void completionsIncludeDocumentAndQueryVariables() {
+        when(connections.findAll()).thenReturn(List.of());
+        String source = "set limit = 50; let rows = records |> where total > $";
+
+        RqlModel.Analysis analysis = service.analyze(source, null, source.length(), Set.of("$minTotal"));
+
+        assertThat(analysis.completions()).extracting(RqlModel.Completion::label)
+                .contains("$limit", "$minTotal");
+        assertThat(analysis.completions()).filteredOn(completion -> completion.label().equals("$limit"))
+                .singleElement().satisfies(completion -> assertThat(completion.kind()).isEqualTo("VARIABLE"));
     }
 
     private static Connection connectedCollection() {

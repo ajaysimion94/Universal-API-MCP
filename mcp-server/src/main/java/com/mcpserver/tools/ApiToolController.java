@@ -123,7 +123,7 @@ public class ApiToolController {
         Map<String, Object> args = req != null && req.args != null ? req.args : Map.of();
         ApiToolExecutor.InvokeOverrides overrides = toOverrides(req);
 
-        if (tool.isRead()) {
+        if (apiToolExecutor.isReadRequest(tool, overrides)) {
             // Read tools execute directly — no approval needed
             auditService.logToolInvoked(tool.id(), tool.name(), null, actor, args);
             ToolInvocationResult result = apiToolExecutor.execute(tool, connection, args, overrides);
@@ -167,7 +167,8 @@ public class ApiToolController {
                 : new ApiToolExecutor.AuthOverride(req.auth.mode, req.auth.username, req.auth.secret,
                         req.auth.headerName);
         return new ApiToolExecutor.InvokeOverrides(
-                req.extraHeaders, req.extraQueryParams, req.bodyMode, req.rawBody, req.rawContentType, auth);
+                req.extraHeaders, req.extraQueryParams, req.bodyMode, req.rawBody, req.rawContentType, auth,
+                req.requestUrl, req.requestMethod);
     }
 
     /**
@@ -316,6 +317,10 @@ public class ApiToolController {
         public String bodyMode;
         public String rawBody;
         public String rawContentType;
+        /** Ephemeral full request URL. It must remain on the connection's allowed origin. */
+        public String requestUrl;
+        /** Ephemeral request method. Non-GET methods retain the existing confirmation workflow. */
+        public String requestMethod;
         /** Read (GET) tools only — write tools always use the connection's stored auth. */
         public AuthOverrideRequest auth;
     }

@@ -23,7 +23,8 @@ public final class InsightModel {
     }
 
     public record Document(String title, String connection, List<Parameter> params, String rql, int rqlStartOffset,
-                           String markdown, List<Component> components, List<RqlModel.Diagnostic> diagnostics) {
+                           int rqlEndOffset, String markdown, List<Component> components,
+                           List<RqlModel.Diagnostic> diagnostics) {
         public Document {
             title = title == null || title.isBlank() ? "Untitled insight" : title;
             params = params == null ? List.of() : List.copyOf(params);

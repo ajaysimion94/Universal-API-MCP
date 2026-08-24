@@ -68,6 +68,29 @@ public class SpecFetcher {
 
     public record FetchedSpec(String content, JsonNode parsed, SpecParser parser, String resolvedUrl) {}
 
+    /**
+     * Returns the HTTP(S) API root declared by a parsed document. Relative OpenAPI server URLs
+     * are resolved against the fetched spec URL; uploaded documents must declare an absolute URL.
+     */
+    public static String resolveBaseUrl(FetchedSpec spec) {
+        String baseUrl = spec.parser().extractBaseUrl(spec.parsed());
+        if (baseUrl == null || baseUrl.isBlank()) return null;
+        try {
+            if (!baseUrl.matches("^https?://.*") && spec.resolvedUrl() != null) {
+                baseUrl = URI.create(spec.resolvedUrl()).resolve(baseUrl).toString();
+            }
+            URI parsed = URI.create(baseUrl);
+            if (parsed.getHost() == null || parsed.getUserInfo() != null
+                    || !("http".equalsIgnoreCase(parsed.getScheme())
+                    || "https".equalsIgnoreCase(parsed.getScheme()))) {
+                return null;
+            }
+            return baseUrl;
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
+    }
+
     public FetchedSpec fetch(String url) throws Exception {
         List<String> tried = new ArrayList<>();
         Set<String> candidates = new LinkedHashSet<>();

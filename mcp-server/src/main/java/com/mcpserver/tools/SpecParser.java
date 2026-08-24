@@ -31,8 +31,8 @@ public interface SpecParser {
     }
 
     /**
-     * Best-effort base URL suggestion when the connection didn't supply one explicitly.
-     * Null when the format gives no usable signal — the caller then requires an explicit baseUrl.
+     * Best-effort API URL declared by the source document. Null when the format gives no usable
+     * signal; callers may still accept documents whose individual requests have absolute URLs.
      */
     default String extractBaseUrl(JsonNode root) {
         return null;

@@ -90,17 +90,18 @@ public class SearchService implements SearchPipeline {
      */
     @Override
     public List<SearchResult> search(String query, int topN, List<String> userAclTags, boolean includeWeb) {
-        return execute(query, topN, userAclTags, includeWeb, LearningService.SURFACE_MCP).results();
+        return execute(query, topN, userAclTags, includeWeb, LearningService.SURFACE_MCP, true).results();
     }
 
     @Override
     public SearchResponse searchWithMetadata(
             String query, int topN, List<String> userAclTags, boolean includeWeb) {
-        return execute(query, topN, userAclTags, includeWeb, LearningService.SURFACE_WEB);
+        return execute(query, topN, userAclTags, includeWeb, LearningService.SURFACE_WEB, true);
     }
 
     private SearchResponse execute(
-            String query, int topN, List<String> userAclTags, boolean includeWeb, String surface) {
+            String query, int topN, List<String> userAclTags, boolean includeWeb, String surface,
+            boolean allowRemoteDiscovery) {
         if (query == null || query.isBlank() || topN <= 0) {
             return new SearchResponse(List.of(), List.of());
         }
@@ -114,7 +115,7 @@ public class SearchService implements SearchPipeline {
         if (connectorContentResolver != null) {
             int hydrated = connectorContentResolver.hydrateTitleMatches(query);
             if (hydrated > 0) {
-                log.info("Lazy connector hydration fetched {} title-matched item(s) for '{}'", hydrated, query);
+                log.info("Lazy connector hydration fetched {} title-matched item(s)", hydrated);
             }
         }
 
@@ -129,6 +130,11 @@ public class SearchService implements SearchPipeline {
                 query, safeTopN, includeWeb, vectorLegReady, webLegReady, userAclTags, decision.armId());
         Optional<Object> cached = cacheService.getSearchResult(cacheKey);
         if (cached.orElse(null) instanceof SearchResponse response) {
+            boolean hasLocalResult = response.results().stream().anyMatch(result -> "local".equals(result.sourceKind()));
+            if (allowRemoteDiscovery && !hasLocalResult && connectorContentResolver != null
+                    && connectorContentResolver.discoverAndHydrate(query) > 0) {
+                return execute(query, topN, userAclTags, includeWeb, surface, false);
+            }
             log.debug("Search cache hit for key: {}", cacheKey);
             // A cache hit still logs an impression. Skipping it would make repeat queries inside the
             // TTL invisible, and repeat queries are exactly what the feedback memory learns from.
@@ -213,7 +219,7 @@ public class SearchService implements SearchPipeline {
             );
 
             results.add(new SearchResult(
-                    c, score, c.sourceName(), c.sourcePath(), null, "local",
+                    c, score, c.sourceName(), c.sourcePath(), c.url(), "local",
                     c.aclTags(), safeExcerpt
             ));
         }
@@ -237,6 +243,11 @@ public class SearchService implements SearchPipeline {
 
         List<SearchResult> finalResults = List.copyOf(
                 results.subList(0, Math.min(safeTopN, results.size())));
+        boolean hasLocalResult = finalResults.stream().anyMatch(result -> "local".equals(result.sourceKind()));
+        if (allowRemoteDiscovery && !hasLocalResult && connectorContentResolver != null
+                && connectorContentResolver.discoverAndHydrate(query) > 0) {
+            return execute(query, topN, userAclTags, includeWeb, surface, false);
+        }
         SearchResponse response = new SearchResponse(finalResults, webQueries, null, learnedApplied[0]);
         // Cached without an impression id: the id identifies one *serving*, not one result set, so
         // every cache hit mints its own (see the hit path above).

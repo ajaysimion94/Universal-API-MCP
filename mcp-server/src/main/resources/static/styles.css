@@ -20,8 +20,8 @@
   /* Text */
   --text: oklch(0.93 0.008 75);
   --text-secondary: oklch(0.72 0.012 75);
-  --text-muted: oklch(0.55 0.01 75);
-  --text-faint: oklch(0.42 0.008 75);
+  --text-muted: oklch(0.64 0.01 75);
+  --text-faint: oklch(0.56 0.008 75);
 
   /* Accent — warm amber. Used sparingly: active, focus, primary, selection. */
   --accent: oklch(0.78 0.15 68);

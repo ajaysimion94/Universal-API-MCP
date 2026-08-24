@@ -39,8 +39,8 @@ export async function mount(outlet) {
     return `<div class="tree-node-wrap">
       <button type="button" class="tree-node ${node.id === state.current?.id ? "is-active" : ""}"
         style="--depth:${depth}" data-action="select-folder" data-id="${escapeAttr(node.id)}"
-        aria-current="${node.id === state.current?.id ? "page" : "false"}">
-        <span class="tree-chevron ${expanded ? "is-open" : ""}" data-action="toggle-folder" data-id="${escapeAttr(node.id)}">${icon("chevron", 13)}</span>
+        aria-current="${node.id === state.current?.id ? "page" : "false"}" aria-expanded="${expanded}">
+        <span class="tree-chevron ${expanded ? "is-open" : ""}" data-action="toggle-folder" data-id="${escapeAttr(node.id)}" aria-hidden="true">${icon("chevron", 13)}</span>
         ${icon("folder", 14, "tree-icon")}
         <span class="tree-label">${escapeHtml(node.name)}</span>
       </button>
@@ -76,7 +76,7 @@ export async function mount(outlet) {
         <span class="file-type-icon folder-icon">${icon("folder", 16)}</span>
         <form class="new-folder-form" id="new-folder-form">
           <input class="new-folder-input" name="name" aria-label="New folder name" placeholder="Folder name" autocomplete="off" autofocus>
-          <button class="btn btn-primary btn-sm" type="submit">Create</button>
+          <button class="btn btn-primary btn-sm" type="submit">Create folder</button>
           <button class="btn btn-ghost btn-sm" type="button" data-action="cancel-folder">Cancel</button>
         </form>
       </td><td></td><td></td><td></td><td></td>
@@ -94,10 +94,10 @@ export async function mount(outlet) {
       <thead><tr><th>Name</th><th>Owner</th><th>Size</th><th>Modified</th><th><span class="sr-only">Actions</span></th></tr></thead>
       <tbody>${createRow}${state.children.map((node) => `<tr class="file-row" tabindex="0" data-id="${escapeAttr(node.id)}" data-type="${node.type}">
         <td class="file-name-cell">
-          <button type="button" class="file-name-button" data-action="${node.type === "FOLDER" ? "open-folder" : "noop"}" data-id="${escapeAttr(node.id)}">
+          ${node.type === "FOLDER" ? `<button type="button" class="file-name-button" data-action="open-folder" data-id="${escapeAttr(node.id)}">
             <span class="file-type-icon ${node.type === "FOLDER" ? "folder-icon" : ""}">${icon(node.type === "FOLDER" ? "folder" : "file", 16)}</span>
             <span class="file-name">${escapeHtml(node.name)}</span>
-          </button>
+          </button>` : `<span class="file-name-button"><span class="file-type-icon">${icon("file", 16)}</span><span class="file-name">${escapeHtml(node.name)}</span></span>`}
         </td>
         <td class="file-meta">${escapeHtml(node.owner || "—")}</td>
         <td class="file-meta mono">${node.type === "FOLDER" ? "—" : formatBytes(node.size)}</td>
@@ -131,7 +131,7 @@ export async function mount(outlet) {
           <div class="toolbar-actions">
             <button class="btn btn-ghost" type="button" data-action="new-folder">${icon("plus", 14)} New folder</button>
             <button class="btn btn-ghost" type="button" data-action="choose-folder" ${state.uploading ? "disabled" : ""}>${icon("folder", 14)} ${state.uploading ? "Uploading…" : "Upload folder"}</button>
-            <button class="btn btn-primary" type="button" data-action="choose-files" ${state.uploading ? "disabled" : ""}>${icon("upload", 14)} ${state.uploading ? "Uploading…" : "Upload"}</button>
+            <button class="btn btn-primary" type="button" data-action="choose-files" ${state.uploading ? "disabled" : ""}>${icon("upload", 14)} ${state.uploading ? "Uploading files…" : "Upload files"}</button>
             <input id="file-input" type="file" multiple class="file-input-hidden" aria-label="Choose files to upload">
             <input id="folder-input" type="file" multiple webkitdirectory directory class="file-input-hidden" aria-label="Choose a folder to upload">
           </div>
@@ -313,6 +313,15 @@ export async function mount(outlet) {
     if (event.dataTransfer?.files) upload(event.dataTransfer.files, false);
   }, { signal: abort.signal });
   outlet.addEventListener("keydown", (event) => {
+    const treeNode = event.target.closest('.tree-node[data-action="select-folder"]');
+    if (treeNode && (event.key === "ArrowRight" || event.key === "ArrowLeft")) {
+      const expanded = state.expanded.has(treeNode.dataset.id);
+      if ((event.key === "ArrowRight" && !expanded) || (event.key === "ArrowLeft" && expanded)) {
+        event.preventDefault();
+        expandFolder(treeNode.dataset.id);
+      }
+      return;
+    }
     const row = event.target.closest(".file-row[data-id]");
     if (row && event.key === "Enter" && row.dataset.type === "FOLDER") loadFolder(row.dataset.id);
   }, { signal: abort.signal });

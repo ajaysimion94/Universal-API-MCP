@@ -1,9 +1,7 @@
 package com.mcpserver.plugins;
 
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.multipart.MultipartFile;
 
 import java.util.HashMap;
 import java.util.List;
@@ -14,11 +12,9 @@ import java.util.Map;
 public class PluginController {
 
     private final PluginRegistry registry;
-    private final OnnxModelUploadService modelUploads;
 
-    public PluginController(PluginRegistry registry, OnnxModelUploadService modelUploads) {
+    public PluginController(PluginRegistry registry) {
         this.registry = registry;
-        this.modelUploads = modelUploads;
     }
 
     @GetMapping
@@ -26,22 +22,15 @@ public class PluginController {
         return registry.getAll().stream().map(this::toMap).toList();
     }
 
-    @GetMapping("/models")
-    public List<OnnxModelUploadService.ModelStatus> models() {
-        return modelUploads.statuses();
-    }
-
-    @PostMapping(value = "/models/{kind}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public OnnxModelUploadService.ModelStatus uploadModel(
-            @PathVariable String kind,
-            @RequestPart("model") MultipartFile model,
-            @RequestPart("tokenizer") MultipartFile tokenizer) {
-        return modelUploads.upload(kind, model, tokenizer);
-    }
-
     @PostMapping("/{id}/install")
     public Map<String, String> install(@PathVariable String id) {
         String jobId = registry.startInstall(id);
+        return Map.of("jobId", jobId, "status", "running");
+    }
+
+    @PostMapping("/{id}/setup")
+    public Map<String, String> setup(@PathVariable String id) {
+        String jobId = registry.startSetup(id);
         return Map.of("jobId", jobId, "status", "running");
     }
 

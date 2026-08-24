@@ -15,6 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import static com.mcpserver.insights.InsightModel.*;
@@ -110,7 +111,14 @@ public class InsightService {
     public InsightModel.Analysis analyze(String source, String connectionId, Integer cursorOffset) {
         Document document = parser.parse(source);
         String resolvedConnection = resolveConnection(connectionId, document.connection());
-        RqlModel.Analysis query = reportQueryService.analyze(document.rql(), resolvedConnection, cursorOffset);
+        Integer rqlCursorOffset = rqlCursorOffset(document, cursorOffset);
+        Set<String> parameters = document.params().stream()
+                .map(Parameter::name)
+                .filter(name -> name != null && name.matches("[A-Za-z_][A-Za-z0-9_]*"))
+                .map(name -> "$" + name)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        RqlModel.Analysis query = reportQueryService.analyze(document.rql(), resolvedConnection, rqlCursorOffset,
+                parameters);
         List<Diagnostic> diagnostics = new ArrayList<>(document.diagnostics());
         diagnostics.addAll(query.diagnostics().stream().map(diagnostic -> remap(diagnostic, source, document.rqlStartOffset())).toList());
         validateComponents(document.components(), query.symbols(), diagnostics);
@@ -118,6 +126,15 @@ public class InsightService {
                 query.completions().stream().map(completion -> new RqlModel.Completion(completion.label(), completion.kind(),
                         completion.detail(), completion.insertText(), remap(completion.replaceSpan(), source, document.rqlStartOffset()))).toList(),
                 document.params(), document.components());
+    }
+
+    /** The RQL analyzer uses offsets within a fenced block; the editor uses document offsets. */
+    private static Integer rqlCursorOffset(Document document, Integer documentCursorOffset) {
+        if (documentCursorOffset == null || document.rqlEndOffset() <= document.rqlStartOffset()) return null;
+        if (documentCursorOffset < document.rqlStartOffset() || documentCursorOffset > document.rqlEndOffset()) {
+            return null;
+        }
+        return documentCursorOffset - document.rqlStartOffset();
     }
 
     /**

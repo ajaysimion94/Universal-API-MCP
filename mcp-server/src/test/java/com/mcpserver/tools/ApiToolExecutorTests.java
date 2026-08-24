@@ -132,6 +132,33 @@ class ApiToolExecutorTests {
     }
 
     @Test
+    void executesAnOriginPinnedDraftUrlWithDoubleBraceParameters() throws Exception {
+        stubFor(get(urlPathEqualTo("/todos/17")).willReturn(okJson("{\"id\":17}")));
+        Connection conn = connection(AuthMode.NONE, null, null);
+        ApiTool tool = tool("GET", "/todos", "{\"type\":\"object\"}", "{}", null);
+        ApiToolExecutor.InvokeOverrides overrides = new ApiToolExecutor.InvokeOverrides(
+                Map.of(), Map.of(), null, null, null, null,
+                wireMock.baseUrl() + "/todos/{{id}}", "GET");
+
+        ToolInvocationResult result = executor.execute(tool, conn, Map.of("id", "17"), overrides);
+
+        assertThat(result.status()).isEqualTo(200);
+        verify(getRequestedFor(urlPathEqualTo("/todos/17")));
+    }
+
+    @Test
+    void draftUrlCannotLeaveTheConnectionOrigin() {
+        Connection conn = connection(AuthMode.NONE, null, null);
+        ApiTool tool = tool("GET", "/todos", "{\"type\":\"object\"}", "{}", null);
+        ApiToolExecutor.InvokeOverrides overrides = new ApiToolExecutor.InvokeOverrides(
+                Map.of(), Map.of(), null, null, null, null, "https://example.test/todos", "GET");
+
+        assertThatThrownBy(() -> executor.renderPreview(tool, conn, Map.of(), overrides))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("outside its allowlisted origin");
+    }
+
+    @Test
     void connectionBaseModeRejectsAStaleAbsoluteSourceTemplate() {
         ApiTool stale = tool("GET", "https://unexpected.example.test/items",
                 "{\"type\":\"object\"}", "{}", null);

@@ -264,7 +264,7 @@ function toolForm(turn) {
         </select></label>
         <label class="tool-field"><span>Request body</span><textarea class="form-input tool-form-textarea mono" data-tool-draft="rawBody" rows="10" placeholder='{"id": 1, "title": "Updated"}'>${escapeHtml(draft.rawBody || "")}</textarea></label>
       </div>` : ""}
-      <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="preview-tool" data-turn-id="${escapeAttr(turn.id)}">Preview request</button><button type="submit" class="btn btn-primary">${icon("play", 14)} ${tool.method === "GET" ? "Run tool" : "Review request"}</button></div>
+      <div class="form-actions"><button type="button" class="btn btn-ghost" data-action="preview-tool" data-turn-id="${escapeAttr(turn.id)}" ${draft.previewLoading || turn.submitting ? "disabled" : ""}>${draft.previewLoading ? "Preparing preview…" : "Preview request"}</button><button type="submit" class="btn btn-primary" ${turn.submitting ? "disabled" : ""}>${icon("play", 14)} ${turn.submitting ? "Submitting…" : tool.method === "GET" ? "Run tool" : "Review request"}</button></div>
       ${draft.previewLoading ? '<p class="tool-form-empty">Resolving request…</p>' : ""}
       ${draft.previewError ? banner(draft.previewError) : ""}
       ${draft.preview ? resolvedRequest(draft.preview) : ""}
@@ -509,7 +509,7 @@ function ragResults(turn) {
       <div class="file-group-chunks" ${index === 0 ? "" : "hidden"}>
         ${group.chunks.map((chunk) => `<div class="search-result">
           <div class="search-result-meta"><span class="mono">${Number(chunk.score || 0).toFixed(3)}</span>${chunk.sourceUrl ? `<a href="${escapeAttr(chunk.sourceUrl)}" target="_blank" rel="noopener noreferrer" data-action="open-source" data-chunk="${escapeAttr(chunk.id)}" data-rank="${chunk.rank}">${icon("external", 13)} source</a>` : ""}${impressionId ? voteControl(chunk, votes[chunk.id]) : ""}</div>
-          <div class="search-result-excerpt">${markdown(chunk.excerpt || chunk.description || chunk.content || "")}</div>
+          <div class="search-result-excerpt">${markdown(chunk.excerpt || chunk.description || chunk.content || "", 2)}</div>
         </div>`).join("")}
       </div>
     </article>`).join("")}</div>
@@ -691,7 +691,7 @@ export async function mount(outlet, context) {
         .filter((item) => item.search.toLowerCase().includes(fragment))
         .sort((a, b) => a.name.localeCompare(b.name));
       return {
-        label: "Apps and groups",
+        label: "APIs and groups",
         empty: fragment ? `No app or group matches “${scopeMatch[1]}”.` : "No apps or groups are available yet.",
         items,
       };
@@ -777,7 +777,7 @@ export async function mount(outlet, context) {
     const sorted = [...state.store.sessions].sort((a, b) => b.updatedAt - a.updatedAt);
     outlet.innerHTML = `<div class="search-workspace">
       <aside id="search-history" class="search-history-rail ${state.historyOpen ? "is-mobile-open" : ""}" aria-label="Search sessions">
-        <div class="search-history-header"><span class="search-history-title">Sessions</span><button class="btn btn-sm" type="button" data-action="new-search">${icon("plus", 13)} New</button></div>
+        <div class="search-history-header"><span class="search-history-title">Sessions</span><button class="btn btn-sm" type="button" data-action="new-search">${icon("plus", 13)} New search</button></div>
         <div class="search-history-list">${sorted.map((item) => `<div class="search-history-item ${item.id === session.id ? "active" : ""}">
           <button type="button" class="search-history-item-main" data-action="select-session" data-id="${escapeAttr(item.id)}">
             <span class="search-history-item-title">${escapeHtml(item.title)}</span>
@@ -792,7 +792,7 @@ export async function mount(outlet, context) {
           <button class="btn btn-sm search-history-mobile-toggle" type="button" data-action="toggle-history">${icon("book", 14)} Sessions</button>
           <div class="search-workspace-heading"><h1 id="search-workspace-title">${escapeHtml(session.title)}</h1><span class="mono">${session.turns.length ? `${turnCountLabel(session)} · updated ${sessionTime(session.updatedAt)}` : "Search, inspect, then continue with the next request"}</span></div>
           <div class="search-workspace-actions">
-            <button class="btn btn-ghost" type="button" data-action="toggle-guide">${icon("book", 14)} Search guide</button>
+            <button class="btn btn-ghost" type="button" data-action="toggle-guide" aria-expanded="${state.guideOpen}" aria-controls="search-guide">${icon("book", 14)} ${state.guideOpen ? "Hide search guide" : "Search guide"}</button>
             <button class="btn btn-ghost" type="button" data-action="open-export">${icon("download", 14)} Export evidence</button>
           </div>
         </header>
@@ -980,6 +980,8 @@ export async function mount(outlet, context) {
       state.stickToBottom = true;
       render();
     } else if (action === "delete-session") {
+      const session = state.store.sessions.find((item) => item.id === id);
+      if (!session || !confirm(`Delete search session "${session.title}"? This cannot be undone.`)) return;
       state.store.sessions = state.store.sessions.filter((session) => session.id !== id);
       if (!state.store.sessions.length) state.store.sessions.push(freshSession());
       if (state.store.activeId === id) state.store.activeId = state.store.sessions[0].id;
@@ -1133,17 +1135,20 @@ export async function mount(outlet, context) {
       const turn = turnById(session, event.target.dataset.turnId);
       const request = turn ? toolRequest(turn, event.target) : null;
       const tool = request?.tool;
-      if (!tool) return;
+      if (!tool || turn.submitting) return;
+      patchTurn(session.id, turn.id, { submitting: true });
+      render();
       try {
         const result = await api.invokeTool(tool.id, request.args, request.overrides);
         patchTurn(session.id, turn.id, {
+          submitting: false,
           response: "confirmationToken" in result
             ? { ...turn.response, mode: "tool-confirm", ...result }
             : { ...turn.response, mode: "tool-result", result },
           responseView: "preview",
         });
       } catch (error) {
-        patchTurn(session.id, turn.id, { response: { ...turn.response, error: message(error, "Tool failed") } });
+        patchTurn(session.id, turn.id, { submitting: false, response: { ...turn.response, error: message(error, "Tool failed") } });
       }
       state.stickToBottom = true;
       render();

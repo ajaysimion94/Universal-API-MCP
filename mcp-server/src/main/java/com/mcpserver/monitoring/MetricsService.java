@@ -22,6 +22,10 @@ public class MetricsService {
         registry.timer("search.latency");
         registry.counter("tool.errors.total", "tool", "unknown");
         registry.counter("workflow.state.transitions", "tool", "unknown", "state", "unknown");
+        registry.counter("connector.operation.total", "type", "unknown", "deployment", "UNKNOWN",
+                "operation", "unknown", "outcome", "unknown", "failure", "NONE");
+        registry.timer("connector.operation.duration", "type", "unknown", "deployment", "UNKNOWN",
+                "operation", "unknown", "outcome", "unknown", "failure", "NONE");
     }
     
     public void recordMcpRequest(String type) {

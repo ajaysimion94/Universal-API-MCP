@@ -13,15 +13,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Guards the help affordance and the tutorial route.
  *
- * <p>Source assertions rather than behavioural ones because the browser application deliberately has
- * no Node toolchain (asserted by {@link StaticFrontendTests#browserApplicationHasNoNodeBuildDependency}).
- * The rule these protect is the one a client-side router makes easy to break: every route the SPA
- * can reach also needs a server-side forward, or a direct visit or refresh 404s.
+ * <p>Source assertions complement the TypeScript/Vite build. The rule these protect is the one a
+ * client-side router makes easy to break: every route the SPA can reach also needs a server-side
+ * forward, or a direct visit or refresh 404s.
  */
 class HelpNavigationTests {
 
     private static final Path STATIC = Path.of("src/main/resources/static");
-    private static final Path ROUTER = STATIC.resolve("app.js");
+    private static final Path ROUTER = Path.of("webui/src/App.tsx");
     private static final Path WEB_MVC =
             Path.of("src/main/java/com/mcpserver/config/WebMvcConfig.java");
 
@@ -29,10 +28,10 @@ class HelpNavigationTests {
     void helpIsReachedFromAQuestionMarkButtonRatherThanThePrimaryNav() throws IOException {
         String router = Files.readString(ROUTER);
 
-        assertThat(router).contains("class=\"topbar-help").contains("href=\"/help\"");
-        assertThat(router).contains("icon(\"help\"");
+        assertThat(router).contains("className={`topbar-help").contains("to=\"/help\"");
+        assertThat(router).contains("CircleHelp").contains("lucide-react");
 
-        String navBlock = router.substring(router.indexOf("const navItems"), router.indexOf("const HELP_PATHS"));
+        String navBlock = router.substring(router.indexOf("const navItems"), router.indexOf("const pageModules"));
         assertThat(navBlock)
                 .as("help belongs on the ? button, not in the list of places you work")
                 .doesNotContain("/help")
@@ -42,8 +41,8 @@ class HelpNavigationTests {
     @Test
     void theHelpButtonIsLabelledForScreenReaders() throws IOException {
         String router = Files.readString(ROUTER);
-        int start = router.indexOf("class=\"topbar-help");
-        String anchor = router.substring(start, router.indexOf(">", router.indexOf("icon(\"help\"", start)));
+        int start = router.indexOf("className={`topbar-help");
+        String anchor = router.substring(start, router.indexOf(">", start));
         assertThat(anchor).contains("aria-label=");
     }
 
@@ -53,11 +52,9 @@ class HelpNavigationTests {
         String router = Files.readString(ROUTER);
         String config = Files.readString(WEB_MVC);
 
-        String routesBlock = router.substring(router.indexOf("const routes = {"), router.indexOf("const navItems"));
-        Matcher matcher = Pattern.compile("\"(/[a-z-]*)\":").matcher(routesBlock);
+        Matcher matcher = Pattern.compile("<Route path=\"(/[a-z-]+)(?:/\\*)?\"").matcher(router);
         while (matcher.find()) {
             String route = matcher.group(1);
-            if (route.equals("/")) continue;
             assertThat(config)
                     .as("%s is routable in the SPA, so it needs a forward in WebMvcConfig", route)
                     .contains("addViewController(\"" + route + "\")");
@@ -67,9 +64,19 @@ class HelpNavigationTests {
     /** /guide was the page's earlier name; old links and bookmarks must still land somewhere. */
     @Test
     void theOldGuideRouteStillResolves() throws IOException {
-        assertThat(Files.readString(ROUTER)).contains("pathname.startsWith(\"/guide\")");
+        assertThat(Files.readString(ROUTER))
+                .contains("<Route path=\"/guide\"")
+                .contains("<Navigate to=\"/help\" replace");
         assertThat(Files.readString(WEB_MVC)).contains("addViewController(\"/guide\")");
         assertThat(Files.exists(STATIC.resolve("pages/help.js"))).isTrue();
+    }
+
+    /** Report links can include a saved report name, so descendants must not bypass the SPA. */
+    @Test
+    void legacyReportDescendantsAreForwardedToTheSpa() throws IOException {
+        assertThat(Files.readString(ROUTER)).contains("<Route path=\"/reports/*\"");
+        assertThat(Files.readString(WEB_MVC))
+                .contains("addViewController(\"/reports/**\")");
     }
 
     @Test

@@ -25,6 +25,7 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -43,6 +44,8 @@ public class ApiToolExecutor {
 
     private static final int MAX_RESPONSE_BYTES = 1024 * 1024;
     private static final int MAX_DISPLAY_CHARS = 20_000;
+    private static final Set<String> SUPPORTED_METHODS = Set.of("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS");
+    private static final Pattern DRAFT_URL_VARIABLE = Pattern.compile("\\{\\{\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*}}" );
 
     private final CredentialCipher credentialCipher;
     private final int rateLimitPerMinute;
@@ -74,9 +77,11 @@ public class ApiToolExecutor {
             String bodyMode,
             String rawBody,
             String rawContentType,
-            AuthOverride auth
+            AuthOverride auth,
+            String requestUrl,
+            String requestMethod
     ) {
-        private static final InvokeOverrides EMPTY = new InvokeOverrides(Map.of(), Map.of(), null, null, null, null);
+        private static final InvokeOverrides EMPTY = new InvokeOverrides(Map.of(), Map.of(), null, null, null, null, null, null);
 
         public static InvokeOverrides empty() {
             return EMPTY;
@@ -101,7 +106,8 @@ public class ApiToolExecutor {
                     ? "Tool " + tool.name() + " is pending approval — enable it on the Connections page"
                     : "Tool " + tool.name() + " is disabled");
         }
-        if (overrides.auth() != null && !tool.isRead()) {
+        String method = effectiveMethod(tool, overrides);
+        if (overrides.auth() != null && !"GET".equals(method)) {
             throw new IllegalArgumentException(
                     "Auth override is only available for read (GET) tools — write tools always use "
                             + "the connection's stored credentials");
@@ -117,7 +123,7 @@ public class ApiToolExecutor {
             throw new ToolValidationException(violations);
         }
 
-        URI target = renderUri(tool, connection, merged, locations, overrides.extraQueryParams());
+        URI target = renderUri(tool, connection, merged, locations, overrides.extraQueryParams(), overrides.requestUrl());
         assertAllowedTarget(tool, target, connection);
 
         HttpRequest.Builder request = HttpRequest.newBuilder()
@@ -143,9 +149,9 @@ public class ApiToolExecutor {
             request.setHeader("Content-Type", overrides.rawContentType());
         }
         if (body != null) {
-            request.method(tool.httpMethod(), HttpRequest.BodyPublishers.ofString(body));
+            request.method(method, HttpRequest.BodyPublishers.ofString(body));
         } else {
-            request.method(tool.httpMethod(), HttpRequest.BodyPublishers.noBody());
+            request.method(method, HttpRequest.BodyPublishers.noBody());
         }
 
         long start = System.currentTimeMillis();
@@ -184,15 +190,18 @@ public class ApiToolExecutor {
     public ToolInvocationResult execute(ApiTool tool, Connection connection, Map<String, Object> args,
                                         InvokeOverrides overrides) throws Exception {
         RawResult raw = executeRaw(tool, connection, args, overrides);
-        String summary = tool.httpMethod() + " " + raw.target();
+        String summary = effectiveMethod(tool, overrides) + " " + raw.target();
         return toResult(raw.response(), raw.latencyMs(), summary);
     }
 
     // --- rendering ---------------------------------------------------------
 
     private URI renderUri(ApiTool tool, Connection connection, Map<String, Object> args,
-                          Map<String, String> locations, Map<String, String> extraQueryParams) {
-        String path = tool.urlTemplate();
+                          Map<String, String> locations, Map<String, String> extraQueryParams,
+                          String requestUrl) {
+        boolean draftedUrl = requestUrl != null && !requestUrl.isBlank();
+        String path = draftedUrl ? requestUrl.trim() : tool.urlTemplate();
+        path = renderDraftUrlVariables(path, args);
         for (var e : args.entrySet()) {
             if ("path".equals(locations.get(e.getKey())) && e.getValue() != null) {
                 path = path.replace("{" + e.getKey() + "}",
@@ -222,18 +231,48 @@ public class ApiToolExecutor {
             }
             target = path;
         } else {
-            if (absoluteTemplate) {
+            if (absoluteTemplate && !draftedUrl) {
                 throw new IllegalStateException("Tool " + tool.name()
                         + " contains a source URL but the connection is in connection-base mode — "
                         + "re-import the connection");
             }
-            String base = connection.baseUrl().replaceAll("/+$", "");
-            target = base + path;
+            target = absoluteTemplate ? path : connection.baseUrl().replaceAll("/+$", "") + path;
         }
         if (!query.isEmpty()) {
             target += target.contains("?") ? "&" + query.substring(1) : query;
         }
         return URI.create(target);
+    }
+
+    private static String renderDraftUrlVariables(String template, Map<String, Object> args) {
+        Matcher matcher = DRAFT_URL_VARIABLE.matcher(template);
+        StringBuffer rendered = new StringBuffer();
+        while (matcher.find()) {
+            String name = matcher.group(1);
+            Object value = args.get(name);
+            if (value == null || String.valueOf(value).isBlank()) {
+                throw new IllegalArgumentException("Enter a value for URL parameter {{" + name + "}}");
+            }
+            matcher.appendReplacement(rendered, Matcher.quoteReplacement(
+                    URLEncoder.encode(String.valueOf(value), StandardCharsets.UTF_8)));
+        }
+        matcher.appendTail(rendered);
+        return rendered.toString();
+    }
+
+    /** The draft may choose another ordinary HTTP verb, but never an arbitrary request method. */
+    public String effectiveMethod(ApiTool tool, InvokeOverrides overrides) {
+        String method = overrides.requestMethod() == null || overrides.requestMethod().isBlank()
+                ? tool.httpMethod()
+                : overrides.requestMethod().trim().toUpperCase();
+        if (!SUPPORTED_METHODS.contains(method)) {
+            throw new IllegalArgumentException("Unsupported HTTP method: " + method);
+        }
+        return method;
+    }
+
+    public boolean isReadRequest(ApiTool tool, InvokeOverrides overrides) {
+        return "GET".equals(effectiveMethod(tool, overrides));
     }
 
     private static void appendQueryParam(StringBuilder query, String key, String value) {
@@ -507,7 +546,7 @@ public class ApiToolExecutor {
 
     public Map<String, Object> renderPreview(ApiTool tool, Connection connection, Map<String, Object> args,
                                              InvokeOverrides overrides) throws Exception {
-        if (overrides.auth() != null && !tool.isRead()) {
+        if (overrides.auth() != null && !isReadRequest(tool, overrides)) {
             throw new IllegalArgumentException(
                     "Auth override is only available for read (GET) tools");
         }
@@ -520,8 +559,10 @@ public class ApiToolExecutor {
             throw new ToolValidationException(violations);
         }
         Map<String, Object> preview = new HashMap<>();
-        preview.put("method", tool.httpMethod());
-        preview.put("url", renderUri(tool, connection, merged, locations, overrides.extraQueryParams()).toString());
+        URI target = renderUri(tool, connection, merged, locations, overrides.extraQueryParams(), overrides.requestUrl());
+        assertAllowedTarget(tool, target, connection);
+        preview.put("method", effectiveMethod(tool, overrides));
+        preview.put("url", target.toString());
 
         Map<String, String> headers = new HashMap<>(readStringMap(tool.headers()));
         for (var e : merged.entrySet()) {

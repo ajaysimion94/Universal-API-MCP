@@ -11,6 +11,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -134,7 +135,7 @@ class InsightServiceTests {
 
         service.analyze(source, "supplied-conn", null);
 
-        verify(reportQueryService).analyze(anyString(), eq("supplied-conn"), any());
+        verify(reportQueryService).analyze(anyString(), eq("supplied-conn"), any(), any());
     }
 
     @Test
@@ -146,7 +147,7 @@ class InsightServiceTests {
 
         service.analyze(frontMatterDocument("CRM App"), null, null);
 
-        verify(reportQueryService).analyze(anyString(), eq(connection.id()), any());
+        verify(reportQueryService).analyze(anyString(), eq(connection.id()), any(), any());
     }
 
     @Test
@@ -158,7 +159,7 @@ class InsightServiceTests {
 
         service.analyze(frontMatterDocument("crm-app"), null, null);
 
-        verify(reportQueryService).analyze(anyString(), eq(connection.id()), any());
+        verify(reportQueryService).analyze(anyString(), eq(connection.id()), any(), any());
     }
 
     @Test
@@ -168,7 +169,27 @@ class InsightServiceTests {
 
         service.analyze(frontMatterDocument("unknown-app"), null, null);
 
-        verify(reportQueryService).analyze(anyString(), eq("unknown-app"), any());
+        verify(reportQueryService).analyze(anyString(), eq("unknown-app"), any(), any());
+    }
+
+    @Test
+    void analyzeTranslatesTheEditorCaretAndOffersFrontMatterParameters() {
+        stubAnalyze();
+        String rql = "let rows = request \"Ping\" |> wh";
+        String source = """
+                ---
+                params:
+                  threshold:
+                    type: number
+                ---
+                ```rql
+                %s
+                ```
+                """.formatted(rql);
+
+        service.analyze(source, null, source.indexOf("wh") + 2);
+
+        verify(reportQueryService).analyze(anyString(), any(), eq(rql.length()), eq(Set.of("$threshold")));
     }
 
     // ── running a saved insight ──────────────────────────────────────────────────
@@ -347,7 +368,7 @@ class InsightServiceTests {
     }
 
     private void stubAnalyze() {
-        when(reportQueryService.analyze(anyString(), any(), any()))
+        when(reportQueryService.analyze(anyString(), any(), any(), any()))
                 .thenReturn(new RqlModel.Analysis(List.of(), List.of(), List.of()));
     }
 

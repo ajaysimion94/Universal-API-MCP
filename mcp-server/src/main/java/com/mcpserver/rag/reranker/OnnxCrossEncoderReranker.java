@@ -90,24 +90,6 @@ public class OnnxCrossEncoderReranker implements Reranker {
         return loadError;
     }
 
-    /** Whether the native reranker session is currently loaded, without triggering a lazy load. */
-    public synchronized boolean isLoaded() {
-        return session != null;
-    }
-
-    /** Releases the current model and resets the lazy-load guard before files are replaced. */
-    public synchronized void unloadModel() {
-        closeModel();
-        loadAttempted = false;
-        loadError = null;
-    }
-
-    /** Validates and loads newly installed model files. */
-    public synchronized boolean reloadModel() {
-        unloadModel();
-        return ensureLoaded();
-    }
-
     private boolean ensureLoaded() {
         if (session != null) return true;
         if (loadAttempted) return false;

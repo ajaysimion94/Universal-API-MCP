@@ -48,6 +48,7 @@ export async function mount(outlet) {
     requestResult: null,
     requestPreview: null,
     requestError: "",
+    requestSubmitting: false,
     requestTab: "params",
     requestDrafts: new Map(),
     previewTimer: null,
@@ -65,6 +66,18 @@ export async function mount(outlet) {
     return { key: "", value: "", enabled: true };
   }
 
+  function initialRequestUrl(tool) {
+    if (/^https?:\/\//i.test(tool.urlTemplate)) return tool.urlTemplate;
+    const connection = state.connections.find((item) => item.id === tool.connectionId);
+    const base = connection?.baseUrl?.replace(/\/+$/, "");
+    return base ? `${base}${tool.urlTemplate}` : tool.urlTemplate;
+  }
+
+  function urlVariables(draft) {
+    return [...new Set([...draft.requestUrl.matchAll(/\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*}}/g)]
+      .map((match) => match[1]))];
+  }
+
   function requestDraft(tool) {
     if (!state.requestDrafts.has(tool.id)) {
       const values = {};
@@ -74,6 +87,9 @@ export async function mount(outlet) {
       }
       state.requestDrafts.set(tool.id, {
         values,
+        requestUrl: initialRequestUrl(tool),
+        requestMethod: tool.method,
+        urlVariableSignature: "",
         extraQuery: [newKvRow()],
         extraHeaders: [newKvRow()],
         bodyMode: "SCHEMA",
@@ -149,10 +165,15 @@ export async function mount(outlet) {
 
   function requestArgs(tool, draft = requestDraft(tool)) {
     const properties = tool.paramsSchema?.properties || {};
-    return Object.fromEntries(Object.entries(properties).flatMap(([name, property]) => {
+    const args = Object.fromEntries(Object.entries(properties).flatMap(([name, property]) => {
       const raw = draft.values[name];
       return raw === "" || raw === undefined ? [] : [[name, coerce(raw, property)]];
     }));
+    for (const name of urlVariables(draft)) {
+      const value = draft.values[name];
+      if (value !== "" && value !== undefined) args[name] = value;
+    }
+    return args;
   }
 
   function rowsToMap(rows) {
@@ -167,6 +188,8 @@ export async function mount(outlet) {
       bodyMode: draft.bodyMode,
       rawBody: draft.bodyMode === "RAW" ? draft.rawBody : undefined,
       rawContentType: draft.bodyMode === "RAW" ? draft.rawContentType : undefined,
+      requestUrl: draft.requestUrl,
+      requestMethod: draft.requestMethod,
     };
   }
 
@@ -181,8 +204,7 @@ export async function mount(outlet) {
     return `<div class="apps-groups-header"><span class="apps-groups-title">Groups</span><button class="btn btn-ghost apps-new-group-btn" type="button" data-action="toggle-group-form">${icon("plus", 13)} New group</button></div>
       ${state.groupForm ? `<form class="group-form" id="new-group-form"><input class="form-input" name="name" placeholder="Name — becomes the @group handle" required autofocus><input class="form-input" name="description" placeholder="Description (optional)"><div class="form-actions"><button class="btn btn-ghost" type="button" data-action="toggle-group-form">Cancel</button><button class="btn btn-primary" type="submit">Create</button></div></form>` : ""}
       <button class="group-row ${state.selectedGroupId ? "" : "is-active"}" type="button" data-action="select-group" data-id=""><span class="group-row-name">All apps</span><span class="group-row-counts mono">${plural(apiConnections().length, "app")} · ${plural(state.tools.length, "endpoint")}</span></button>
-      ${state.groups.map((group) => `<button class="group-row ${state.selectedGroupId === group.id ? "is-active" : ""}" type="button" data-action="select-group" data-id="${escapeAttr(group.id)}"><span class="group-row-name">${escapeHtml(group.name)}</span><span class="group-row-slug mono">@${escapeHtml(group.slug)}</span><span class="group-row-counts mono">${plural(group.appCount, "app")} · ${plural(group.toolCount, "endpoint")} · ${group.enabledToolCount} enabled</span></button>`).join("")}
-      ${!state.loading && !state.groups.length && !state.groupForm ? '<p class="group-empty">No groups yet. Create one for batch control and an @group search handle.</p>' : ""}`;
+      ${state.groups.map((group) => `<button class="group-row ${state.selectedGroupId === group.id ? "is-active" : ""}" type="button" data-action="select-group" data-id="${escapeAttr(group.id)}"><span class="group-row-name">${escapeHtml(group.name)}</span><span class="group-row-slug mono">@${escapeHtml(group.slug)}</span><span class="group-row-counts mono">${plural(group.appCount, "app")} · ${plural(group.toolCount, "endpoint")} · ${group.enabledToolCount} enabled</span></button>`).join("")}`;
   }
 
   function inGroup(connection, tool) {
@@ -210,10 +232,10 @@ export async function mount(outlet) {
       const tools = visibleTools(connection);
       const open = state.expanded.has(connection.id) || Boolean(state.query);
       return `<div>
-        <div class="tree-row app-tree-row ${open ? "is-active" : ""}" role="button" tabindex="0" data-action="toggle-app" data-id="${escapeAttr(connection.id)}">
-          <span class="tree-chevron">${icon("chevron", 14, open ? "chev-open" : "")}</span>
+        <div class="tree-row app-tree-row ${open ? "is-active" : ""}">
+          <button class="app-tree-main" type="button" data-action="toggle-app" data-id="${escapeAttr(connection.id)}" aria-expanded="${open}"><span class="tree-chevron">${icon("chevron", 14, open ? "chev-open" : "")}</span>
           <span class="status-dot ${connection.status === "CONNECTED" ? "is-active" : connection.status === "ERROR" ? "is-error" : ""}"></span>
-          <div class="app-tree-name-wrap"><span class="app-tree-name">${escapeHtml(connection.name)}</span><span class="app-tree-meta mono">@${escapeHtml(appSlug(connection.id))} · ${plural(tools.length, "endpoint")}</span></div>
+          <span class="app-tree-name-wrap"><span class="app-tree-name">${escapeHtml(connection.name)}</span><span class="app-tree-meta mono">@${escapeHtml(appSlug(connection.id))} · ${plural(tools.length, "endpoint")}</span></span></button>
           <button class="btn btn-ghost rb-icon-btn app-tree-add-btn" type="button" data-action="new-request" data-id="${escapeAttr(connection.id)}" aria-label="New request in ${escapeAttr(connection.name)}">${icon("plus", 12)}</button>
         </div>
         ${open ? `<div class="tree-children">${tools.map((tool) => `<button type="button" class="tree-row tool-tree-row ${state.activeToolId === tool.id ? "is-active" : ""}" data-action="open-tool" data-id="${escapeAttr(tool.id)}"><span class="method-badge mono tool-tree-method ${tool.method === "GET" ? "" : "method-write"}">${escapeHtml(tool.method)}</span><span class="tool-tree-name">${escapeHtml(tool.displayName || tool.name)}</span><span class="tool-tree-dot ${tool.enabled ? "is-enabled" : ""}"></span></button>`).join("") || '<p class="app-tools-empty">No endpoints to show.</p>'}</div>` : ""}
@@ -242,20 +264,20 @@ export async function mount(outlet) {
       return `<section class="app-section"><div class="app-header">
         <input type="checkbox" class="member-check" data-member-app="${escapeAttr(connection.id)}" ${checked ? "checked" : ""} aria-label="Include ${escapeAttr(connection.name)}">
         <button class="app-header-main" type="button" data-action="toggle-app" data-id="${escapeAttr(connection.id)}">${icon("chevron", 14, "app-chevron chev-open")}<div class="app-heading"><div class="app-name-row"><span class="app-name">${escapeHtml(connection.name)}</span><span class="app-slug mono">@${escapeHtml(appSlug(connection.id))}</span><span class="status-pill ${statusClass(connection.status)}">${escapeHtml(connection.status)}</span></div><div class="app-meta mono">${escapeHtml(connection.baseUrl || connection.specSourceUrl || "")} — ${tools.filter((tool) => tool.enabled).length} enabled / ${tools.length} endpoints</div></div></button>
-      </div><div class="app-tools"><div class="tool-category">${tools.map((tool) => `<div class="tool-row"><input type="checkbox" class="member-check" data-member-tool="${escapeAttr(tool.id)}" ${checked || state.editTools.has(tool.id) ? "checked" : ""} ${checked ? "disabled" : ""}><span class="method-badge mono ${tool.method === "GET" ? "" : "method-write"}">${escapeHtml(tool.method)}</span><div class="tool-row-info"><span class="tool-row-name mono">${escapeHtml(tool.name)}</span><span class="tool-row-desc">${escapeHtml(tool.displayName)}</span></div></div>`).join("")}</div></div></section>`;
+      </div><div class="app-tools"><div class="tool-category">${tools.map((tool) => `<div class="tool-row"><input type="checkbox" class="member-check" data-member-tool="${escapeAttr(tool.id)}" ${checked || state.editTools.has(tool.id) ? "checked" : ""} ${checked ? "disabled" : ""} aria-label="Include ${escapeAttr(tool.displayName || tool.name)}"><span class="method-badge mono ${tool.method === "GET" ? "" : "method-write"}">${escapeHtml(tool.method)}</span><div class="tool-row-info"><span class="tool-row-name mono">${escapeHtml(tool.name)}</span><span class="tool-row-desc">${escapeHtml(tool.displayName)}</span></div></div>`).join("")}</div></div></section>`;
     }).join("")}</div>`;
   }
 
   function tabStrip() {
     const tabs = state.tabs.map((id) => state.tools.find((tool) => tool.id === id)).filter(Boolean);
     const draft = state.draftConnectionId ? [{ id: "draft", method: "NEW", displayName: "New request" }] : [];
-    return `<div class="rb-tabstrip">${[...tabs, ...draft].map((tool) => `<button class="rb-tabstrip-tab ${state.activeToolId === tool.id || (tool.id === "draft" && !state.activeToolId) ? "is-active" : ""}" type="button" data-action="${tool.id === "draft" ? "activate-draft" : "open-tool"}" data-id="${escapeAttr(tool.id)}"><span class="method-badge mono rb-tabstrip-method ${tool.method === "GET" || tool.method === "NEW" ? "" : "method-write"}">${escapeHtml(tool.method)}</span><span class="rb-tabstrip-name">${escapeHtml(tool.displayName || tool.name)}</span><span class="rb-tabstrip-close" data-action="close-tab" data-id="${escapeAttr(tool.id)}">${icon("close", 11)}</span></button>`).join("")}</div>`;
+    return `<div class="rb-tabstrip">${[...tabs, ...draft].map((tool) => `<div class="rb-tabstrip-tab ${state.activeToolId === tool.id || (tool.id === "draft" && !state.activeToolId) ? "is-active" : ""}"><button class="rb-tabstrip-open" type="button" data-action="${tool.id === "draft" ? "activate-draft" : "open-tool"}" data-id="${escapeAttr(tool.id)}"><span class="method-badge mono rb-tabstrip-method ${tool.method === "GET" || tool.method === "NEW" ? "" : "method-write"}">${escapeHtml(tool.method)}</span><span class="rb-tabstrip-name">${escapeHtml(tool.displayName || tool.name)}</span></button><button class="rb-tabstrip-close" type="button" data-action="close-tab" data-id="${escapeAttr(tool.id)}" aria-label="Close ${escapeAttr(tool.displayName || tool.name)}">${icon("close", 11)}</button></div>`).join("")}</div>`;
   }
 
-  function schemaFields(tool, draft) {
+  function schemaFields(tool, draft, hiddenNames = new Set()) {
     const properties = tool.paramsSchema?.properties || {};
     const required = new Set(tool.paramsSchema?.required || []);
-    return Object.entries(properties).map(([name, property]) => {
+    return Object.entries(properties).filter(([name]) => !hiddenNames.has(name)).map(([name, property]) => {
       const value = draft.values[name] ?? "";
       let control;
       if (property.enum?.length) {
@@ -269,6 +291,17 @@ export async function mount(outlet) {
       }
       return `<label class="tool-field"><span>${escapeHtml(name)}${required.has(name) ? ' <b class="tool-form-required">*</b>' : ""}<small class="tool-form-type mono">${escapeHtml(property.type || "string")}</small></span>${control}${property.description ? `<small>${escapeHtml(property.description)}</small>` : ""}</label>`;
     }).join("");
+  }
+
+  function urlVariableFields(tool, draft) {
+    const names = urlVariables(draft);
+    if (!names.length) return "";
+    const properties = tool.paramsSchema?.properties || {};
+    return `<section class="rb-url-variables" aria-labelledby="url-params-heading"><div class="rb-url-variables-head"><strong id="url-params-heading">URL parameters</strong><span class="mono">generated from {{name}}</span></div><div class="tool-form">${names.map((name) => {
+      const property = properties[name] || { type: "string" };
+      const value = draft.values[name] ?? "";
+      return `<label class="tool-field"><span>${escapeHtml(name)} <b class="tool-form-required">*</b><small class="tool-form-type mono">${escapeHtml(property.type || "string")}</small></span><input class="form-input mono" data-request-value="${escapeAttr(name)}" value="${escapeAttr(value)}" required aria-label="URL parameter ${escapeAttr(name)}" placeholder="Value for {{${escapeAttr(name)}}}"></label>`;
+    }).join("")}</div></section>`;
   }
 
   function kvEditor(kind, rows, placeholder) {
@@ -289,7 +322,7 @@ export async function mount(outlet) {
     if (Object.keys(preview.headers || {}).length) options.headers = preview.headers;
     if (preview.body !== undefined) options.body = preview.body;
     const fetchCode = `const response = await fetch(${JSON.stringify(preview.url)}, ${JSON.stringify(options, null, 2)});\nconst body = await response.text();`;
-    return `<section class="rb-code-panel"><div class="rb-code-head"><strong>cURL</strong><button class="btn btn-ghost btn-sm" type="button" data-action="copy-code" data-code="${escapeAttr(curl)}">Copy</button></div><pre class="tool-result-body rb-code-block"><code>${escapeHtml(curl)}</code></pre><div class="rb-code-head"><strong>Browser fetch</strong><button class="btn btn-ghost btn-sm" type="button" data-action="copy-code" data-code="${escapeAttr(fetchCode)}">Copy</button></div><pre class="tool-result-body rb-code-block"><code>${escapeHtml(fetchCode)}</code></pre></section>`;
+    return `<section class="rb-code-panel"><div class="rb-code-head"><strong>cURL</strong><button class="btn btn-ghost btn-sm" type="button" data-action="copy-code" data-code="${escapeAttr(curl)}">Copy cURL</button></div><pre class="tool-result-body rb-code-block"><code>${escapeHtml(curl)}</code></pre><div class="rb-code-head"><strong>Browser fetch</strong><button class="btn btn-ghost btn-sm" type="button" data-action="copy-code" data-code="${escapeAttr(fetchCode)}">Copy fetch</button></div><pre class="tool-result-body rb-code-block"><code>${escapeHtml(fetchCode)}</code></pre></section>`;
   }
 
   function resolvedPanel(draft) {
@@ -299,7 +332,7 @@ export async function mount(outlet) {
     const preview = draft.resolved;
     const headers = Object.entries(preview.headers || {});
     return `<section class="rb-resolved" id="request-resolved">
-      <div class="rb-resolved-head"><span>Resolved request</span><button class="btn btn-ghost btn-sm" type="button" data-action="toggle-code">${draft.showCode ? "Hide code" : "Code"}</button></div>
+      <div class="rb-resolved-head"><span>Resolved request</span><button class="btn btn-ghost btn-sm" type="button" data-action="toggle-code">${draft.showCode ? "Hide code" : "Show code"}</button></div>
       <div class="rb-url-bar rb-url-bar-readout"><span class="method-badge mono ${preview.method === "GET" ? "" : "method-write"}">${escapeHtml(preview.method)}</span><code class="rb-url-readout">${escapeHtml(preview.url)}</code></div>
       ${headers.length ? `<div class="rb-kv-table rb-kv-table-readonly">${headers.map(([name, value]) => `<div class="rb-kv-row"><span class="rb-kv-key mono">${escapeHtml(name)}</span><span class="rb-kv-value mono">${escapeHtml(value)}</span></div>`).join("")}</div>` : ""}
       ${preview.body !== undefined ? `<pre class="tool-result-body rb-preview-body"><code>${escapeHtml(preview.body)}</code></pre>` : ""}
@@ -362,7 +395,7 @@ export async function mount(outlet) {
     const draft = manualDraft(connectionId, tool);
     return `<form class="rb-panel" id="manual-tool-form" data-edit-id="${escapeAttr(tool?.id || "")}">
       <div class="rb-request-line"><select class="form-input rb-method-select" data-manual-field="method">${["GET", "POST", "PUT", "PATCH", "DELETE"].map((method) => `<option ${draft.method === method ? "selected" : ""}>${method}</option>`).join("")}</select><input class="form-input mono" data-manual-field="path" value="${escapeAttr(draft.path)}" placeholder="/path/to/resource" required><button class="btn btn-primary" type="submit">${tool ? "Save changes" : "Save request"}</button></div>
-      <div class="rb-tabs"><button class="rb-tab is-active" type="button">Request shape</button></div>
+      <div class="rb-tabs"><span class="rb-tab is-active">Request shape</span></div>
       <div class="rb-tab-content"><div class="form-row"><label class="form-field"><span>Display name</span><input class="form-input" data-manual-field="displayName" value="${escapeAttr(draft.displayName)}" required></label><label class="form-field"><span>Category</span><input class="form-input" data-manual-field="category" value="${escapeAttr(draft.category)}"></label></div>
       <label class="form-field"><span>Description</span><input class="form-input" data-manual-field="description" value="${escapeAttr(draft.description)}"></label>
       <div class="rb-manual-params"><div class="rb-manual-params-head"><span>Query and header parameters</span><button class="btn btn-ghost" type="button" data-action="add-manual-param">${icon("plus", 12)} Add parameter</button></div>${manualParamRows(draft)}</div>
@@ -379,8 +412,11 @@ export async function mount(outlet) {
     if (!tool) return manualRequestForm(state.draftConnectionId);
     if (state.manualEditToolId === tool.id) return manualRequestForm(tool.connectionId, tool);
     const draft = requestDraft(tool);
+    const draftVariables = new Set(urlVariables(draft));
+    const urlFields = urlVariableFields(tool, draft);
+    const importedFields = schemaFields(tool, draft, draftVariables);
     const tabBody = state.requestTab === "params"
-      ? `<div class="rb-tab-body"><div class="tool-form">${schemaFields(tool, draft) || '<p class="tool-form-empty">This endpoint has no schema parameters.</p>'}</div><div class="rb-manual-params-head"><span>Ad-hoc query parameters</span></div>${kvEditor("extraQuery", draft.extraQuery, "Parameter name")}</div>`
+      ? `<div class="rb-tab-body">${urlFields}<div class="tool-form">${importedFields || (!urlFields ? '<p class="tool-form-empty">No imported parameters. Add {{name}} to the URL to create a URL parameter.</p>' : "")}</div><div class="rb-manual-params-head"><span>Ad-hoc query parameters</span></div>${kvEditor("extraQuery", draft.extraQuery, "Parameter name")}</div>`
       : state.requestTab === "headers"
         ? `<div class="rb-tab-body"><p class="rb-hint">These headers are layered on top of imported and schema-derived headers.</p>${kvEditor("extraHeaders", draft.extraHeaders, "Header name")}</div>`
         : state.requestTab === "body"
@@ -390,14 +426,15 @@ export async function mount(outlet) {
             : historyPanel(draft);
     return `<div class="rb-panel">
       <form id="request-form">
-        <div class="rb-request-line"><span class="method-badge mono ${tool.method === "GET" ? "" : "method-write"}">${escapeHtml(tool.method)}</span><code class="rb-url-template">${escapeHtml(tool.urlTemplate)}</code><button class="btn btn-ghost" type="button" data-action="preview-request">Preview</button><button class="btn btn-primary" type="submit" ${tool.enabled ? "" : "disabled"}>${icon("play", 14)} ${tool.method === "GET" ? "Send" : "Review"}</button></div>
-        <div class="rb-tabs">${["params", "headers", "body", "auth", "history"].map((tab) => `<button class="rb-tab ${state.requestTab === tab ? "is-active" : ""}" type="button" data-action="request-tab" data-id="${tab}">${tab === "history" ? "History" : tab[0].toUpperCase() + tab.slice(1)}</button>`).join("")}</div>
-        <div class="rb-tab-content">${tabBody}</div>
+        <div class="rb-request-line"><select class="form-input rb-method-select" data-request-setting="requestMethod" aria-label="Request method">${["GET", "POST", "PUT", "PATCH", "DELETE"].map((method) => `<option value="${method}" ${draft.requestMethod === method ? "selected" : ""}>${method}</option>`).join("")}</select><label class="sr-only" for="request-url">Request URL</label><input id="request-url" class="form-input mono rb-url-input" data-request-setting="requestUrl" value="${escapeAttr(draft.requestUrl)}" placeholder="https://api.example.com/todos/{{id}}" spellcheck="false" required aria-describedby="request-url-help"><button class="btn btn-ghost" type="button" data-action="preview-request" ${draft.previewLoading ? "disabled" : ""}>${draft.previewLoading ? "Refreshing…" : "Refresh preview"}</button><button class="btn btn-primary" type="submit" ${tool.enabled && !state.requestSubmitting ? "" : "disabled"}>${icon("play", 14)} ${state.requestSubmitting ? (draft.requestMethod === "GET" ? "Sending…" : "Preparing review…") : draft.requestMethod === "GET" ? "Send request" : "Review write request"}</button></div>
+        <p class="rb-request-help" id="request-url-help">Use <code>{{name}}</code> in the URL to create a required URL parameter. Draft requests stay on this connection’s allowed origin.</p>
+        <div class="rb-tabs" role="tablist" aria-label="Request editor sections">${["params", "headers", "body", "auth", "history"].map((tab) => `<button class="rb-tab ${state.requestTab === tab ? "is-active" : ""}" type="button" role="tab" aria-selected="${state.requestTab === tab}" data-action="request-tab" data-id="${tab}">${tab === "history" ? "History" : tab[0].toUpperCase() + tab.slice(1)}</button>`).join("")}</div>
+        <div class="rb-tab-content" role="tabpanel" aria-label="${escapeAttr(state.requestTab)} settings">${tabBody}</div>
       </form>
       ${resolvedPanel(draft)}
-      <div class="rb-footer-actions">${toggle(tool.enabled, tool.enabled ? "Enabled" : "Disabled", "toggle-tool", tool.id)}<span class="rb-endpoint-meta mono">${escapeHtml(tool.name)} · ${escapeHtml(tool.origin)} · ${escapeHtml(tool.category)}</span>${tool.origin === "MANUAL" ? `<button class="btn btn-ghost" type="button" data-action="edit-tool" data-id="${escapeAttr(tool.id)}">Edit shape</button><button class="btn btn-ghost btn-danger" type="button" data-action="delete-tool" data-id="${escapeAttr(tool.id)}">${icon("trash", 13)} Delete</button>` : ""}</div>
+      <div class="rb-footer-actions">${toggle(tool.enabled, tool.enabled ? "Enabled" : "Disabled", "toggle-tool", tool.id, `${tool.enabled ? "Disable" : "Enable"} ${tool.displayName || tool.name}`)}<span class="rb-endpoint-meta mono">${escapeHtml(tool.name)} · ${escapeHtml(tool.origin)} · ${escapeHtml(tool.category)}</span>${tool.origin === "MANUAL" ? `<button class="btn btn-ghost" type="button" data-action="edit-tool" data-id="${escapeAttr(tool.id)}">Edit shape</button><button class="btn btn-ghost btn-danger" type="button" data-action="delete-tool" data-id="${escapeAttr(tool.id)}">${icon("trash", 13)} Delete</button>` : ""}</div>
       ${state.requestError ? banner(state.requestError) : ""}
-      ${state.requestPreview ? `<section class="tool-confirm-panel"><div class="tool-confirm-heading"><div><h2>Confirm write request</h2><p class="rb-hint">Review the exact destination and payload before allowing the external change.</p></div></div><div class="tool-preview"><div class="rb-url-bar"><span class="method-badge mono method-write">${escapeHtml(state.requestPreview.preview?.method)}</span><code>${escapeHtml(state.requestPreview.preview?.url)}</code></div>${Object.keys(state.requestPreview.preview?.headers || {}).length ? `<div class="rb-kv-table rb-kv-table-readonly">${Object.entries(state.requestPreview.preview.headers).map(([name, value]) => `<div class="rb-kv-row"><span class="rb-kv-key mono">${escapeHtml(name)}</span><span class="rb-kv-value mono">${escapeHtml(value)}</span></div>`).join("")}</div>` : ""}${state.requestPreview.preview?.body !== undefined ? `<pre class="tool-result-body"><code>${escapeHtml(state.requestPreview.preview.body)}</code></pre>` : ""}</div><div class="form-actions"><button class="btn btn-ghost" type="button" data-action="reject-preview">Reject</button><button class="btn btn-primary" type="button" data-action="confirm-preview">Confirm and send</button></div></section>` : ""}
+      ${state.requestPreview ? `<section class="tool-confirm-panel"><div class="tool-confirm-heading"><div><h2>Confirm write request</h2><p class="rb-hint">Review the exact destination and payload before allowing the external change.</p></div></div><div class="tool-preview"><div class="rb-url-bar"><span class="method-badge mono method-write">${escapeHtml(state.requestPreview.preview?.method)}</span><code>${escapeHtml(state.requestPreview.preview?.url)}</code></div>${Object.keys(state.requestPreview.preview?.headers || {}).length ? `<div class="rb-kv-table rb-kv-table-readonly">${Object.entries(state.requestPreview.preview.headers).map(([name, value]) => `<div class="rb-kv-row"><span class="rb-kv-key mono">${escapeHtml(name)}</span><span class="rb-kv-value mono">${escapeHtml(value)}</span></div>`).join("")}</div>` : ""}${state.requestPreview.preview?.body !== undefined ? `<pre class="tool-result-body"><code>${escapeHtml(state.requestPreview.preview.body)}</code></pre>` : ""}</div><div class="form-actions"><button class="btn btn-ghost" type="button" data-action="reject-preview">Cancel request</button><button class="btn btn-primary" type="button" data-action="confirm-preview">Confirm and send</button></div></section>` : ""}
       ${responsePanel(state.requestResult)}
     </div>`;
   }
@@ -408,7 +445,7 @@ export async function mount(outlet) {
         <div class="search-field apps-sidebar-search">${icon("search", 14, "search-icon")}<input class="search-input" id="apps-filter" value="${escapeAttr(state.query)}" placeholder="Filter apps and endpoints" aria-label="Filter apps and endpoints"></div>
         <div class="apps-tree">${state.loading ? '<div class="plugins-skeleton"><div class="plugin-row-skeleton"></div></div>' : appTree()}</div>
       </aside>
-      <section class="main" aria-labelledby="apps-page-title"><h1 id="apps-page-title" class="sr-only">Apps and API requests</h1>
+      <section class="main" aria-labelledby="apps-page-title"><h1 id="apps-page-title" class="sr-only">APIs and requests</h1>
         ${state.error ? banner(state.error) : ""}${groupBanner()}
         ${state.loading ? '<div class="plugins-skeleton" style="padding:var(--space-md)"><div class="plugin-row-skeleton"></div></div>' : state.editingMembers ? memberEditor() : `${tabStrip()}<div class="rb-workspace">${requestBuilder()}</div>`}
       </section>
@@ -459,6 +496,23 @@ export async function mount(outlet) {
   async function previewRequest(tool, quiet = false) {
     if (!tool) return;
     const draft = requestDraft(tool);
+    const missing = (tool.paramsSchema?.required || []).filter((name) => {
+      const value = draft.values?.[name];
+      return value === undefined || value === null || String(value).trim() === "";
+    });
+    const missingUrlParameters = urlVariables(draft).filter((name) => {
+      const value = draft.values?.[name];
+      return value === undefined || value === null || String(value).trim() === "";
+    });
+    missing.push(...missingUrlParameters.filter((name) => !missing.includes(name)));
+    if (missing.length) {
+      draft.resolved = null;
+      draft.previewLoading = false;
+      draft.previewError = quiet ? "" : `Enter the required ${plural(missing.length, "field")}: ${missing.join(", ")}.`;
+      updateResolvedPanel(draft);
+      return;
+    }
+    if (draft.previewLoading) return;
     draft.previewLoading = true;
     draft.previewError = "";
     if (!quiet) updateResolvedPanel(draft);
@@ -716,7 +770,17 @@ export async function mount(outlet) {
       requestDraft(tool).values[event.target.dataset.requestValue] = event.target.value;
       schedulePreview();
     } else if (event.target.dataset.requestSetting && tool) {
-      requestDraft(tool)[event.target.dataset.requestSetting] = event.target.value;
+      const setting = event.target.dataset.requestSetting;
+      const draft = requestDraft(tool);
+      draft[setting] = event.target.value;
+      if (setting === "requestUrl") {
+        const signature = urlVariables(draft).join("\u0000");
+        if (signature !== draft.urlVariableSignature) {
+          draft.urlVariableSignature = signature;
+          render();
+          return;
+        }
+      }
       schedulePreview();
     } else if (event.target.dataset.kvKind && tool) {
       const row = requestDraft(tool)[event.target.dataset.kvKind][Number(event.target.dataset.kvIndex)];
@@ -746,8 +810,10 @@ export async function mount(outlet) {
         schedulePreview();
       } else if (event.target.dataset.requestSetting && tool) {
         const setting = event.target.dataset.requestSetting;
-        requestDraft(tool)[setting] = event.target.value;
-        if (["bodyMode", "authMode"].includes(setting)) render();
+        const draft = requestDraft(tool);
+        draft[setting] = event.target.value;
+        if (setting === "requestUrl") draft.urlVariableSignature = urlVariables(draft).join("\u0000");
+        if (["bodyMode", "authMode", "requestMethod", "requestUrl"].includes(setting)) render();
         schedulePreview();
       } else if (event.target.dataset.kvKind && tool) {
         const row = requestDraft(tool)[event.target.dataset.kvKind][Number(event.target.dataset.kvIndex)];
@@ -798,13 +864,20 @@ export async function mount(outlet) {
         state.manualDrafts.delete(existing ? `edit:${existing.id}` : `new:${input.connectionId}`);
         await load();
       } else if (form.id === "request-form") {
+        if (state.requestSubmitting) return;
         const tool = selectedTool();
         const draft = requestDraft(tool);
-        const result = await api.invokeTool(tool.id, requestArgs(tool, draft), requestOverrides(draft));
-        if ("confirmationToken" in result) state.requestPreview = result;
-        else state.requestResult = result;
-        state.requestError = "";
+        state.requestSubmitting = true;
         render();
+        try {
+          const result = await api.invokeTool(tool.id, requestArgs(tool, draft), requestOverrides(draft));
+          if ("confirmationToken" in result) state.requestPreview = result;
+          else state.requestResult = result;
+          state.requestError = "";
+        } finally {
+          state.requestSubmitting = false;
+          render();
+        }
       }
     } catch (error) {
       if (form.id === "request-form") state.requestError = message(error, "Request failed");

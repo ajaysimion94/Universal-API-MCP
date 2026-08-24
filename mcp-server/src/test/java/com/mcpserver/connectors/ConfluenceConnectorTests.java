@@ -1,6 +1,7 @@
 package com.mcpserver.connectors;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.stubbing.Scenario;
 import com.mcpserver.repositories.ChunkRepository;
 import com.mcpserver.services.IngestionService;
 import com.mcpserver.services.SearchService;
@@ -85,7 +86,7 @@ class ConfluenceConnectorTests {
 
         assertThatThrownBy(() -> connector.detectDeployment(newConnection()))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Could not reach Confluence");
+                .hasMessageContaining("HTTP 404");
     }
 
     @Test
@@ -114,6 +115,54 @@ class ConfluenceConnectorTests {
 
         verify(getRequestedFor(urlEqualTo("/rest/api/user/current"))
                 .withHeader("Authorization", equalTo("Bearer dc-pat")));
+    }
+
+    @Test
+    void discoveryUsesCqlAndCataloguesCloudPageMetadata() throws Exception {
+        Connection connection = newConnection().withDeploymentType(DeploymentType.CLOUD)
+                .withStatus(ConnectionStatus.CONNECTED, null);
+        connectionRepository.save(connection);
+        String pageId = "pg-" + UUID.randomUUID();
+        stubFor(get(urlPathEqualTo("/wiki/rest/api/content/search"))
+                .withQueryParam("cql", containing("type = page"))
+                .withQueryParam("cql", containing("quantum runbook"))
+                .willReturn(okJson("""
+                        {"results":[{"id":"%s","title":"Quantum runbook","space":{"key":"ENG"},
+                        "version":{"when":"2024-01-01T00:00:00.000Z"},
+                        "_links":{"webui":"/spaces/ENG/pages/%s"}}]}
+                        """.formatted(pageId, pageId))));
+
+        List<CatalogResource> discovered = connector.discover(connection, "quantum runbook", 9);
+
+        assertThat(discovered).hasSize(1);
+        assertThat(discovered.get(0).externalId()).isEqualTo(pageId);
+        assertThat(discovered.get(0).apiPath()).contains("/pages/" + pageId);
+        verify(getRequestedFor(urlPathEqualTo("/wiki/rest/api/content/search"))
+                .withQueryParam("limit", equalTo("3")));
+    }
+
+    @Test
+    void discoveryRetriesOneTransientServerFailureThenCataloguesThePage() throws Exception {
+        Connection connection = newConnection().withDeploymentType(DeploymentType.CLOUD)
+                .withStatus(ConnectionStatus.CONNECTED, null);
+        connectionRepository.save(connection);
+        String pageId = "pg-" + UUID.randomUUID();
+        String scenario = "confluence-discovery-retry-" + connection.id();
+        stubFor(get(urlPathEqualTo("/wiki/rest/api/content/search"))
+                .inScenario(scenario).whenScenarioStateIs(Scenario.STARTED).willSetStateTo("retry")
+                .willReturn(aResponse().withStatus(503)));
+        stubFor(get(urlPathEqualTo("/wiki/rest/api/content/search"))
+                .inScenario(scenario).whenScenarioStateIs("retry")
+                .willReturn(okJson("""
+                        {"results":[{"id":"%s","title":"Transient runbook","space":{"key":"ENG"},
+                        "version":{"when":"2024-01-01T00:00:00.000Z"},
+                        "_links":{"webui":"/spaces/ENG/pages/%s"}}]}
+                        """.formatted(pageId, pageId))));
+
+        List<CatalogResource> discovered = connector.discover(connection, "transient runbook", 3);
+
+        assertThat(discovered).extracting(CatalogResource::externalId).contains(pageId);
+        verify(2, getRequestedFor(urlPathEqualTo("/wiki/rest/api/content/search")));
     }
 
     @Test

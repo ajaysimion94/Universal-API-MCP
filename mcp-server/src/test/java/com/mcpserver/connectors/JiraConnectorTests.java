@@ -1,6 +1,7 @@
 package com.mcpserver.connectors;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
+import com.github.tomakehurst.wiremock.stubbing.Scenario;
 import com.mcpserver.repositories.ChunkRepository;
 import com.mcpserver.services.IngestionService;
 import com.mcpserver.services.SearchService;
@@ -81,7 +82,7 @@ class JiraConnectorTests {
 
         assertThatThrownBy(() -> connector.detectDeployment(newConnection()))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Could not reach Jira");
+                .hasMessageContaining("HTTP 404");
     }
 
     @Test
@@ -107,6 +108,64 @@ class JiraConnectorTests {
 
         verify(getRequestedFor(urlEqualTo("/rest/api/2/myself"))
                 .withHeader("Authorization", equalTo("Bearer dc-pat")));
+    }
+
+    @Test
+    void discoveryUsesSanitizedBoundedJqlAndCataloguesMetadata() throws Exception {
+        Connection connection = newConnection().withDeploymentType(DeploymentType.SERVER_DC)
+                .withStatus(ConnectionStatus.CONNECTED, null);
+        connectionRepository.save(connection);
+        String key = "ENG-" + (int) (Math.random() * 100000);
+        stubFor(get(urlPathEqualTo("/rest/api/2/search"))
+                .withQueryParam("jql", containing("text ~ \"quantum\""))
+                .withQueryParam("jql", containing("text ~ \"runbook\""))
+                .willReturn(okJson(searchResultsJson(key, "Quantum runbook", "ENG", "body",
+                        "2024-01-01T12:00:00.000+0000"))));
+
+        List<CatalogResource> discovered = connector.discover(connection,
+                "quantum runbook; project = private", 9);
+
+        assertThat(discovered).hasSize(1);
+        assertThat(discovered.get(0).externalId()).isEqualTo(key);
+        assertThat(discovered.get(0).contentState()).isEqualTo(CatalogContentState.METADATA_ONLY);
+        verify(getRequestedFor(urlPathEqualTo("/rest/api/2/search"))
+                .withQueryParam("maxResults", equalTo("3")));
+    }
+
+    @Test
+    void cloudDiscoveryHonorsRetryAfterAndRetriesOnlyOnceForRateLimiting() throws Exception {
+        Connection connection = newConnection().withDeploymentType(DeploymentType.CLOUD)
+                .withStatus(ConnectionStatus.CONNECTED, null);
+        connectionRepository.save(connection);
+        String key = "ENG-" + (int) (Math.random() * 100000);
+        String scenario = "jira-discovery-rate-limit-" + connection.id();
+        stubFor(post(urlEqualTo("/rest/api/3/search/jql"))
+                .inScenario(scenario).whenScenarioStateIs(Scenario.STARTED).willSetStateTo("retry")
+                .willReturn(aResponse().withStatus(429).withHeader("Retry-After", "0")));
+        stubFor(post(urlEqualTo("/rest/api/3/search/jql"))
+                .inScenario(scenario).whenScenarioStateIs("retry")
+                .willReturn(okJson(searchResultsJson(key, "Rate limited discovery", "ENG", "body",
+                        "2024-01-01T12:00:00.000+0000"))));
+
+        List<CatalogResource> discovered = connector.discover(connection, "rate limited discovery", 3);
+
+        assertThat(discovered).extracting(CatalogResource::externalId).contains(key);
+        verify(2, postRequestedFor(urlEqualTo("/rest/api/3/search/jql")));
+    }
+
+    @Test
+    void discoveryDoesNotRetryAuthenticationFailuresOrExposeTheResponseBody() {
+        Connection connection = newConnection().withDeploymentType(DeploymentType.CLOUD)
+                .withStatus(ConnectionStatus.CONNECTED, null);
+        connectionRepository.save(connection);
+        stubFor(post(urlEqualTo("/rest/api/3/search/jql"))
+                .willReturn(aResponse().withStatus(401).withBody("private remote failure body")));
+
+        assertThatThrownBy(() -> connector.discover(connection, "private discovery", 3))
+                .isInstanceOf(ConnectorException.class)
+                .hasMessageContaining("HTTP 401")
+                .hasMessageNotContaining("private remote failure body");
+        verify(1, postRequestedFor(urlEqualTo("/rest/api/3/search/jql")));
     }
 
     @Test

@@ -3,6 +3,7 @@ package com.mcpserver.connectors;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mcpserver.config.TlsHttpClientFactory;
+import com.mcpserver.rag.retrieval.TextSignals;
 import com.mcpserver.services.IngestionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,6 +24,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -49,6 +51,7 @@ public class ConfluenceConnector implements SourceConnector {
     private final WebhookTokenService webhookTokenService;
     private final String webhookBaseUrl;
     private final Duration reconcileInterval;
+    private final Duration remoteDiscoveryTimeout;
     private final HttpClient httpClient;
     private final ObjectMapper mapper = new ObjectMapper();
     private final Map<String, Instant> lastReconciledAt = new ConcurrentHashMap<>();
@@ -60,7 +63,8 @@ public class ConfluenceConnector implements SourceConnector {
                                 WebhookTokenService webhookTokenService,
                                 TlsHttpClientFactory tlsHttpClientFactory,
                                 @Value("${connectors.webhook-base-url:}") String webhookBaseUrl,
-                                @Value("${connectors.reconcile-interval-ms:86400000}") long reconcileIntervalMs) {
+                                @Value("${connectors.reconcile-interval-ms:86400000}") long reconcileIntervalMs,
+                                @Value("${connectors.remote-discovery-timeout-ms:5000}") long remoteDiscoveryTimeoutMs) {
         this.ingestionService = ingestionService;
         this.catalogRepository = catalogRepository;
         this.connectionRepository = connectionRepository;
@@ -68,6 +72,7 @@ public class ConfluenceConnector implements SourceConnector {
         this.webhookTokenService = webhookTokenService;
         this.webhookBaseUrl = webhookBaseUrl;
         this.reconcileInterval = Duration.ofMillis(Math.max(60_000, reconcileIntervalMs));
+        this.remoteDiscoveryTimeout = Duration.ofMillis(Math.max(1_000, remoteDiscoveryTimeoutMs));
         this.httpClient = tlsHttpClientFactory.builder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
@@ -85,10 +90,17 @@ public class ConfluenceConnector implements SourceConnector {
 
         HttpResponse<String> server = get(connection, DeploymentType.SERVER_DC, "/space?limit=1");
         if (server.statusCode() == 200) return DeploymentType.SERVER_DC;
-
-        throw new IllegalStateException("Could not reach Confluence at " + connection.baseUrl()
-                + " as Cloud (HTTP " + cloud.statusCode() + ") or Server/DC (HTTP "
-                + server.statusCode() + ") — check the base URL and credentials");
+        // A reverse proxy can return a normal 404 for the wrong deployment path. Prefer an
+        // authentication/permission response from either probe, otherwise return one stable,
+        // body-free diagnostic rather than exposing both remote response details.
+        if (cloud.statusCode() == 401 || server.statusCode() == 401) {
+            throw ConnectorException.forHttp("Confluence", "deployment detection", 401);
+        }
+        if (cloud.statusCode() == 403 || server.statusCode() == 403) {
+            throw ConnectorException.forHttp("Confluence", "deployment detection", 403);
+        }
+        int status = cloud.statusCode() >= 500 ? cloud.statusCode() : server.statusCode();
+        throw ConnectorException.forHttp("Confluence", "deployment detection", status);
     }
 
     @Override
@@ -96,9 +108,43 @@ public class ConfluenceConnector implements SourceConnector {
         String path = connection.deploymentType() == DeploymentType.CLOUD ? "/users/current" : "/user/current";
         HttpResponse<String> res = get(connection, connection.deploymentType(), path);
         if (res.statusCode() != 200) {
-            throw new IllegalStateException("Confluence auth failed (HTTP " + res.statusCode() + "): "
-                    + snippet(res.body()));
+            throw ConnectorException.forHttp("Confluence", "authentication", res.statusCode());
         }
+    }
+
+    @Override
+    public void verifyReadAccess(Connection connection) throws Exception {
+        String path = connection.deploymentType() == DeploymentType.CLOUD
+                ? "/pages?status=current&limit=1"
+                : "/content?type=page&status=current&limit=1";
+        HttpResponse<String> response = get(connection, connection.deploymentType(), path);
+        if (response.statusCode() != 200) {
+            throw ConnectorException.forHttp("Confluence", "read access check", response.statusCode());
+        }
+    }
+
+    @Override
+    public List<CatalogResource> discover(Connection connection, String query, int limit) throws Exception {
+        String cql = discoveryCql(query);
+        if (cql == null) return List.of();
+        int safeLimit = Math.max(1, Math.min(limit, 3));
+        String searchPath = (connection.deploymentType() == DeploymentType.CLOUD ? "/wiki" : "")
+                + "/rest/api/content/search?cql=" + URLEncoder.encode(cql, StandardCharsets.UTF_8)
+                + "&limit=" + safeLimit + "&expand=version,space";
+        HttpResponse<String> response = getDiscovery(connection, connection.deploymentType(), searchPath);
+        if (response.statusCode() != 200) {
+            throw ConnectorException.forHttp("Confluence", "content discovery", response.statusCode());
+        }
+        List<CatalogResource> discovered = new ArrayList<>();
+        JsonNode results = mapper.readTree(response.body()).path("results");
+        for (JsonNode page : results) {
+            if (discovered.size() >= safeLimit) break;
+            String pageId = page.path("id").asText(null);
+            if (pageId == null || pageId.isBlank()) continue;
+            catalogPage(connection, page, page.path("_links").path("base").asText(null));
+            catalogRepository.find(connection.id(), "confluence", pageId).ifPresent(discovered::add);
+        }
+        return discovered;
     }
 
     @Override
@@ -180,8 +226,7 @@ public class ConfluenceConnector implements SourceConnector {
         payload.putArray("events").add("page_created").add("page_updated").add("page_removed");
         HttpResponse<String> res = post(connection, DeploymentType.SERVER_DC, "/webhooks", payload.toString());
         if (res.statusCode() / 100 != 2) {
-            throw new IllegalStateException("Webhook registration failed (HTTP " + res.statusCode() + "): "
-                    + snippet(res.body()));
+            throw ConnectorException.forHttp("Confluence", "webhook registration", res.statusCode());
         }
         connectionRepository.save(connection.withWebhookRegistered(true));
     }
@@ -465,6 +510,10 @@ public class ConfluenceConnector implements SourceConnector {
         return send(connection, deployment, path, null);
     }
 
+    private HttpResponse<String> getDiscovery(Connection connection, DeploymentType deployment, String path) throws Exception {
+        return send(connection, deployment, path, null, remoteDiscoveryTimeout, true);
+    }
+
     private HttpResponse<String> post(Connection connection, DeploymentType deployment,
                                       String path, String jsonBody) throws Exception {
         return send(connection, deployment, path, jsonBody);
@@ -472,6 +521,12 @@ public class ConfluenceConnector implements SourceConnector {
 
     private HttpResponse<String> send(Connection connection, DeploymentType deployment,
                                       String path, String jsonBody) throws Exception {
+        return send(connection, deployment, path, jsonBody, Duration.ofSeconds(20), false);
+    }
+
+    private HttpResponse<String> send(Connection connection, DeploymentType deployment,
+                                      String path, String jsonBody, Duration timeout,
+                                      boolean retryTransientFailure) throws Exception {
         String target = path.startsWith("http://") || path.startsWith("https://")
                 ? path
                 : path.startsWith("/wiki/") || path.startsWith("/rest/")
@@ -482,19 +537,56 @@ public class ConfluenceConnector implements SourceConnector {
                 .header("Authorization", AtlassianAuth.authorizationHeader(connection.authMode(),
                         connection.authUsername(), credentialCipher.decrypt(connection.authSecretEncrypted())))
                 .header("Accept", "application/json")
-                .timeout(Duration.ofSeconds(20));
+                .timeout(timeout);
         if (jsonBody == null) {
             req.GET();
         } else {
             req.header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(jsonBody));
         }
-        return httpClient.send(req.build(), HttpResponse.BodyHandlers.ofString());
+        return sendWithRetry(req.build(), retryTransientFailure);
     }
 
     private IllegalStateException fetchFailure(String operation, HttpResponse<String> res) {
-        return new IllegalStateException("Confluence " + operation + " failed (HTTP "
-                + res.statusCode() + "): " + snippet(res.body()));
+        return ConnectorException.forHttp("Confluence", operation, res.statusCode());
+    }
+
+    private HttpResponse<String> sendWithRetry(HttpRequest request, boolean retryTransientFailure) throws Exception {
+        for (int attempt = 0; ; attempt++) {
+            try {
+                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                if (!retryTransientFailure || attempt > 0 || !isTransient(response.statusCode())) return response;
+                waitBeforeRetry(response);
+            } catch (java.io.IOException exception) {
+                if (!retryTransientFailure || attempt > 0) {
+                    throw new ConnectorException(ConnectorFailureCategory.UNREACHABLE,
+                            "Confluence request could not reach the source", exception);
+                }
+                Thread.sleep(200);
+            }
+        }
+    }
+
+    private static boolean isTransient(int statusCode) {
+        return statusCode == 429 || statusCode >= 500;
+    }
+
+    private static void waitBeforeRetry(HttpResponse<?> response) throws InterruptedException {
+        String retryAfter = response.headers().firstValue("Retry-After").orElse("");
+        long waitMillis = 200;
+        try {
+            waitMillis = Math.min(5_000L, Math.max(0L, Long.parseLong(retryAfter.trim()) * 1_000L));
+        } catch (NumberFormatException ignored) {
+            // A malformed header falls back to the short transient-error delay.
+        }
+        Thread.sleep(waitMillis);
+    }
+
+    private static String discoveryCql(String query) {
+        TreeSet<String> terms = new TreeSet<>(TextSignals.terms(query));
+        if (terms.isEmpty()) return null;
+        String phrase = String.join(" ", terms.stream().limit(5).toList());
+        return "type = page AND text ~ \"" + phrase + "\"";
     }
 
     private static String joinUrl(String base, String path) {
@@ -502,8 +594,4 @@ public class ConfluenceConnector implements SourceConnector {
         return base.replaceAll("/$", "") + "/" + path.replaceAll("^/", "");
     }
 
-    private String snippet(String body) {
-        if (body == null) return "";
-        return body.length() > 300 ? body.substring(0, 300) + "…" : body;
-    }
 }

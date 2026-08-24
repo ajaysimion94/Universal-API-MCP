@@ -1,0 +1,40 @@
+name: Atlassian connector live tests
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 2 * * *"
+
+# These tests create and remove prefixed issues/pages on dedicated non-production tenants.
+# They must never run on public GitHub-hosted runners or ordinary pull requests.
+jobs:
+  connector-live:
+    runs-on: [self-hosted, atlassian-integration]
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      ATLASSIAN_CLOUD_JIRA_BASE_URL: ${{ secrets.ATLASSIAN_CLOUD_JIRA_BASE_URL }}
+      ATLASSIAN_CLOUD_CONFLUENCE_BASE_URL: ${{ secrets.ATLASSIAN_CLOUD_CONFLUENCE_BASE_URL }}
+      ATLASSIAN_CLOUD_EMAIL: ${{ secrets.ATLASSIAN_CLOUD_EMAIL }}
+      ATLASSIAN_CLOUD_API_TOKEN: ${{ secrets.ATLASSIAN_CLOUD_API_TOKEN }}
+      ATLASSIAN_DC_JIRA_BASE_URL: ${{ secrets.ATLASSIAN_DC_JIRA_BASE_URL }}
+      ATLASSIAN_DC_CONFLUENCE_BASE_URL: ${{ secrets.ATLASSIAN_DC_CONFLUENCE_BASE_URL }}
+      ATLASSIAN_DC_JIRA_PAT: ${{ secrets.ATLASSIAN_DC_JIRA_PAT }}
+      ATLASSIAN_DC_CONFLUENCE_PAT: ${{ secrets.ATLASSIAN_DC_CONFLUENCE_PAT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Run Cloud and Data Center connector tests
+        working-directory: mcp-server
+        run: >-
+          mvn -Pconnector-live,skip-frontend
+          -Dskip.bundle=true -Dskip.models=true
+          test

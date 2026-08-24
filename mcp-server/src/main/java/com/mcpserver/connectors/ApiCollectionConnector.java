@@ -88,28 +88,18 @@ public class ApiCollectionConnector implements SourceConnector {
                 spec.resolvedUrl() != null ? spec.resolvedUrl() : connection.specSourceUrl(),
                 spec.parser().format(), spec.content());
 
-        // No base URL supplied → derive from the spec (OpenAPI servers[0].url, or a Postman
-        // baseUrl-style variable / the first request's absolute origin)
-        if (current.baseUrl() == null || current.baseUrl().isBlank()) {
-            String serverUrl = spec.parser().extractBaseUrl(spec.parsed());
-            if (serverUrl != null && spec.resolvedUrl() != null && !serverUrl.matches("^https?://.*")) {
-                serverUrl = URI.create(spec.resolvedUrl()).resolve(serverUrl).toString();
-            }
-            if ((serverUrl == null || !serverUrl.matches("^https?://.*"))
-                    && current.apiUrlMode() != ApiUrlMode.SOURCE_URLS) {
-                throw new IllegalArgumentException("Couldn't determine the API base URL from the "
-                        + "spec — edit the connection and set it explicitly");
-            }
-            if (serverUrl != null && serverUrl.matches("^https?://.*")) {
-                current = new Connection(current.id(), current.type(), current.name(), serverUrl,
-                        current.deploymentType(), current.authMode(), current.authUsername(),
-                        current.authSecretEncrypted(), current.status(), current.lastError(),
-                        current.syncCursor(), current.webhookRegistered(), current.aclScope(),
-                        current.createdAt(), Instant.now(), current.lastSyncedAt(),
-                        current.specSourceUrl(), current.specFormat(), current.specDocument(),
-                        current.apiUrlMode());
-            }
+        // A supplied connection override takes precedence in connection-base mode. Source-URL
+        // mode deliberately ignores it, retaining the document's operation hosts instead.
+        String documentBaseUrl = SpecFetcher.resolveBaseUrl(spec);
+        String effectiveBaseUrl = current.apiUrlMode() == ApiUrlMode.CONNECTION_BASE
+                && current.baseUrlOverride() != null
+                ? current.baseUrlOverride()
+                : documentBaseUrl;
+        if (effectiveBaseUrl == null && current.apiUrlMode() != ApiUrlMode.SOURCE_URLS) {
+            throw new IllegalArgumentException("Couldn't determine the API URL from the document — "
+                    + "declare a base URL/server URL in the Postman/OpenAPI document or set a Base URL override");
         }
+        current = current.withBaseUrl(effectiveBaseUrl == null ? "" : effectiveBaseUrl);
         connectionRepository.save(current);
 
         boolean preserveSourceUrls = current.apiUrlMode() == ApiUrlMode.SOURCE_URLS;
@@ -124,7 +114,7 @@ public class ApiCollectionConnector implements SourceConnector {
         log.info("Connection {}: imported {} tools from {} spec", current.id(), imported,
                 spec.parser().format());
 
-        probeBaseUrl(current);
+        if (!preserveSourceUrls) probeBaseUrl(current);
     }
 
     /** Manual "refresh knowledge now" — same work as pollDelta, with progress for the job UI. */
@@ -183,7 +173,7 @@ public class ApiCollectionConnector implements SourceConnector {
     /**
      * SOURCE_URLS mode persists a concrete absolute URL per imported tool. Absolute Postman
      * request URLs and OpenAPI server URLs pass through unchanged; relative URLs resolve against
-     * the fetched spec URL (OpenAPI) or the connection fallback base URL (Postman/upload).
+     * the fetched spec URL (OpenAPI) or the collection URL detected from the document.
      */
     private List<ApiToolDefinition> resolveSourceUrls(List<ApiToolDefinition> definitions,
                                                       Connection connection,
@@ -195,8 +185,7 @@ public class ApiCollectionConnector implements SourceConnector {
                 URI base = sourceUrlBase(connection, spec);
                 if (base == null) {
                     throw new IllegalArgumentException("Request '" + def.displayName()
-                            + "' has a relative URL. Set a fallback base URL or use the "
-                            + "connection-base URL mode");
+                            + "' has a relative URL, but the document declares no API URL");
                 }
                 url = resolveUrlTemplate(base, url);
             }

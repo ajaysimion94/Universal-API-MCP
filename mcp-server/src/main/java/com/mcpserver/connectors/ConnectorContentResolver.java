@@ -7,6 +7,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.Comparator;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -29,16 +32,22 @@ public class ConnectorContentResolver {
     private final Map<ConnectionType, SourceConnector> connectorsByType;
     private final Set<String> inFlight = ConcurrentHashMap.newKeySet();
     private final int titleMatchLimit;
+    private final int remoteDiscoveryLimit;
+    private final ConnectorMetrics connectorMetrics;
 
     public ConnectorContentResolver(SourceCatalogRepository catalogRepository,
                                     ConnectionRepository connectionRepository,
                                     List<SourceConnector> connectors,
-                                    @Value("${connectors.lazy-title-match-limit:3}") int titleMatchLimit) {
+                                    @Value("${connectors.lazy-title-match-limit:3}") int titleMatchLimit,
+                                    @Value("${connectors.remote-discovery-limit:3}") int remoteDiscoveryLimit,
+                                    ConnectorMetrics connectorMetrics) {
         this.catalogRepository = catalogRepository;
         this.connectionRepository = connectionRepository;
         this.connectorsByType = connectors.stream()
                 .collect(Collectors.toMap(SourceConnector::type, Function.identity()));
         this.titleMatchLimit = Math.max(1, Math.min(titleMatchLimit, 10));
+        this.remoteDiscoveryLimit = Math.max(1, Math.min(remoteDiscoveryLimit, 3));
+        this.connectorMetrics = connectorMetrics;
     }
 
     /** Returns how many remote bodies were fetched for this search. */
@@ -59,22 +68,44 @@ public class ConnectorContentResolver {
         int hydrated = 0;
         for (CatalogResource resource : matches) {
             if (hydrated >= titleMatchLimit) break;
-            if (!inFlight.add(resource.id())) continue;
+            Connection connection = connectionRepository.findById(resource.connectionId()).orElse(null);
+            if (connection == null || connection.status() != ConnectionStatus.CONNECTED) continue;
+            SourceConnector connector = connectorsByType.get(connection.type());
+            if (connector != null && hydrate(connection, connector, resource)) hydrated++;
+        }
+        return hydrated;
+    }
+
+    /**
+     * A miss-only fallback: ask each connected Atlassian source for a small, access-filtered set
+     * of candidates, hydrate the shared global budget, and let the normal local pipeline rerun.
+     */
+    public int discoverAndHydrate(String query) {
+        if (query == null || query.isBlank()) return 0;
+        int hydrated = 0;
+        Set<String> seen = new HashSet<>();
+        for (Connection connection : connectionRepository.findByStatus(ConnectionStatus.CONNECTED)) {
+            if (hydrated >= remoteDiscoveryLimit) break;
+            if (connection.type() != ConnectionType.JIRA && connection.type() != ConnectionType.CONFLUENCE) continue;
+            SourceConnector connector = connectorsByType.get(connection.type());
+            if (connector == null) continue;
+            Instant startedAt = Instant.now();
+            List<CatalogResource> resources;
             try {
-                Connection connection = connectionRepository.findById(resource.connectionId()).orElse(null);
-                if (connection == null || connection.status() != ConnectionStatus.CONNECTED) continue;
-                SourceConnector connector = connectorsByType.get(connection.type());
-                if (connector == null) continue;
-                connector.hydrate(connection, resource);
-                catalogRepository.markIndexed(resource.id());
-                hydrated++;
-            } catch (Exception e) {
-                // Search still runs against already indexed local content. A later query retries this
-                // metadata-only row instead of poisoning the search request or losing the pointer.
-                log.warn("Lazy hydration failed for {}:{} ({}): {}",
-                        resource.sourceSystem(), resource.externalId(), resource.title(), e.getMessage());
-            } finally {
-                inFlight.remove(resource.id());
+                resources = connector.discover(connection, query, remoteDiscoveryLimit - hydrated);
+                connectorMetrics.record(connection, "discovery", "success", null,
+                        Duration.between(startedAt, Instant.now()));
+            } catch (Exception exception) {
+                ConnectorFailureCategory category = failureCategory(exception);
+                connectorMetrics.record(connection, "discovery", "failure", category,
+                        Duration.between(startedAt, Instant.now()));
+                log.warn("Connector discovery failed for {} ({})", connection.type(), category);
+                continue;
+            }
+            for (CatalogResource resource : resources) {
+                if (hydrated >= remoteDiscoveryLimit) break;
+                if (!seen.add(resource.id()) || resource.contentState() == CatalogContentState.INDEXED) continue;
+                if (hydrate(connection, connector, resource)) hydrated++;
             }
         }
         return hydrated;
@@ -82,6 +113,26 @@ public class ConnectorContentResolver {
 
     public boolean hasCatalogEntries() {
         return catalogRepository.countResources() > 0;
+    }
+
+    private boolean hydrate(Connection connection, SourceConnector connector, CatalogResource resource) {
+        if (!inFlight.add(resource.id())) return false;
+        try {
+            connector.hydrate(connection, resource);
+            catalogRepository.markIndexed(resource.id());
+            return true;
+        } catch (Exception e) {
+            // A later query retries this metadata-only row; search continues against local content.
+            log.warn("Connector hydration failed for {} ({})", connection.type(), failureCategory(e));
+            return false;
+        } finally {
+            inFlight.remove(resource.id());
+        }
+    }
+
+    private static ConnectorFailureCategory failureCategory(Exception exception) {
+        return exception instanceof ConnectorException connectorException
+                ? connectorException.category() : ConnectorFailureCategory.UNKNOWN;
     }
 
     private static boolean isStrongMatch(String query, CatalogResource resource) {

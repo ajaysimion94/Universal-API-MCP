@@ -61,6 +61,7 @@ class ConnectionServiceTests {
                 mock(ConfluenceToolProvider.class),
                 mock(GitHubToolProvider.class),
                 mock(CacheService.class),
+                mock(ConnectorMetrics.class),
                 List.of(connector));
 
         service.create(ConnectionType.CONFLUENCE, "Docs", "https://docs.example.test",
@@ -71,6 +72,66 @@ class ConnectionServiceTests {
                 org.mockito.ArgumentMatchers.argThat(
                         connection -> connection.status() == ConnectionStatus.CONNECTED));
         assertThat(saved.get().lastSyncedAt()).isNotNull();
+    }
+
+    @Test
+    void explicitHealthCheckVerifiesReadAccessWithoutStartingBackfill() throws Exception {
+        ConnectionRepository connectionRepository = mock(ConnectionRepository.class);
+        SourceConnector connector = mock(SourceConnector.class);
+        Connection connection = Connection.create(ConnectionType.JIRA, "Jira", "https://jira.example.test",
+                "user", "encrypted", List.of()).withStatus(ConnectionStatus.CONNECTED, null);
+        AtomicReference<Connection> saved = new AtomicReference<>(connection);
+        when(connectionRepository.findById(connection.id())).thenAnswer(invocation -> Optional.of(saved.get()));
+        doAnswer(invocation -> {
+            saved.set(invocation.getArgument(0));
+            return null;
+        }).when(connectionRepository).save(any());
+        when(connector.type()).thenReturn(ConnectionType.JIRA);
+        when(connector.detectDeployment(any())).thenReturn(DeploymentType.CLOUD);
+        ConnectionService service = service(connectionRepository, mock(IngestionEventRepository.class),
+                mock(WebhookTokenService.class), connector);
+
+        String jobId = service.startTestConnectionJob(connection.id());
+
+        verify(connector, timeout(2_000)).verifyReadAccess(any());
+        verify(connector, never()).backfill(any(), any());
+        verify(connectionRepository, timeout(2_000)).save(
+                org.mockito.ArgumentMatchers.argThat(value -> value.lastTestSucceededAt() != null));
+        assertThat(service.getJob(jobId).orElseThrow().stage).isEqualTo("completed");
+        assertThat(saved.get().lastTestedAt()).isNotNull();
+        assertThat(saved.get().lastTestSucceededAt()).isNotNull();
+        assertThat(saved.get().lastTestFailureCategory()).isNull();
+        service.shutdown();
+    }
+
+    @Test
+    void failedHealthCheckPersistsOnlyTheSafeFailureCategory() throws Exception {
+        ConnectionRepository connectionRepository = mock(ConnectionRepository.class);
+        SourceConnector connector = mock(SourceConnector.class);
+        Connection connection = Connection.create(ConnectionType.JIRA, "Jira", "https://jira.example.test",
+                "user", "encrypted", List.of()).withStatus(ConnectionStatus.CONNECTED, null);
+        AtomicReference<Connection> saved = new AtomicReference<>(connection);
+        when(connectionRepository.findById(connection.id())).thenAnswer(invocation -> Optional.of(saved.get()));
+        doAnswer(invocation -> {
+            saved.set(invocation.getArgument(0));
+            return null;
+        }).when(connectionRepository).save(any());
+        when(connector.type()).thenReturn(ConnectionType.JIRA);
+        when(connector.detectDeployment(any())).thenThrow(new ConnectorException(
+                ConnectorFailureCategory.AUTHENTICATION, "Jira deployment detection failed (HTTP 401)"));
+        ConnectionService service = service(connectionRepository, mock(IngestionEventRepository.class),
+                mock(WebhookTokenService.class), connector);
+
+        String jobId = service.startTestConnectionJob(connection.id());
+
+        verify(connectionRepository, timeout(2_000)).save(
+                org.mockito.ArgumentMatchers.argThat(value -> value.status() == ConnectionStatus.ERROR));
+        ConnectionService.ConnectionJob job = service.getJob(jobId).orElseThrow();
+        assertThat(job.status).isEqualTo("failed");
+        assertThat(job.failureCategory).isEqualTo("AUTHENTICATION");
+        assertThat(job.error).doesNotContain("encrypted");
+        assertThat(saved.get().lastTestFailureCategory()).isEqualTo("AUTHENTICATION");
+        service.shutdown();
     }
 
     @Test
@@ -117,6 +178,49 @@ class ConnectionServiceTests {
         service.shutdown();
     }
 
+    @Test
+    void apiCollectionUpdateSetsAndClearsBaseUrlOverride() throws Exception {
+        ConnectionRepository connectionRepository = mock(ConnectionRepository.class);
+        SourceConnector connector = mock(SourceConnector.class);
+        Connection connection = Connection.create(ConnectionType.API_COLLECTION, "Orders",
+                        "https://source.example.test/api", AuthMode.NONE, null, null, List.of())
+                .withSpec(null, "OPENAPI", "{}");
+        AtomicReference<Connection> saved = new AtomicReference<>(connection);
+        when(connectionRepository.findById(connection.id()))
+                .thenAnswer(invocation -> Optional.of(saved.get()));
+        doAnswer(invocation -> {
+            saved.set(invocation.getArgument(0));
+            return null;
+        }).when(connectionRepository).save(any());
+        when(connector.type()).thenReturn(ConnectionType.API_COLLECTION);
+        when(connector.detectDeployment(any())).thenReturn(DeploymentType.UNKNOWN);
+        ConnectionService service = service(connectionRepository, mock(IngestionEventRepository.class),
+                mock(WebhookTokenService.class), connector);
+
+        service.update(connection.id(), null, "https://override.example.test", null, null,
+                null, null, null);
+
+        assertThat(saved.get().baseUrl()).isEqualTo("https://source.example.test/api");
+        assertThat(saved.get().baseUrlOverride()).isEqualTo("https://override.example.test");
+
+        service.update(connection.id(), null, "", null, null, null, null, null);
+
+        assertThat(saved.get().baseUrlOverride()).isNull();
+        service.shutdown();
+    }
+
+    @Test
+    void apiBaseUrlOverrideRequiresSafeAbsoluteHttpUrl() {
+        assertThat(ConnectionService.normalizeApiBaseUrlOverride(" https://api.example.test/v1 "))
+                .isEqualTo("https://api.example.test/v1");
+        assertThatThrownBy(() -> ConnectionService.normalizeApiBaseUrlOverride("/v1"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("absolute HTTP(S)");
+        assertThatThrownBy(() -> ConnectionService.normalizeApiBaseUrlOverride("https://user:pass@api.example.test"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("embedded credentials");
+    }
+
     private static ConnectionService service(ConnectionRepository connectionRepository,
                                              IngestionEventRepository eventRepository,
                                              WebhookTokenService webhookTokenService,
@@ -134,6 +238,7 @@ class ConnectionServiceTests {
                 mock(ConfluenceToolProvider.class),
                 mock(GitHubToolProvider.class),
                 mock(CacheService.class),
+                mock(ConnectorMetrics.class),
                 List.of(connector));
     }
 }

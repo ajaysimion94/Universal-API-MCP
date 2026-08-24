@@ -12,6 +12,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.net.URI;
+import java.net.ConnectException;
+import java.net.http.HttpTimeoutException;
+import java.time.Duration;
+import java.time.Instant;
+import javax.net.ssl.SSLException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -46,6 +52,7 @@ public class ConnectionService {
     private final ConfluenceToolProvider confluenceToolProvider;
     private final GitHubToolProvider githubToolProvider;
     private final CacheService cacheService;
+    private final ConnectorMetrics connectorMetrics;
     private final Map<ConnectionType, SourceConnector> connectorsByType;
 
     private final ExecutorService jobExecutor = Executors.newSingleThreadExecutor(r -> {
@@ -68,6 +75,7 @@ public class ConnectionService {
                               ConfluenceToolProvider confluenceToolProvider,
                               GitHubToolProvider githubToolProvider,
                               CacheService cacheService,
+                              ConnectorMetrics connectorMetrics,
                               List<SourceConnector> connectors) {
         this.connectionRepository = connectionRepository;
         this.chunkRepository = chunkRepository;
@@ -81,6 +89,7 @@ public class ConnectionService {
         this.confluenceToolProvider = confluenceToolProvider;
         this.githubToolProvider = githubToolProvider;
         this.cacheService = cacheService;
+        this.connectorMetrics = connectorMetrics;
         this.connectorsByType = connectors.stream()
                 .collect(Collectors.toMap(SourceConnector::type, Function.identity()));
     }
@@ -119,21 +128,22 @@ public class ConnectionService {
 
     /**
      * API_COLLECTION variant: carries the auth mode and the spec source (URL or raw uploaded
-     * document — exactly one should be set). Base URL may be blank; the connector derives it from
-     * the spec during the test job. The secret may be null for {@link AuthMode#NONE}.
+     * document — exactly one should be set). An optional base URL overrides the URL declared by
+     * the document in connection-base mode. The secret may be null for {@link AuthMode#NONE}.
      */
-    public CreateResult createApiCollection(String name, String baseUrl, AuthMode authMode,
+    public CreateResult createApiCollection(String name, AuthMode authMode,
                                             String username, String secret, List<String> aclScope,
                                             String specUrl, String specDocument,
-                                            ApiUrlMode apiUrlMode) {
+                                            String baseUrlOverride, ApiUrlMode apiUrlMode) {
         connectorFor(ConnectionType.API_COLLECTION);
         if ((specUrl == null || specUrl.isBlank()) && (specDocument == null || specDocument.isBlank())) {
             throw new IllegalArgumentException("Either a spec URL or an uploaded spec file is required");
         }
         Connection connection = Connection.create(ConnectionType.API_COLLECTION, name,
-                baseUrl == null ? "" : baseUrl, authMode, username,
+                "", authMode, username,
                 secret == null || secret.isBlank() ? null : credentialCipher.encrypt(secret),
-                aclScope).withApiUrlMode(apiUrlMode);
+                aclScope).withApiUrlMode(apiUrlMode)
+                .withBaseUrlOverride(normalizeApiBaseUrlOverride(baseUrlOverride));
         connection = connection.withSpec(
                 specUrl == null || specUrl.isBlank() ? null : specUrl.trim(), null, specDocument);
         connectionRepository.save(connection);
@@ -172,7 +182,9 @@ public class ConnectionService {
      * Updates name/base URL/ACL scope, and credentials if a new (non-blank) username or password
      * is supplied. {@code authMode} switches the connection's auth type (e.g. Bearer → Basic);
      * pass null to leave the current mode unchanged. Re-runs the test-connection job afterward
-     * since the base URL or credentials may have changed; returns that job's id.
+     * since the base URL or credentials may have changed; returns that job's id. For API
+     * collections, a supplied base URL sets the explicit override; an empty value clears it and
+     * restores document-derived routing.
      */
     public String update(String connectionId, String name, String baseUrl,
                           String username, String password, AuthMode authMode, List<String> aclScope,
@@ -180,7 +192,13 @@ public class ConnectionService {
         Connection existing = findById(connectionId);
         AuthMode newAuthMode = authMode != null ? authMode : existing.authMode();
         String newUsername = username != null && !username.isBlank() ? username : existing.authUsername();
-        String newBaseUrl = baseUrl != null && !baseUrl.isBlank() ? baseUrl : existing.baseUrl();
+        String newBaseUrl = existing.type() == ConnectionType.API_COLLECTION
+                ? existing.baseUrl()
+                : baseUrl != null && !baseUrl.isBlank() ? baseUrl : existing.baseUrl();
+        String newBaseUrlOverride = existing.baseUrlOverride();
+        if (existing.type() == ConnectionType.API_COLLECTION && baseUrl != null) {
+            newBaseUrlOverride = normalizeApiBaseUrlOverride(baseUrl);
+        }
         boolean contentConnection = existing.type() == ConnectionType.JIRA
                 || existing.type() == ConnectionType.CONFLUENCE;
         if (contentConnection && newAuthMode != AuthMode.BASIC && newAuthMode != AuthMode.BEARER) {
@@ -208,7 +226,9 @@ public class ConnectionService {
                 aclScope != null ? aclScope : existing.aclScope(),
                 existing.createdAt(), java.time.Instant.now(), existing.lastSyncedAt(),
                 existing.specSourceUrl(), existing.specFormat(), existing.specDocument(),
-                apiUrlMode != null ? apiUrlMode : existing.apiUrlMode()
+                apiUrlMode != null ? apiUrlMode : existing.apiUrlMode(),
+                newBaseUrlOverride,
+                existing.lastTestedAt(), existing.lastTestSucceededAt(), existing.lastTestFailureCategory()
         );
         connectionRepository.save(updated);
         return startTestConnectionJob(connectionId, sourceChanged);
@@ -221,6 +241,29 @@ public class ConnectionService {
         } else {
             connectionRepository.save(connection.withStatus(ConnectionStatus.PENDING, null));
             startTestConnectionJob(connectionId);
+        }
+    }
+
+    /**
+     * API collection targets must be safe, complete origins (optionally with an API path). The
+     * connector's execution guard then pins all request URLs to this origin.
+     */
+    static String normalizeApiBaseUrlOverride(String value) {
+        if (value == null || value.isBlank()) return null;
+        String normalized = value.trim();
+        try {
+            URI uri = URI.create(normalized);
+            if (uri.getHost() == null || uri.getUserInfo() != null
+                    || !("http".equalsIgnoreCase(uri.getScheme())
+                    || "https".equalsIgnoreCase(uri.getScheme()))) {
+                throw new IllegalArgumentException(
+                        "Base URL must be an absolute HTTP(S) URL without embedded credentials");
+            }
+            return normalized;
+        } catch (IllegalArgumentException e) {
+            if (e.getMessage() != null && e.getMessage().startsWith("Base URL must")) throw e;
+            throw new IllegalArgumentException(
+                    "Base URL must be an absolute HTTP(S) URL without embedded credentials");
         }
     }
 
@@ -270,18 +313,28 @@ public class ConnectionService {
     }
 
     private void runTestConnection(String connectionId, ConnectionJob job) {
+        Instant startedAt = Instant.now();
+        Connection connection = null;
         try {
-            Connection connection = findById(connectionId);
+            connection = findById(connectionId);
             SourceConnector connector = connectorFor(connection.type());
+            job.stage = "detecting-deployment";
             DeploymentType deployment = connector.detectDeployment(connection);
-            connection = connection.withDeploymentType(deployment);
+            // A user can save credentials, ACLs, or a base URL while this background probe is
+            // in flight. Merge the detected deployment into the latest record instead of
+            // re-saving the stale snapshot and silently undoing that edit.
+            connection = findById(connectionId).withDeploymentType(deployment);
             connectionRepository.save(connection);
+            job.stage = "authenticating";
             connector.testConnection(connection);
-            try {
-                connector.registerWebhook(connection);
-            } catch (Exception e) {
-                log.info("Webhook registration skipped for {} ({}): falling back to polling only",
-                        connectionId, e.getMessage());
+            job.stage = "checking-read-access";
+            connector.verifyReadAccess(connection);
+            if (job.initialSync) {
+                try {
+                    connector.registerWebhook(connection);
+                } catch (Exception e) {
+                    log.info("Webhook registration skipped for connection {}: polling remains active", connectionId);
+                }
             }
 
             // Register built-in tools for active connection
@@ -293,6 +346,7 @@ public class ConnectionService {
             // means the source has actually completed its initial sync. API_COLLECTION already
             // imports its tools in testConnection and has no content to crawl by default.
             if (job.initialSync && activeConnection.type() != ConnectionType.API_COLLECTION) {
+                job.stage = "cataloguing";
                 connector.backfill(activeConnection, (done, total) -> {
                     job.itemsProcessed = done;
                     job.itemsTotal = total;
@@ -301,14 +355,27 @@ public class ConnectionService {
                         .withLastSyncedAt(java.time.Instant.now()));
             }
 
-            connectionRepository.save(findById(connectionId).withStatus(ConnectionStatus.CONNECTED, null));
+            connectionRepository.save(findById(connectionId)
+                    .withStatus(ConnectionStatus.CONNECTED, null)
+                    .withTestResult(Instant.now(), true, null));
             job.status = "completed";
+            job.stage = "completed";
+            connectorMetrics.record(connection.withDeploymentType(deployment), "health_check", "success", null,
+                    Duration.between(startedAt, Instant.now()));
             log.info("Connection {} verified ({})", connectionId, deployment);
         } catch (Exception e) {
-            connectionRepository.save(findById(connectionId).withStatus(ConnectionStatus.ERROR, e.getMessage()));
+            ConnectorFailureCategory category = failureCategory(e);
+            Connection failed = findById(connectionId);
+            String safeError = safeError(e, category);
+            connectionRepository.save(failed.withStatus(ConnectionStatus.ERROR, safeError)
+                    .withTestResult(Instant.now(), false, category));
             job.status = "failed";
-            job.error = e.getMessage();
-            log.warn("Connection {} test failed: {}", connectionId, e.getMessage());
+            job.stage = "failed";
+            job.failureCategory = category.name();
+            job.error = safeError;
+            connectorMetrics.record(failed, "health_check", "failure", category,
+                    Duration.between(startedAt, Instant.now()));
+            log.warn("Connection {} health check failed ({})", connectionId, category);
         }
     }
 
@@ -366,6 +433,8 @@ public class ConnectionService {
         public final Kind kind;
         public volatile String status = "running";
         public volatile String error;
+        public volatile String stage = "queued";
+        public volatile String failureCategory;
         public volatile int itemsProcessed = 0;
         public volatile int itemsTotal = 0;
         private final boolean initialSync;
@@ -375,5 +444,27 @@ public class ConnectionService {
             this.kind = kind;
             this.initialSync = initialSync;
         }
+    }
+
+    private static ConnectorFailureCategory failureCategory(Exception exception) {
+        if (exception instanceof ConnectorException connectorException) return connectorException.category();
+        Throwable cause = exception;
+        while (cause != null) {
+            if (cause instanceof SSLException) return ConnectorFailureCategory.TLS;
+            if (cause instanceof ConnectException || cause instanceof HttpTimeoutException) {
+                return ConnectorFailureCategory.UNREACHABLE;
+            }
+            cause = cause.getCause();
+        }
+        return ConnectorFailureCategory.UNKNOWN;
+    }
+
+    private static String safeError(Exception exception, ConnectorFailureCategory category) {
+        if (exception instanceof ConnectorException) return exception.getMessage();
+        return switch (category) {
+            case UNREACHABLE -> "Source could not be reached; check its URL, network path, and availability";
+            case TLS -> "TLS validation failed; check the source certificate chain";
+            default -> "Connection health check failed (" + category.name() + ")";
+        };
     }
 }

@@ -188,7 +188,11 @@ public class SearXngPlugin implements Plugin {
     public String health() {
         if (!stateStore.isEnabled(PLUGIN_ID)) return "disabled";
         if (endpointHealthy()) {
-            return managedProcessAlive()
+            // A pid file proves that this application owns a SearXNG process, but not that the
+            // configured health URL points at that process. This distinction matters for an
+            // operator using an external endpoint and keeps health reporting deterministic in
+            // tests that probe a temporary HTTP server while a local managed process is alive.
+            return managedProcessAlive() && configuredEndpointIsManaged()
                     ? "healthy on " + searxngUrl + " (managed)"
                     : "healthy on " + searxngUrl + " (external process)";
         }
@@ -249,6 +253,18 @@ public class SearXngPlugin implements Plugin {
     private boolean managedProcessAlive() {
         if (process != null && process.isAlive()) return true;
         return managedHandle != null && managedHandle.isAlive() && isSearXngProcess(managedHandle);
+    }
+
+    private boolean configuredEndpointIsManaged() {
+        try {
+            URI endpoint = URI.create(searxngUrl);
+            String host = endpoint.getHost();
+            int port = endpoint.getPort() >= 0 ? endpoint.getPort() : 80;
+            return port == 8888
+                    && ("127.0.0.1".equals(host) || "localhost".equalsIgnoreCase(host));
+        } catch (IllegalArgumentException ignored) {
+            return false;
+        }
     }
 
     private void adoptManagedProcess() {

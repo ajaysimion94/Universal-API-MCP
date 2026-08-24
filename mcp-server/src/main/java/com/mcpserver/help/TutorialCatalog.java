@@ -97,20 +97,20 @@ public class TutorialCatalog {
                 List.of("query-bar", "connect-sources"),
                 List.of(
                         step("Turn on search",
-                                "Search needs a vector store and an embedding model. Both ship with the app and "
-                                        + "install locally — nothing is sent to a third party at query time.",
+                                "Search needs a vector store and an embedding model. Both ship with the app, extract, "
+                                        + "and initialize automatically — nothing is sent to a third party at query time.",
                                 List.of("Open Plugins.",
-                                        "Install and enable SQLite Vec Store.",
-                                        "Install and enable Nomic Embedding."),
+                                        "Confirm SQLite Vec Store reports Active.",
+                                        "Confirm Nomic Embedding reports Active."),
                                 "/plugins", "Open Plugins",
                                 List.of(),
                                 "Both plugins report Ready.",
                                 "Until they are ready the app runs in a degraded mode: files still work, and search "
                                         + "returns a structured \"not ready\" response rather than failing.",
                                 List.of(
-                                        fix("Install sits at Installing for a long time",
-                                                "The embedding model is unpacking on first install. The job is polled, "
-                                                        + "so navigating away does not cancel it."),
+                                        fix("A required plugin reports Error",
+                                                "Check its health detail and that the release JAR contains the bundled model/native artifact. "
+                                                        + "Restart after correcting the local prerequisite."),
                                         fix("Semantic results are missing but keyword results work",
                                                 "The embedding plugin is down. Already-indexed chunks stay lexically "
                                                         + "searchable, so restore the plugin rather than re-ingesting."))),
@@ -167,7 +167,7 @@ public class TutorialCatalog {
                         step("Add current web results, deliberately",
                                 "The Web toggle merges results from the local SearXNG plugin into the current query "
                                         + "only. Web content is never written into your knowledge store.",
-                                List.of("Open Plugins and install and start SearXNG.",
+                                List.of("Open Plugins and select Install & start for SearXNG.",
                                         "Return to Search and enable the Web toggle in the composer.",
                                         "Ask a question whose answer changes over time.",
                                         "Open the source URL before relying on any web claim."),
@@ -181,7 +181,7 @@ public class TutorialCatalog {
                                 "The toggle stays disabled until SearXNG is installed and running, and a query with web "
                                         + "enabled degrades to local evidence if it stops.",
                                 List.of(fix("The Web toggle is greyed out",
-                                        "SearXNG is not installed or not started. Both happen on Plugins."))),
+                                        "Select Install & start on Plugins. Once installed and enabled, SearXNG starts automatically with later app runs."))),
                         step("Export what you gathered",
                                 "The export action in the header takes a source picker — indexed files and connected "
                                         + "apps — and returns a plain-text export of their chunks.",
@@ -480,31 +480,34 @@ public class TutorialCatalog {
                                         + "the connection name becomes the @app slug you use in the query bar.",
                                 List.of("Open Connections and create an API connection.",
                                         "Upload a .json/.yaml/.yml file, or point at a spec URL.",
-                                        "Press Detect auth to have the spec's scheme proposed.",
+                                        "Press Inspect spec to view its API URL and have the auth scheme proposed.",
                                         "Choose the URL policy."),
                                 "/connections", "Open Connections",
                                 List.of(
                                         example("Use one base URL (default)",
-                                                "Every imported request is sent to the connection's base URL — the "
-                                                        + "setting that lets one collection move between environments.",
+                                                "Every imported request is sent to the Base URL override, or to "
+                                                        + "the API server URL declared by the Postman/OpenAPI "
+                                                        + "document.",
                                                 "text",
                                                 "Name:      Todo App        -> @todo-app\n"
                                                         + "Spec:      openapi.json\n"
                                                         + "URLs:      Use one base URL\n"
-                                                        + "Base URL:  https://staging.api.example.com",
-                                                "Tools resolve against the staging host regardless of the spec's servers."),
-                                        example("Keep source URLs",
-                                                "Preserves each absolute request URL; relative requests fall back to the "
-                                                        + "base URL. Connection credentials can then reach several hosts, "
-                                                        + "so use it only for sources you trust.",
+                                                        + "Base URL:  https://staging-api.example.com  (optional)",
+                                                "Leave Base URL blank to use the URL declared by the source document. "
+                                                        + "An override remains in effect after re-imports until you clear it."),
+                                        example("Keep each request's URL",
+                                                "Preserves each request host from the source file. Connection "
+                                                        + "credentials can then reach several hosts, so use it only "
+                                                        + "for sources you trust.",
                                                 "text",
-                                                "URLs:      Keep source URLs\n"
-                                                        + "Base URL:  https://api.example.com  (fallback only)",
-                                                "Each request keeps the host declared in the source document.")),
+                                                "URLs:      Keep each request's URL\n"
+                                                        + "Base URL:  unavailable",
+                                                "Each request keeps the host declared in the source document; a saved "
+                                                        + "Base URL override is inactive in this mode.")),
                                 "The connection reports Connected and its requests are listed.",
                                 "Changing the URL policy later reimports the collection, so persisted tool URLs and "
                                         + "their allowed hosts stay in sync.",
-                                List.of(fix("Detect auth proposes nothing",
+                                List.of(fix("Inspect spec proposes no authentication",
                                         "The spec declares no security scheme. Choose the mode manually — Basic, "
                                                 + "Bearer, API key header, OAuth2, or none."))),
                         step("Enable only what should be callable",

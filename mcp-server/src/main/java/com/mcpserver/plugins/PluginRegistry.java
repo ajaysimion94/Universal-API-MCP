@@ -27,6 +27,7 @@ public class PluginRegistry {
         return thread;
     });
     private final Map<String, InstallJob> jobs = new ConcurrentHashMap<>();
+    private final Map<String, String> activeJobs = new ConcurrentHashMap<>();
     private final AtomicInteger jobCounter = new AtomicInteger(0);
 
     public PluginRegistry(List<Plugin> plugins, PluginStateStore stateStore) {
@@ -53,21 +54,49 @@ public class PluginRegistry {
             throw new IllegalArgumentException(
                     target.name() + " is built into the app — there is nothing to install");
         }
+        return submitJob(target, false);
+    }
+
+    /**
+     * Runs the complete first-use lifecycle in one background job: install when needed,
+     * enable, and start. Repeated clicks return the already-running job for that plugin.
+     */
+    public String startSetup(String pluginId) {
+        Plugin target = findById(pluginId)
+                .orElseThrow(() -> new IllegalArgumentException("Plugin not found: " + pluginId));
+        return submitJob(target, true);
+    }
+
+    private synchronized String submitJob(Plugin target, boolean setup) {
+        String existing = activeJobs.get(target.id());
+        if (existing != null) return existing;
+
         String jobId = "job-" + jobCounter.incrementAndGet();
-        InstallJob job = new InstallJob(pluginId, "running");
+        InstallJob job = new InstallJob(target.id(), "running");
         jobs.put(jobId, job);
+        activeJobs.put(target.id(), jobId);
         installExecutor.submit(() -> {
             try {
-                Plugin plugin = findById(pluginId)
-                        .orElseThrow(() -> new IllegalArgumentException("Plugin not found: " + pluginId));
-                plugin.install();
-                stateStore.setInstalled(pluginId, true);
+                boolean installed = target.builtIn() || stateStore.isInstalled(target.id());
+                if (!installed || !setup) {
+                    target.install();
+                    stateStore.setInstalled(target.id(), true);
+                } else if (!target.isReady()) {
+                    // Built-ins and partially initialized plugins use install() as a safe retry hook.
+                    target.install();
+                }
+                if (setup) {
+                    if (!target.isEnabled()) target.enable();
+                    if (!target.isRunning()) target.start();
+                }
                 job.status = "completed";
-                log.info("Plugin {} installed successfully", pluginId);
+                log.info("Plugin {} {} successfully", target.id(), setup ? "set up" : "installed");
             } catch (Exception e) {
                 job.status = "failed";
-                job.error = e.getMessage();
-                log.error("Plugin {} install failed: {}", pluginId, e.getMessage());
+                job.error = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+                log.error("Plugin {} {} failed", target.id(), setup ? "setup" : "install", e);
+            } finally {
+                activeJobs.remove(target.id(), jobId);
             }
         });
         return jobId;

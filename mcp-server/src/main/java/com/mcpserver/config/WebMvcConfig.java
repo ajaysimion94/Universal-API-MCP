@@ -9,8 +9,8 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     @Override
     public void addViewControllers(ViewControllerRegistry registry) {
-        // Browser-native SPA route forwards. Static HTML/CSS/JS lives directly in
-        // resources/static, so Maven and a Java runtime are the only build tools.
+        // React SPA route forwards. Maven overlays the compiled Vite entry point on the static
+        // resources; compatibility page controllers continue to load as ordinary ES modules.
         registry.addViewController("/files").setViewName("forward:/index.html");
         registry.addViewController("/files/**").setViewName("forward:/index.html");
         registry.addViewController("/plugins").setViewName("forward:/index.html");
@@ -26,6 +26,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
         registry.addViewController("/dashboards").setViewName("forward:/index.html");
         registry.addViewController("/dashboards/**").setViewName("forward:/index.html");
         registry.addViewController("/reports").setViewName("forward:/index.html");
+        registry.addViewController("/reports/**").setViewName("forward:/index.html");
     }
 
 }

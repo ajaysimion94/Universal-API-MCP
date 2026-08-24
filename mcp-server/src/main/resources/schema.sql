@@ -168,6 +168,10 @@ ALTER TABLE connections ADD COLUMN spec_source_url TEXT;
 ALTER TABLE connections ADD COLUMN spec_format TEXT;
 ALTER TABLE connections ADD COLUMN spec_document TEXT;
 ALTER TABLE connections ADD COLUMN api_url_mode TEXT NOT NULL DEFAULT 'CONNECTION_BASE';
+ALTER TABLE connections ADD COLUMN base_url_override TEXT;
+ALTER TABLE connections ADD COLUMN last_tested_at TEXT;
+ALTER TABLE connections ADD COLUMN last_test_succeeded_at TEXT;
+ALTER TABLE connections ADD COLUMN last_test_failure_category TEXT;
 
 -- Tools generated from an imported Postman collection / OpenAPI spec (product-idea.md §8).
 -- One row per request/operation; enabled tools are callable from search (# grammar) and MCP.

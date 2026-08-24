@@ -11,10 +11,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Structural guards on how the search page previews a tool response body.
  *
- * <p>These are source assertions rather than behavioural ones because the browser application
- * deliberately has no Node toolchain (see {@code StaticFrontendTests}), so there is no JS test
- * runner to execute the module in. They pin the two properties that actually matter and that a
- * well-meaning edit could quietly undo.
+ * <p>These source assertions complement the React typecheck because the compatibility controller
+ * still owns response rendering. They pin the properties that matter and that a well-meaning edit
+ * could quietly undo.
  */
 class ResponsePreviewTests {
 

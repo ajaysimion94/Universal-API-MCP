@@ -46,9 +46,9 @@ public class ConnectionController {
                 throw new IllegalArgumentException(
                         "name and specUrl are required (or upload a spec file via /import-spec)");
             }
-            result = connectionService.createApiCollection(req.name, req.baseUrl,
+            result = connectionService.createApiCollection(req.name,
                     parseAuthMode(req.authMode), authUsernameFor(req), req.password, aclScope,
-                    req.specUrl, null, parseApiUrlMode(req.apiUrlMode));
+                    req.specUrl, null, req.baseUrl, parseApiUrlMode(req.apiUrlMode));
         } else {
             if (req.name == null || req.baseUrl == null) {
                 throw new IllegalArgumentException("type, name, and baseUrl are required");
@@ -66,11 +66,11 @@ public class ConnectionController {
     @PostMapping("/import-spec")
     public Map<String, Object> importSpec(@RequestParam("file") MultipartFile file,
                                           @RequestParam("name") String name,
-                                          @RequestParam(value = "baseUrl", required = false) String baseUrl,
                                           @RequestParam(value = "authMode", required = false) String authMode,
                                           @RequestParam(value = "username", required = false) String username,
                                           @RequestParam(value = "password", required = false) String password,
                                           @RequestParam(value = "apiKeyHeader", required = false) String apiKeyHeader,
+                                          @RequestParam(value = "baseUrl", required = false) String baseUrl,
                                           @RequestParam(value = "apiUrlMode", required = false) String apiUrlMode) throws IOException {
         if (file.isEmpty()) {
             throw new IllegalArgumentException("Spec file is empty");
@@ -79,15 +79,15 @@ public class ConnectionController {
         AuthMode mode = parseAuthMode(authMode);
         String authUsername = mode == AuthMode.API_KEY_HEADER ? apiKeyHeader : username;
         ConnectionService.CreateResult result = connectionService.createApiCollection(
-                name, baseUrl, mode, authUsername, password, List.of(), null, specDocument,
-                parseApiUrlMode(apiUrlMode));
+                name, mode, authUsername, password, List.of(), null, specDocument,
+                baseUrl, parseApiUrlMode(apiUrlMode));
         return Map.of("id", result.connectionId(), "jobId", result.jobId(), "status", "running");
     }
 
     /**
      * Best-effort, side-effect-free auth suggestion for the connection-setup form: fetches/parses
-     * the same spec the real import would, but only returns the detected auth mode + a non-secret
-     * field identity (never a password/token/key value — the user always types that themselves).
+     * the same spec the real import would, and returns its read-only API URL plus the detected auth
+     * mode and a non-secret field identity (never a password/token/key value).
      * Detection failures (unparseable doc, unreachable URL) are non-fatal — the form just falls
      * back to manual auth selection.
      */
@@ -101,15 +101,18 @@ public class ConnectionController {
             try {
                 spec = specFetcher.fetch(specUrl);
             } catch (Exception e) {
-                return Map.of("authMode", "NONE", "username", "");
+                return Map.of("authMode", "NONE", "username", "", "baseUrl", "", "specFormat", "");
             }
         } else {
             throw new IllegalArgumentException("Provide a spec file or specUrl");
         }
         SpecParser.DetectedAuth detected = spec.parser().detectAuth(spec.parsed());
+        String baseUrl = SpecFetcher.resolveBaseUrl(spec);
         Map<String, Object> body = new HashMap<>();
         body.put("authMode", detected.authMode().name());
         body.put("username", detected.username());
+        body.put("baseUrl", baseUrl == null ? "" : baseUrl);
+        body.put("specFormat", spec.parser().format());
         return body;
     }
 
@@ -175,6 +178,13 @@ public class ConnectionController {
         return Map.of("jobId", jobId, "status", "running");
     }
 
+    /** Runs deployment, authentication, and read-access probes without triggering a backfill. */
+    @PostMapping("/{id}/test")
+    public Map<String, String> test(@PathVariable String id) {
+        String jobId = connectionService.startTestConnectionJob(id);
+        return Map.of("jobId", jobId, "status", "running");
+    }
+
     @PostMapping("/{id}/enable")
     public Map<String, Object> enable(@PathVariable String id) {
         connectionService.setDisabled(id, false);
@@ -196,11 +206,13 @@ public class ConnectionController {
         map.put("connectionId", job.connectionId);
         map.put("kind", job.kind.name());
         map.put("status", job.status);
+        map.put("stage", job.stage);
         if (job.kind == ConnectionService.ConnectionJob.Kind.BACKFILL) {
             map.put("itemsProcessed", job.itemsProcessed);
             map.put("itemsTotal", job.itemsTotal);
         }
         if (job.error != null) map.put("error", job.error);
+        if (job.failureCategory != null) map.put("failureCategory", job.failureCategory);
         return map;
     }
 
@@ -238,6 +250,7 @@ public class ConnectionController {
         map.put("authMode", c.authMode().name());
         map.put("authUsername", c.authUsername());
         map.put("apiUrlMode", c.apiUrlMode().name());
+        map.put("baseUrlOverride", c.baseUrlOverride());
         map.put("status", c.status().name());
         if (c.lastError() != null) map.put("lastError", c.lastError());
         map.put("webhookRegistered", c.webhookRegistered());
@@ -247,6 +260,13 @@ public class ConnectionController {
         map.put("createdAt", c.createdAt().toString());
         map.put("updatedAt", c.updatedAt().toString());
         if (c.lastSyncedAt() != null) map.put("lastSyncedAt", c.lastSyncedAt().toString());
+        if (c.lastTestedAt() != null) map.put("lastTestedAt", c.lastTestedAt().toString());
+        if (c.lastTestSucceededAt() != null) {
+            map.put("lastTestSucceededAt", c.lastTestSucceededAt().toString());
+        }
+        if (c.lastTestFailureCategory() != null) {
+            map.put("lastTestFailureCategory", c.lastTestFailureCategory());
+        }
         return map;
     }
 

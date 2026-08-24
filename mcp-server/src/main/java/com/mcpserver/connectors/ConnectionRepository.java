@@ -20,6 +20,8 @@ public class ConnectionRepository {
 
     private static final RowMapper<Connection> MAPPER = (rs, rowNum) -> {
         String lastSyncedAt = rs.getString("last_synced_at");
+        String lastTestedAt = rs.getString("last_tested_at");
+        String lastTestSucceededAt = rs.getString("last_test_succeeded_at");
         return new Connection(
                 rs.getString("id"),
                 ConnectionType.valueOf(rs.getString("type")),
@@ -40,7 +42,11 @@ public class ConnectionRepository {
                 rs.getString("spec_source_url"),
                 rs.getString("spec_format"),
                 rs.getString("spec_document"),
-                parseApiUrlMode(rs.getString("api_url_mode"))
+                parseApiUrlMode(rs.getString("api_url_mode")),
+                rs.getString("base_url_override"),
+                lastTestedAt == null ? null : Instant.parse(lastTestedAt),
+                lastTestSucceededAt == null ? null : Instant.parse(lastTestSucceededAt),
+                rs.getString("last_test_failure_category")
         );
     };
 
@@ -50,15 +56,20 @@ public class ConnectionRepository {
                     (id, type, name, base_url, deployment_type, auth_mode, auth_username,
                      auth_secret_encrypted, status, last_error, sync_cursor, webhook_registered,
                      acl_scope, created_at, updated_at, last_synced_at,
-                     spec_source_url, spec_format, spec_document, api_url_mode)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     spec_source_url, spec_format, spec_document, api_url_mode, base_url_override,
+                     last_tested_at, last_test_succeeded_at, last_test_failure_category)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 c.id(), c.type().name(), c.name(), c.baseUrl(), c.deploymentType().name(),
                 c.authMode().name(), c.authUsername(), c.authSecretEncrypted(), c.status().name(),
                 c.lastError(), c.syncCursor(), c.webhookRegistered() ? 1 : 0,
                 toJsonStringArray(c.aclScope()), c.createdAt().toString(), c.updatedAt().toString(),
                 c.lastSyncedAt() == null ? null : c.lastSyncedAt().toString(),
-                c.specSourceUrl(), c.specFormat(), c.specDocument(), c.apiUrlMode().name()
+                c.specSourceUrl(), c.specFormat(), c.specDocument(), c.apiUrlMode().name(),
+                c.baseUrlOverride(),
+                c.lastTestedAt() == null ? null : c.lastTestedAt().toString(),
+                c.lastTestSucceededAt() == null ? null : c.lastTestSucceededAt().toString(),
+                c.lastTestFailureCategory()
         );
     }
 

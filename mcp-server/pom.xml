@@ -21,6 +21,12 @@
         <!-- Compile to the Java 17 LTS bytecode/API baseline. The resulting JAR runs on
              Java 17 and newer runtimes, including Java 20 and Java 21. -->
         <java.version>17</java.version>
+        <!-- The production build owns a pinned Node/npm runtime so Windows, macOS, Linux,
+             and CI all compile the same React application without a global Node install. -->
+        <node.version>v22.23.0</node.version>
+        <npm.version>10.9.8</npm.version>
+        <frontend.dir>${project.basedir}/webui</frontend.dir>
+        <frontend.build.dir>${frontend.dir}/dist</frontend.build.dir>
         <!-- Skip downloading/bundling model + native libs + searxng source (-Dskip.bundle=true).
              The jar then relies on files already extracted on disk (dev loops only). -->
         <skip.bundle>false</skip.bundle>
@@ -32,6 +38,9 @@
         <sqlite-vec.base>https://github.com/asg017/sqlite-vec/releases/download/v${sqlite-vec.version}/sqlite-vec-${sqlite-vec.version}-loadable</sqlite-vec.base>
         <!-- Pinned SearXNG source snapshot (same commit as the previously tested checkout) -->
         <searxng.ref>a6438586a5bf7e3657c4208d07296c883cd0f06d</searxng.ref>
+        <!-- Live Atlassian tests are opt-in. Normal developer and PR runs remain entirely offline. -->
+        <connector.live.groups></connector.live.groups>
+        <connector.live.excluded-groups>connector-live</connector.live.excluded-groups>
     </properties>
 
     <dependencyManagement>
@@ -152,10 +161,94 @@
 
     <build>
         <finalName>mcp-server</finalName>
+        <pluginManagement>
+            <plugins>
+                <!-- Eclipse m2e must not run Node/npm during incremental Java workspace builds.
+                     Command-line Maven still executes the complete production pipeline. -->
+                <plugin>
+                    <groupId>org.eclipse.m2e</groupId>
+                    <artifactId>lifecycle-mapping</artifactId>
+                    <version>1.0.0</version>
+                    <configuration>
+                        <lifecycleMappingMetadata>
+                            <pluginExecutions>
+                                <pluginExecution>
+                                    <pluginExecutionFilter>
+                                        <groupId>com.github.eirslett</groupId>
+                                        <artifactId>frontend-maven-plugin</artifactId>
+                                        <versionRange>[1.15.1,1.16.0)</versionRange>
+                                        <goals>
+                                            <goal>install-node-and-npm</goal>
+                                            <goal>npm</goal>
+                                        </goals>
+                                    </pluginExecutionFilter>
+                                    <action><ignore/></action>
+                                </pluginExecution>
+                            </pluginExecutions>
+                        </lifecycleMappingMetadata>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
         <plugins>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <groups>${connector.live.groups}</groups>
+                    <excludedGroups>${connector.live.excluded-groups}</excludedGroups>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+
+            <!-- Build the React SPA with a Maven-managed Node runtime. The downloaded runtime
+                 lives under webui/ so `mvn clean` does not redownload it. -->
+            <plugin>
+                <groupId>com.github.eirslett</groupId>
+                <artifactId>frontend-maven-plugin</artifactId>
+                <version>1.15.1</version>
+                <configuration>
+                    <workingDirectory>${frontend.dir}</workingDirectory>
+                    <installDirectory>${frontend.dir}</installDirectory>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>install-node-and-npm</id>
+                        <goals><goal>install-node-and-npm</goal></goals>
+                        <configuration>
+                            <nodeVersion>${node.version}</nodeVersion>
+                            <npmVersion>${npm.version}</npmVersion>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>npm-install</id>
+                        <goals><goal>npm</goal></goals>
+                        <configuration>
+                            <arguments>ci --include=dev</arguments>
+                            <environmentVariables>
+                                <NODE_ENV>development</NODE_ENV>
+                            </environmentVariables>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>npm-build</id>
+                        <phase>generate-resources</phase>
+                        <goals><goal>npm</goal></goals>
+                        <configuration>
+                            <arguments>run build</arguments>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>npm-test</id>
+                        <phase>generate-resources</phase>
+                        <goals><goal>npm</goal></goals>
+                        <configuration>
+                            <arguments>test</arguments>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
 
             <!-- Bundle the embedding model, per-platform sqlite-vec libs, and the SearXNG
@@ -288,6 +381,100 @@
                 </executions>
             </plugin>
 
+            <!-- A non-clean Maven build must not retain obsolete Vite hashes from an earlier
+                 frontend build. Only the generated assets directory is removed; compatibility
+                 modules and shared CSS under src/main/resources/static remain untouched. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>clean-generated-frontend-assets</id>
+                        <phase>process-resources</phase>
+                        <goals><goal>run</goal></goals>
+                        <configuration>
+                            <target>
+                                <delete dir="${project.build.outputDirectory}/static/assets"/>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Overlay the compiled React entry point and hashed assets onto the static
+                 resources. Existing page controllers remain available as compatibility modules. -->
+            <plugin>
+                <artifactId>maven-resources-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>copy-frontend</id>
+                        <phase>process-resources</phase>
+                        <goals><goal>copy-resources</goal></goals>
+                        <configuration>
+                            <outputDirectory>${project.build.outputDirectory}/static</outputDirectory>
+                            <overwrite>true</overwrite>
+                            <resources>
+                                <resource>
+                                    <directory>${frontend.build.dir}</directory>
+                                    <filtering>false</filtering>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
         </plugins>
     </build>
+
+    <profiles>
+        <!-- Explicitly opt in to credentialed Cloud and Data Center tests. The workflow passes
+             every credential through environment variables; no secret is stored in Maven config. -->
+        <profile>
+            <id>connector-live</id>
+            <properties>
+                <connector.live.groups>connector-live</connector.live.groups>
+                <connector.live.excluded-groups></connector.live.excluded-groups>
+            </properties>
+        </profile>
+        <!-- Fast backend-only loop. A packaged artifact made with this profile reuses any
+             existing target/classes/static output and is not a production release build. -->
+        <profile>
+            <id>skip-frontend</id>
+            <activation>
+                <property>
+                    <name>skip.frontend</name>
+                    <value>true</value>
+                </property>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>com.github.eirslett</groupId>
+                        <artifactId>frontend-maven-plugin</artifactId>
+                        <executions>
+                            <execution><id>install-node-and-npm</id><phase>none</phase></execution>
+                            <execution><id>npm-install</id><phase>none</phase></execution>
+                            <execution><id>npm-build</id><phase>none</phase></execution>
+                            <execution><id>npm-test</id><phase>none</phase></execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <artifactId>maven-resources-plugin</artifactId>
+                        <executions>
+                            <execution><id>copy-frontend</id><phase>none</phase></execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <executions>
+                            <execution><id>clean-generated-frontend-assets</id><phase>none</phase></execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

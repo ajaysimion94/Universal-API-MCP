@@ -104,6 +104,16 @@ public class ReportQueryService {
             new StageForm("join", false),
             new StageForm("having", false));
 
+    /** Statement openings offered at the beginning of an RQL statement. */
+    private static final List<CompletionSeed> STATEMENT_COMPLETIONS = List.of(
+            new CompletionSeed("let", "KEYWORD", "Create a named dataset", "let "),
+            new CompletionSeed("set", "KEYWORD", "Set a reusable variable", "set "),
+            new CompletionSeed("use collection", "KEYWORD", "Scope requests to an API collection", "use collection \""),
+            new CompletionSeed("emit", "KEYWORD", "Return a dataset from this query", "emit "));
+
+    private record CompletionSeed(String label, String kind, String detail, String insertText) {
+    }
+
     private final ApiToolService apiToolService;
     private final ConnectionService connectionService;
     private final ApiToolExecutor apiToolExecutor;
@@ -209,10 +219,26 @@ public class ReportQueryService {
 
     /** Fast, network-free editor analysis. */
     public Analysis analyze(String source, String connectionId, Integer cursorOffset) {
+        return analyze(source, connectionId, cursorOffset, Set.of());
+    }
+
+    /**
+     * Fast, network-free editor analysis with variables supplied by the containing document.
+     * Insight front matter, for example, supplies run-time values without needing a redundant
+     * {@code set} statement in every RQL block.
+     */
+    public Analysis analyze(String source, String connectionId, Integer cursorOffset,
+                            Set<String> initialBindings) {
         ParsedProgram program = parser.parse(source);
         List<Diagnostic> diagnostics = new ArrayList<>(program.diagnostics());
         Scope scope = scope(connectionId, diagnostics, source);
         LinkedHashSet<String> bindings = new LinkedHashSet<>();
+        if (initialBindings != null) {
+            initialBindings.stream()
+                    .filter(Objects::nonNull)
+                    .filter(binding -> binding.matches("\\$[A-Za-z_][A-Za-z0-9_]*"))
+                    .forEach(bindings::add);
+        }
         List<Symbol> symbols = new ArrayList<>();
 
         for (Statement statement : program.statements()) {
@@ -383,20 +409,29 @@ public class ReportQueryService {
     private List<Completion> completions(String source, Integer cursorOffset, Scope scope,
                                          Set<String> bindings) {
         if (cursorOffset == null) return List.of();
-        int cursor = Math.max(0, Math.min(cursorOffset, source == null ? 0 : source.length()));
-        String before = source == null ? "" : source.substring(0, cursor);
-        Span replacement = Span.of(source, cursor, cursor);
+        String text = source == null ? "" : source;
+        int cursor = Math.max(0, Math.min(cursorOffset, text.length()));
+        String before = text.substring(0, cursor);
+        int replacementStart = wordStart(text, cursor);
+        Span replacement = Span.of(text, replacementStart, cursor);
         List<Completion> completions = new ArrayList<>();
         if (before.matches("(?s).*\\|>\\s*[A-Za-z_]*$")) {
+            String prefix = text.substring(replacementStart, cursor);
             for (String stage : stageSnippets()) {
-                completions.add(new Completion(stage, "STAGE", "RQL pipeline stage", stage, replacement));
+                addCompletion(completions, stage, "STAGE", "RQL pipeline stage", stage, replacement, prefix);
             }
         } else if (before.matches("(?s).*\\buse\\s+collection\\s+\\\"[^\\\"]*$")) {
+            int stringStart = before.lastIndexOf('"') + 1;
+            Span stringReplacement = Span.of(text, stringStart, cursor);
+            String prefix = text.substring(stringStart, cursor);
             for (Connection connection : scope.connections) {
-                completions.add(new Completion(connection.name(), "COLLECTION",
-                        "API collection", connection.name(), replacement));
+                addCompletion(completions, connection.name(), "COLLECTION", "API collection", connection.name(),
+                        stringReplacement, prefix);
             }
         } else if (before.matches("(?s).*\\brequest\\s+\\\"[^\\\"]*$")) {
+            int stringStart = before.lastIndexOf('"') + 1;
+            Span stringReplacement = Span.of(text, stringStart, cursor);
+            String prefix = text.substring(stringStart, cursor);
             // Offer every reachable request, qualified by app when more than one app is connected.
             boolean multipleApps = scope.connections.size() > 1;
             for (Connection connection : scope.connections) {
@@ -404,19 +439,58 @@ public class ReportQueryService {
                     if (!tool.enabled() || !tool.isRead()) continue;
                     boolean qualify = multipleApps && !connection.id().equals(scope.preferredConnectionId);
                     String insert = qualify ? connection.name() + ": " + tool.displayName() : tool.displayName();
-                    completions.add(new Completion(insert, "REQUEST",
+                    addCompletion(completions, insert, "REQUEST",
                             connection.name() + " · " + tool.httpMethod() + " " + tool.urlTemplate(),
-                            insert, replacement));
+                            insert, stringReplacement, prefix);
                 }
             }
         } else {
-            for (String binding : bindings) {
-                if (!binding.startsWith("$")) {
-                    completions.add(new Completion(binding, "DATASET", "RQL dataset", binding, replacement));
+            String prefix = text.substring(replacementStart, cursor);
+            if (atStatementStart(before)) {
+                for (CompletionSeed keyword : STATEMENT_COMPLETIONS) {
+                    addCompletion(completions, keyword.label(), keyword.kind(), keyword.detail(), keyword.insertText(),
+                            replacement, prefix);
                 }
+            }
+            if (expectsPipelineSource(before)) {
+                addCompletion(completions, "request", "KEYWORD", "Start a dataset from an API request",
+                        "request \"", replacement, prefix);
+            }
+            for (String binding : bindings) {
+                String kind = binding.startsWith("$") ? "VARIABLE" : "DATASET";
+                String detail = binding.startsWith("$") ? "RQL variable" : "RQL dataset";
+                addCompletion(completions, binding, kind, detail, binding, replacement, prefix);
             }
         }
         return completions;
+    }
+
+    /** The identifier at the caret is what a selected suggestion replaces, not just an empty span. */
+    private static int wordStart(String source, int cursor) {
+        int start = cursor;
+        while (start > 0) {
+            char character = source.charAt(start - 1);
+            if (!(Character.isLetterOrDigit(character) || character == '_' || character == '$')) break;
+            start--;
+        }
+        return start;
+    }
+
+    private static boolean atStatementStart(String before) {
+        int separator = before.lastIndexOf(';');
+        String fragment = before.substring(separator + 1).stripLeading();
+        return fragment.matches("[A-Za-z_]*");
+    }
+
+    private static boolean expectsPipelineSource(String before) {
+        return before.matches("(?is).*\\blet\\s+[A-Za-z_][A-Za-z0-9_]*\\s*=\\s*[A-Za-z_$]*$")
+                || before.matches("(?is).*\\bemit\\s+[A-Za-z_$]*$");
+    }
+
+    private static void addCompletion(List<Completion> completions, String label, String kind, String detail,
+                                      String insertText, Span replacement, String prefix) {
+        if (!label.regionMatches(true, 0, prefix, 0, prefix.length())) return;
+        completions.add(new Completion(label, kind, detail, insertText, replacement));
     }
 
     // ── evaluation ────────────────────────────────────────────────────────────────

@@ -1,8 +1,10 @@
 package com.mcpserver.connectors;
 
+import java.util.List;
+
 /**
- * A connector to a remote knowledge source (Confluence, Jira, ...). Implementations write
- * Remote metadata is catalogued first. Implementations fetch content through
+ * A connector to a remote knowledge source (Confluence, Jira, ...). Implementations catalogue
+ * remote metadata first and fetch content through
  * {@code IngestionService.ingest()}/{@code enqueue()} only when a search strongly matches a
  * catalogued title, so a large tenant does not download and embed its complete history on connect.
  */
@@ -15,6 +17,11 @@ public interface SourceConnector {
 
     /** Validates the stored credentials against the source system; throws with a clear message on failure. */
     void testConnection(Connection connection) throws Exception;
+
+    /** Verifies the credential can list source content; an empty source is still healthy. */
+    default void verifyReadAccess(Connection connection) throws Exception {
+        // API collections and future lightweight connectors can rely on their testConnection probe.
+    }
 
     /** Full metadata catalogue crawl. Page/issue bodies are not fetched by this operation. */
     void backfill(Connection connection, BackfillProgressSink sink) throws Exception;
@@ -36,5 +43,10 @@ public interface SourceConnector {
     /** Fetches one catalogued item's body and writes its searchable chunks. */
     default void hydrate(Connection connection, CatalogResource resource) throws Exception {
         throw new UnsupportedOperationException(type() + " does not support lazy content hydration");
+    }
+
+    /** Discovers a bounded set of accessible metadata-only resources after a local-search miss. */
+    default List<CatalogResource> discover(Connection connection, String query, int limit) throws Exception {
+        return List.of();
     }
 }

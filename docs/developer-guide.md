@@ -1,93 +1,74 @@
-# Developer Guide
+# Developer guide
 
-This guide is for people extending or operating the Enterprise MCP Server. Read
-`product-idea.md` for architecture and `plan.md` for delivery order.
+## Insights architecture
 
-## Run the application
+Insights is a consume-first dashboard page with an explicit authoring IDE. The default route shows saved insights on the left and the selected dashboard on the right; **Create** and **Edit** enter the IDE. The implementation must preserve one source of truth while making common workflows no-code.
 
-The backend and browser-native Web UI run in one Spring Boot process:
+Current source locations:
 
-```sh
+- Static page module: `mcp-server/src/main/resources/static/pages/insights.js`
+- Shared styles: `mcp-server/src/main/resources/static/components.css`
+- Structural tests: `mcp-server/src/test/java/com/mcpserver/config/InsightWorkspaceTests.java`
+
+## Authoring model
+
+The IDE should expose:
+
+- dashboard inputs for connected GET requests from one or more collections
+- named datasets produced by those inputs
+- transform controls for generated request datasets and joined relationship datasets
+- relationship blocks that generate joined datasets
+- visual bindings to any loaded dataset
+- persisted grid layout metadata for dashboard visuals
+- Source mode for generated RQL and advanced edits
+
+The first dataset remains named `rows` by default for compatibility with existing documents. The visual-query controls are dataset-aware: selecting a dashboard input, relationship block, or the **Shape dataset** selector reparses and rewrites that dataset's generated pipeline.
+
+Relationship blocks are generated as RQL joins:
+
+```rql
+let joined = rows |> join customers on customer_id = id prefix "customers";
+```
+
+The first visual implementation deliberately uses the existing backend join stage rather than adding a second execution model. This keeps source as the single source of truth.
+
+Grid layout is also source-backed. Dashboard-level grid settings live in front matter under `grid`, and individual visual placement is stored as component props: `gridX`, `gridY`, `gridW`, and `gridH`. These props are layout metadata only; they must not alter query execution.
+
+Relationship edit/remove behavior:
+
+- Edit loads the parsed relationship into the modeling form.
+- Update replaces the generated join base in source and preserves supported shape stages already appended to the joined dataset.
+- Renaming a relationship updates dataset references to the derived dataset.
+- Remove deletes the generated relationship statement and direct tables bound to that dataset.
+- Removing a dashboard input also removes relationship statements that depend on that input.
+
+## Implementation constraints
+
+- Do not create a parallel hidden model that can drift from source.
+- Every IDE action must update the generated source.
+- Grid controls must update front matter or component props, not hidden local layout state.
+- Source edits must invalidate stale selection offsets.
+- Custom source must fall back to Source mode or an explicit custom-logic state.
+- Dashboard input cards must be keyboard-accessible and must expose status after runs.
+
+## Test expectations
+
+Keep structural tests for:
+
+- dashboard input rendering
+- relationship block rendering
+- add/remove/rename actions
+- edit/remove relationship actions
+- generated join source
+- generated source behavior
+- custom-source fallback
+- dataset binding
+- custom dashboard grid settings and placement controls
+- responsive layout
+
+Run:
+
+```bash
 cd mcp-server
-mvn spring-boot:run
+mvn test -Dtest=InsightWorkspaceTests
 ```
-
-Open `http://127.0.0.1:8080`. The MCP Streamable HTTP endpoint is
-`http://127.0.0.1:8080/mcp`.
-
-For a production-like artifact:
-
-```sh
-cd mcp-server
-mvn package
-java -jar target/mcp-server.jar
-```
-
-The server intentionally binds only to `127.0.0.1` until Phase 6 authentication and ACL enforcement
-are delivered.
-
-## Daily checks
-
-```sh
-cd mcp-server && mvn test
-cd mcp-server && mvn -q compile
-cd mcp-server && mvn package -Dskip.bundle=true
-```
-
-The UI has no generated bundle or Node dependency. When Node happens to be installed, `node --check`
-is a useful optional syntax check for each file under `src/main/resources/static`.
-
-## Where changes belong
-
-| Concern | Location | Rule |
-| --- | --- | --- |
-| REST adapter | `mcp-server/src/main/java/com/mcpserver/controllers/` | Adapt requests and responses only. |
-| Reusable logic | `services/`, `repositories/`, feature packages | Preserve separation from protocol code. |
-| MCP SDK code | `mcp-server/src/main/java/com/mcpserver/mcp/` | Keep SDK coupling contained here. |
-| Browser API calls | `mcp-server/src/main/resources/static/api.js` | Page modules use this client instead of direct fetch calls. |
-| UI routes | `static/app.js` and `config/WebMvcConfig.java` | Add both client routing and the deep-route forward. |
-| UI pages | `static/pages/*.js` | Export `mount`; return cleanup for timers/listeners. |
-| UI appearance | `static/styles.css`, `components.css`, `ui.js` | Use tokens and the shared inline-SVG map. |
-| Design intent | `.impeccable.md` | Read it before UI changes. |
-
-Escape dynamic content before inserting it into HTML templates. Keep Java controllers thin and map
-`IllegalArgumentException` to 400 and `IllegalStateException` to 409.
-
-## Knowledge, tools, and query grammar
-
-Plain text on Search runs the RAG context path. It returns evidence from indexed files and, when
-enabled, contextual SearXNG web results. Imported API requests become deterministic tools:
-
-```text
-#tool_name
-@app_slug #tool_name
-@group_slug #tool_name
-```
-
-Read tools execute after validation. Write tools return a preview and single-use confirmation token;
-the UI must show the preview and obtain explicit approval before confirmation.
-
-Search sessions are browser-persisted ordered turn transcripts. Submitting from the composer appends
-to the active session; only the explicit **New** action starts another session. Tool results expose
-a formatted Preview and exact Raw response. Inline tool forms support schema-driven and raw-body
-invocation modes through the existing `/api/tools/{id}/preview` and `/invoke` endpoints.
-
-Insights execute enabled GET tools only. `.rqd` documents contain fenced RQL blocks and supported
-view components. Arbitrary HTML or code execution is not supported.
-
-## Guide system
-
-- `guides/GuideCatalog.java` is the runtime catalog for the Guide API and in-app page.
-- `mcp/McpGuideBridge.java` publishes the catalog as MCP resources and prompts.
-- `mcp-client-guide.md` is the durable client-integration reference.
-
-Update the runtime catalog and matching Markdown whenever a workflow or safety rule changes.
-
-## Common local failures
-
-- **The UI cannot connect:** Spring Boot is not available at `127.0.0.1:8080`.
-- **A deep UI route 404s:** add the route to `WebMvcConfig`.
-- **A module 404s:** check its import path and presence under `resources/static`.
-- **Search has no semantic results:** enable the vector and embedding plugins.
-- **Web search is unavailable:** install and start SearXNG.
-- **A client sees a stale tool:** call `tools/list` again.

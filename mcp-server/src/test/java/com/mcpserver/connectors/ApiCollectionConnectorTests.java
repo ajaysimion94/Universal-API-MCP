@@ -3,6 +3,7 @@ package com.mcpserver.connectors;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.mcpserver.repositories.ChunkRepository;
 import com.mcpserver.tools.ApiTool;
+import com.mcpserver.tools.ApiToolExecutor;
 import com.mcpserver.tools.ApiToolRepository;
 import com.mcpserver.tools.ApiToolService;
 import org.junit.jupiter.api.AfterEach;
@@ -15,6 +16,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
@@ -32,6 +34,8 @@ class ApiCollectionConnectorTests {
     private ApiToolRepository apiToolRepository;
     @Autowired
     private ApiToolService apiToolService;
+    @Autowired
+    private ApiToolExecutor apiToolExecutor;
     @Autowired
     private ChunkRepository chunkRepository;
 
@@ -142,27 +146,73 @@ class ApiCollectionConnectorTests {
 
         List<ApiTool> tools = apiToolRepository.findByConnectionId(connection.id());
         assertThat(tools).hasSize(4);
-        assertThat(connectionRepository.findById(connection.id()).orElseThrow().specFormat())
-                .isEqualTo("POSTMAN");
+        Connection saved = connectionRepository.findById(connection.id()).orElseThrow();
+        assertThat(saved.specFormat()).isEqualTo("POSTMAN");
+        assertThat(saved.baseUrl()).isEqualTo("https://todo.example.com");
+    }
+
+    @Test
+    void connectionBaseOverrideWinsAndSurvivesReimport() throws Exception {
+        stubFor(get(urlPathEqualTo("/pets")).willReturn(okJson("[]")));
+        Connection connection = newConnection(null, fixture("/specs/petstore-openapi.json"))
+                .withBaseUrlOverride(wireMock.baseUrl());
+        connectionRepository.save(connection);
+
+        connector.testConnection(connection);
+        connector.testConnection(connectionRepository.findById(connection.id()).orElseThrow());
+
+        Connection saved = connectionRepository.findById(connection.id()).orElseThrow();
+        assertThat(saved.baseUrl()).isEqualTo(wireMock.baseUrl());
+        assertThat(saved.baseUrlOverride()).isEqualTo(wireMock.baseUrl());
+        assertThat(apiToolRepository.findByConnectionId(connection.id())).allSatisfy(tool ->
+                assertThat(tool.urlTemplate()).startsWith("/"));
+        ApiTool listPets = apiToolRepository.findByConnectionId(connection.id()).stream()
+                .filter(tool -> tool.requestSlug().equals("list_pets"))
+                .findFirst().orElseThrow();
+        assertThat(apiToolExecutor.execute(listPets, saved, Map.of()).status()).isEqualTo(200);
+        verify(getRequestedFor(urlPathEqualTo("/pets")));
+    }
+
+    @Test
+    void uploadedSpecWithoutServerImportsWhenConnectionBaseOverrideIsSupplied() throws Exception {
+        String specWithoutServer = """
+                {"openapi":"3.0.3","info":{"title":"Local","version":"1"},"paths":{
+                  "/items":{"get":{"operationId":"listItems","responses":{"200":{"description":"ok"}}}}
+                }}
+                """;
+        Connection connection = newConnection(null, specWithoutServer)
+                .withBaseUrlOverride(wireMock.baseUrl());
+        connectionRepository.save(connection);
+
+        connector.testConnection(connection);
+
+        Connection saved = connectionRepository.findById(connection.id()).orElseThrow();
+        assertThat(saved.baseUrl()).isEqualTo(wireMock.baseUrl());
+        assertThat(apiToolRepository.findByConnectionId(connection.id()))
+                .extracting(ApiTool::requestSlug)
+                .containsExactly("list_items");
     }
 
     @Test
     void sourceUrlModePersistsOriginalPostmanRequestOrigins() throws Exception {
         Connection connection = newConnection(null, fixture("/specs/postman-todo.json"))
-                .withApiUrlMode(ApiUrlMode.SOURCE_URLS);
+                .withApiUrlMode(ApiUrlMode.SOURCE_URLS)
+                .withBaseUrlOverride(wireMock.baseUrl());
         connectionRepository.save(connection);
 
         connector.testConnection(connection);
 
-        assertThat(connectionRepository.findById(connection.id()).orElseThrow().apiUrlMode())
-                .isEqualTo(ApiUrlMode.SOURCE_URLS);
+        Connection saved = connectionRepository.findById(connection.id()).orElseThrow();
+        assertThat(saved.apiUrlMode()).isEqualTo(ApiUrlMode.SOURCE_URLS);
+        assertThat(saved.baseUrl()).isEqualTo("https://todo.example.com");
+        assertThat(saved.baseUrlOverride()).isEqualTo(wireMock.baseUrl());
         List<ApiTool> tools = apiToolRepository.findByConnectionId(connection.id());
         assertThat(tools).allSatisfy(tool ->
                 assertThat(tool.urlTemplate()).matches("^https?://.*"));
         assertThat(tools).anySatisfy(tool ->
                 assertThat(tool.urlTemplate()).startsWith("https://todo.example.com/"));
-        assertThat(tools).anySatisfy(tool ->
-                assertThat(tool.urlTemplate()).startsWith(wireMock.baseUrl() + "/"));
+        assertThat(tools).allSatisfy(tool ->
+                assertThat(tool.urlTemplate()).startsWith("https://todo.example.com/"));
     }
 
     @Test
@@ -202,6 +252,7 @@ class ApiCollectionConnectorTests {
         // spec shrinks to a single operation
         String shrunk = """
                 {"openapi":"3.0.3","info":{"title":"Petstore","version":"1.0.0"},
+                 "servers":[{"url":"https://petstore.example.com/api/v1"}],
                  "paths":{"/pets":{"post":{"operationId":"createPet","summary":"Create a pet"}}}}""";
         connection = connectionRepository.findById(connection.id()).orElseThrow()
                 .withSpec(null, "OPENAPI", shrunk);
@@ -238,7 +289,9 @@ class ApiCollectionConnectorTests {
         String marker = "zzmarker" + UUID.randomUUID().toString().replace("-", "");
         stubFor(get(urlPathEqualTo("/pets"))
                 .willReturn(okJson("[{\"name\":\"" + marker + "\",\"status\":\"available\"}]")));
-        Connection connection = newConnection(null, fixture("/specs/petstore-openapi.json"));
+        String spec = fixture("/specs/petstore-openapi.json")
+                .replace("https://petstore.example.com/api/v1", wireMock.baseUrl());
+        Connection connection = newConnection(null, spec);
         connector.testConnection(connection);
 
         ApiTool listPets = apiToolRepository.findByConnectionId(connection.id()).stream()

@@ -44,6 +44,14 @@ class InsightGrammarTests {
     }
 
     @Test
+    void dashboardGridLayoutPropsAreAcceptedAsNoCodeLayoutMetadata() {
+        assertThat(parser.parse("<DataTable data={rows} gridX=\"0\" gridY=\"0\" gridW=\"8\" gridH=\"4\" />")
+                .diagnostics()).extracting(RqlModel.Diagnostic::code).doesNotContain("RQI014");
+        assertThat(parser.parse("<DataTable data={rows} gridX={0} gridY={0} gridW={8} gridH={4} />")
+                .diagnostics()).extracting(RqlModel.Diagnostic::code).doesNotContain("RQI014");
+    }
+
+    @Test
     void rejectedPropsAreReportedOnceUnderTheirOwnCodeNotAlsoAsUnknown() {
         List<String> codes = parser.parse("<BarChart data={a} x=\"i\" y=\"v\" y2=\"z\" color=\"#fff\" />")
                 .diagnostics().stream().map(RqlModel.Diagnostic::code).toList();

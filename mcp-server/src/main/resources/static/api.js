@@ -92,17 +92,8 @@ export const api = {
   },
 
   listPlugins: () => send(PLUGINS),
-  listOnnxModels: () => send(`${PLUGINS}/models`),
-  async uploadOnnxModel(kind, model, tokenizer) {
-    const form = new FormData();
-    form.append("model", model);
-    form.append("tokenizer", tokenizer);
-    return json(await fetch(`${PLUGINS}/models/${encodeURIComponent(kind)}`, {
-      method: "POST",
-      body: form,
-    }));
-  },
   installPlugin: (id) => send(`${PLUGINS}/${id}/install`, "POST"),
+  setupPlugin: (id) => send(`${PLUGINS}/${id}/setup`, "POST"),
   enablePlugin: (id) => send(`${PLUGINS}/${id}/enable`, "POST"),
   disablePlugin: (id) => send(`${PLUGINS}/${id}/disable`, "POST"),
   startPlugin: (id) => send(`${PLUGINS}/${id}/start`, "POST"),
@@ -115,6 +106,7 @@ export const api = {
   updateConnection: (id, input) => send(`${CONNECTIONS}/${id}`, "PUT", input),
   deleteConnection: async (id) =>
     noContent(await fetch(`${CONNECTIONS}/${id}`, { method: "DELETE" }), "Delete failed"),
+  testConnection: (id) => send(`${CONNECTIONS}/${id}/test`, "POST"),
   triggerBackfill: (id) => send(`${CONNECTIONS}/${id}/backfill`, "POST"),
   enableConnection: (id) => send(`${CONNECTIONS}/${id}/enable`, "POST"),
   disableConnection: (id) => send(`${CONNECTIONS}/${id}/disable`, "POST"),

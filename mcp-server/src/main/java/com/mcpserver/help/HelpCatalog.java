@@ -42,7 +42,7 @@ public class HelpCatalog {
                                             + "chunking, and indexing in the background.",
                                     List.of("Open Files.", "Choose a folder and upload files or a folder tree.",
                                             "Wait for ingestion to finish before relying on the new content."), null, null),
-                            section("3. Ask and verify", "Use Chat for a focused conversation. Each answer keeps its evidence collapsed "
+                            section("3. Ask and verify", "Use Search for a focused conversation. Each answer keeps its evidence collapsed "
                                             + "until you need to inspect the underlying RAG files or web results.",
                                     List.of("Ask a specific question.", "Expand evidence when you need provenance.",
                                             "Refine the question when the cited passages do not answer it."), null,
@@ -54,7 +54,7 @@ public class HelpCatalog {
                     "How files, RAG evidence, and the optional web source fit together.",
                     "Everyone",
                     List.of(
-                            section("Local knowledge first", "Plain chat questions use the same hybrid RAG search as the search API. "
+                            section("Local knowledge first", "Plain-language searches use the same hybrid RAG pipeline as the search API. "
                                             + "Results retain source names, paths, excerpts, and scores so you can assess the evidence.",
                                     List.of("Keep important source names meaningful.", "Use exact terms from documents for narrow searches.",
                                             "Treat cited excerpts as evidence, not a complete source document."), null, null),
@@ -73,7 +73,7 @@ public class HelpCatalog {
                             section("Import and find a tool", "Connections can import a Postman collection or OpenAPI document. "
                                             + "Enabled requests appear as deterministic tools and can be invoked with the # grammar.",
                                     List.of("Open Connections and create/import a connection.", "Review each request before enabling it.",
-                                            "Use #tool_name or @app #tool_name in Chat."),
+                                            "Use #tool_name or @app #tool_name in Search."),
                                     "#inventory_list_products\n@app #create_ticket \"Password reset for Ada\"", null),
                             section("Approval is intentional", "Read requests execute immediately. Write requests return a preview and a short-lived "
                                             + "confirmation token; they must not execute until a person explicitly approves the preview.",
@@ -185,17 +185,19 @@ public class HelpCatalog {
                     "The everyday build, test, and troubleshooting commands for maintainers.",
                     "Developers",
                     List.of(
-                            section("Run in development", "Spring Boot serves the API, MCP endpoint, and browser-native Web UI "
-                                            + "from one process. Static HTML, CSS, and JavaScript changes appear after a browser refresh.",
-                                    List.of("Start Spring Boot on port 8080.",
-                                            "Open http://127.0.0.1:8080.",
-                                            "Refresh the browser after a static UI edit."),
-                                    "cd mcp-server && mvn spring-boot:run", null),
+                            section("Run in development", "Spring Boot serves APIs and compatibility modules on port 8080; "
+                                            + "Vite serves the React development shell with hot reload on port 5173.",
+                                    List.of("Start Spring Boot with the frontend build skipped.",
+                                            "Run npm ci and npm run dev from webui in another terminal.",
+                                            "Open http://127.0.0.1:5173."),
+                                    "cd mcp-server && mvn spring-boot:run -Dskip.frontend=true\n"
+                                            + "cd mcp-server/webui && npm ci && npm run dev", null),
                             section("Verify before handoff", "The Maven test suite and complete JAR build are the required baseline. "
-                                            + "The frontend has no generated bundle or Node dependency.",
-                                    List.of("Run mvn test.", "Run mvn package -Dskip.bundle=true for a fast artifact check.",
+                                            + "Maven owns the pinned Node/npm runtime and React production build.",
+                                    List.of("Run npm run typecheck from webui.", "Run mvn test.", "Run mvn package -Dskip.bundle=true for a fast artifact check.",
                                             "Smoke the served routes in a browser."),
-                                    "cd mcp-server && mvn test\ncd mcp-server && mvn package -Dskip.bundle=true", null),
+                                    "cd mcp-server/webui && npm run typecheck\ncd mcp-server && mvn test\n"
+                                            + "cd mcp-server && mvn package -Dskip.bundle=true", null),
                             section("Keep guides current", "The long-form developer and MCP-client guides live in docs/. The in-app guide and "
                                             + "MCP resources are generated from this catalog so people and MCP clients receive the same active workflow.",
                                     List.of("Update the relevant Markdown guide for durable detail.",

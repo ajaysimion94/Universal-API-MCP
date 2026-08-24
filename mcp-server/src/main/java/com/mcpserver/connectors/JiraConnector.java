@@ -3,6 +3,7 @@ package com.mcpserver.connectors;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mcpserver.config.TlsHttpClientFactory;
+import com.mcpserver.rag.retrieval.TextSignals;
 import com.mcpserver.services.IngestionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.TreeSet;
 
 /**
  * Jira connector (Cloud + Server/Data Center). Issue search has two incompatible generations:
@@ -60,6 +62,7 @@ public class JiraConnector implements SourceConnector {
     private final WebhookTokenService webhookTokenService;
     private final String webhookBaseUrl;
     private final Duration reconcileInterval;
+    private final Duration remoteDiscoveryTimeout;
     private final HttpClient httpClient;
     private final ObjectMapper mapper = new ObjectMapper();
 
@@ -74,7 +77,8 @@ public class JiraConnector implements SourceConnector {
                           WebhookTokenService webhookTokenService,
                           TlsHttpClientFactory tlsHttpClientFactory,
                           @Value("${connectors.webhook-base-url:}") String webhookBaseUrl,
-                          @Value("${connectors.reconcile-interval-ms:86400000}") long reconcileIntervalMs) {
+                          @Value("${connectors.reconcile-interval-ms:86400000}") long reconcileIntervalMs,
+                          @Value("${connectors.remote-discovery-timeout-ms:5000}") long remoteDiscoveryTimeoutMs) {
         this.ingestionService = ingestionService;
         this.catalogRepository = catalogRepository;
         this.connectionRepository = connectionRepository;
@@ -82,6 +86,7 @@ public class JiraConnector implements SourceConnector {
         this.webhookTokenService = webhookTokenService;
         this.webhookBaseUrl = webhookBaseUrl;
         this.reconcileInterval = Duration.ofMillis(Math.max(60_000, reconcileIntervalMs));
+        this.remoteDiscoveryTimeout = Duration.ofMillis(Math.max(1_000, remoteDiscoveryTimeoutMs));
         this.httpClient = tlsHttpClientFactory.builder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
@@ -96,8 +101,7 @@ public class JiraConnector implements SourceConnector {
     public DeploymentType detectDeployment(Connection connection) throws Exception {
         HttpResponse<String> res = get(connection, "/serverInfo");
         if (res.statusCode() != 200) {
-            throw new IllegalStateException("Could not reach Jira at " + connection.baseUrl()
-                    + " (HTTP " + res.statusCode() + ") — check the base URL and credentials");
+            throw ConnectorException.forHttp("Jira", "deployment detection", res.statusCode());
         }
         String deploymentType = mapper.readTree(res.body()).path("deploymentType").asText("");
         return "Cloud".equalsIgnoreCase(deploymentType) ? DeploymentType.CLOUD : DeploymentType.SERVER_DC;
@@ -107,9 +111,30 @@ public class JiraConnector implements SourceConnector {
     public void testConnection(Connection connection) throws Exception {
         HttpResponse<String> res = get(connection, "/myself");
         if (res.statusCode() != 200) {
-            throw new IllegalStateException("Jira auth failed (HTTP " + res.statusCode() + "): "
-                    + snippet(res.body()));
+            throw ConnectorException.forHttp("Jira", "authentication", res.statusCode());
         }
+    }
+
+    @Override
+    public void verifyReadAccess(Connection connection) throws Exception {
+        searchIssues(connection, "order by updated desc", null, 1, CATALOG_FIELDS);
+    }
+
+    @Override
+    public List<CatalogResource> discover(Connection connection, String query, int limit) throws Exception {
+        String jql = discoveryJql(query);
+        if (jql == null) return List.of();
+        int safeLimit = Math.max(1, Math.min(limit, 3));
+        IssuePage page = searchIssuesForDiscovery(connection, jql, safeLimit, CATALOG_FIELDS);
+        List<CatalogResource> discovered = new ArrayList<>();
+        for (JsonNode issue : page.issues()) {
+            if (discovered.size() >= safeLimit) break;
+            String key = issue.path("key").asText(null);
+            if (key == null || key.isBlank()) continue;
+            catalogIssue(connection, issue);
+            catalogRepository.find(connection.id(), "jira", key).ifPresent(discovered::add);
+        }
+        return discovered;
     }
 
     @Override
@@ -157,8 +182,7 @@ public class JiraConnector implements SourceConnector {
         payload.putArray("events").add("jira:issue_created").add("jira:issue_updated").add("jira:issue_deleted");
         HttpResponse<String> res = post(connection, "/rest", "/webhooks/1.0/webhook", payload.toString());
         if (res.statusCode() / 100 != 2) {
-            throw new IllegalStateException("Webhook registration failed (HTTP " + res.statusCode() + "): "
-                    + snippet(res.body()));
+            throw ConnectorException.forHttp("Jira", "webhook registration", res.statusCode());
         }
         connectionRepository.save(connection.withWebhookRegistered(true));
     }
@@ -231,13 +255,13 @@ public class JiraConnector implements SourceConnector {
             if (endpointUnavailable || unrecognizedShapeOnFirstProbe) {
                 modernSearchSupported.put(capabilityKey, false);
             } else {
-                throw new IllegalStateException("Jira search failed (HTTP " + res.statusCode() + "): " + snippet(res.body()));
+                throw ConnectorException.forHttp("Jira", "search", res.statusCode());
             }
         }
         int startAt = cursor == null ? 0 : Integer.parseInt(cursor);
         HttpResponse<String> res = getLegacySearch(connection, jql, startAt, maxResults, fields);
         if (res.statusCode() != 200) {
-            throw new IllegalStateException("Jira search failed (HTTP " + res.statusCode() + "): " + snippet(res.body()));
+            throw ConnectorException.forHttp("Jira", "search", res.statusCode());
         }
         JsonNode body = mapper.readTree(res.body());
         List<JsonNode> issues = toList(body.path("issues"));
@@ -249,6 +273,13 @@ public class JiraConnector implements SourceConnector {
 
     private HttpResponse<String> postSearchJql(Connection connection, String jql, String cursor,
                                                int maxResults, List<String> requestedFields) throws Exception {
+        return postSearchJql(connection, jql, cursor, maxResults, requestedFields,
+                Duration.ofSeconds(20), false);
+    }
+
+    private HttpResponse<String> postSearchJql(Connection connection, String jql, String cursor,
+                                                int maxResults, List<String> requestedFields,
+                                                Duration timeout, boolean retryTransientFailure) throws Exception {
         com.fasterxml.jackson.databind.node.ObjectNode body = mapper.createObjectNode();
         body.put("jql", jql);
         body.put("maxResults", maxResults);
@@ -258,15 +289,50 @@ public class JiraConnector implements SourceConnector {
         // first page, not omit the field — ObjectNode.put(String, String) writes a JSON null for
         // a null value.
         body.put("nextPageToken", cursor);
-        return post(connection, "/rest/api/3", "/search/jql", body.toString());
+        return post(connection, "/rest/api/3", "/search/jql", body.toString(), timeout, retryTransientFailure);
     }
 
     private HttpResponse<String> getLegacySearch(Connection connection, String jql, int startAt,
                                                  int maxResults, List<String> requestedFields) throws Exception {
+        return getLegacySearch(connection, jql, startAt, maxResults, requestedFields,
+                Duration.ofSeconds(20), false);
+    }
+
+    private HttpResponse<String> getLegacySearch(Connection connection, String jql, int startAt,
+                                                 int maxResults, List<String> requestedFields,
+                                                 Duration timeout, boolean retryTransientFailure) throws Exception {
         String path = "/search?jql=" + URLEncoder.encode(jql, StandardCharsets.UTF_8)
                 + "&fields=" + String.join(",", requestedFields)
                 + "&startAt=" + startAt + "&maxResults=" + maxResults;
-        return get(connection, path);
+        return get(connection, "/rest/api/2", path, timeout, retryTransientFailure);
+    }
+
+    private IssuePage searchIssuesForDiscovery(Connection connection, String jql, int maxResults,
+                                                List<String> fields) throws Exception {
+        String capabilityKey = connection.id() + "\u0000" + connection.baseUrl();
+        Boolean modernOk = modernSearchSupported.get(capabilityKey);
+        boolean firstProbe = modernOk == null;
+        if (modernOk == null || modernOk) {
+            HttpResponse<String> response = postSearchJql(connection, jql, null, maxResults, fields,
+                    remoteDiscoveryTimeout, true);
+            if (response.statusCode() == 200) {
+                modernSearchSupported.put(capabilityKey, true);
+                JsonNode body = mapper.readTree(response.body());
+                return new IssuePage(toList(body.path("issues")), null);
+            }
+            boolean unavailable = response.statusCode() == 404 || response.statusCode() == 410;
+            if (unavailable || (firstProbe && response.statusCode() == 400)) {
+                modernSearchSupported.put(capabilityKey, false);
+            } else {
+                throw ConnectorException.forHttp("Jira", "content discovery", response.statusCode());
+            }
+        }
+        HttpResponse<String> response = getLegacySearch(connection, jql, 0, maxResults, fields,
+                remoteDiscoveryTimeout, true);
+        if (response.statusCode() != 200) {
+            throw ConnectorException.forHttp("Jira", "content discovery", response.statusCode());
+        }
+        return new IssuePage(toList(mapper.readTree(response.body()).path("issues")), null);
     }
 
     private void maybeReconcile(Connection connection) throws Exception {
@@ -347,8 +413,7 @@ public class JiraConnector implements SourceConnector {
             return;
         }
         if (res.statusCode() != 200) {
-            throw new IllegalStateException("Failed to lazily fetch Jira issue " + resource.externalId()
-                    + " (HTTP " + res.statusCode() + "): " + snippet(res.body()));
+            throw ConnectorException.forHttp("Jira", "lazy content retrieval", res.statusCode());
         }
         ingestIssue(connection, mapper.readTree(res.body()));
     }
@@ -440,8 +505,7 @@ public class JiraConnector implements SourceConnector {
                     "/issue/" + URLEncoder.encode(issueKey, StandardCharsets.UTF_8)
                             + "/comment?startAt=" + startAt + "&maxResults=100");
             if (res.statusCode() != 200) {
-                throw new IllegalStateException("Failed to fetch all comments for Jira issue "
-                        + issueKey + " (HTTP " + res.statusCode() + "): " + snippet(res.body()));
+                throw ConnectorException.forHttp("Jira", "comment retrieval", res.statusCode());
             }
             JsonNode page = mapper.readTree(res.body());
             List<JsonNode> comments = toList(page.path("comments"));
@@ -516,32 +580,76 @@ public class JiraConnector implements SourceConnector {
     }
 
     private HttpResponse<String> get(Connection connection, String apiRoot, String path) throws Exception {
+        return get(connection, apiRoot, path, Duration.ofSeconds(20), false);
+    }
+
+    private HttpResponse<String> get(Connection connection, String apiRoot, String path,
+                                     Duration timeout, boolean retryTransientFailure) throws Exception {
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(connection.baseUrl() + apiRoot + path))
                 .header("Authorization", AtlassianAuth.authorizationHeader(connection.authMode(),
                         connection.authUsername(), credentialCipher.decrypt(connection.authSecretEncrypted())))
                 .header("Accept", "application/json")
-                .timeout(Duration.ofSeconds(20))
+                .timeout(timeout)
                 .GET()
                 .build();
-        return httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+        return sendWithRetry(req, retryTransientFailure);
     }
 
     private HttpResponse<String> post(Connection connection, String apiRoot, String path, String jsonBody) throws Exception {
+        return post(connection, apiRoot, path, jsonBody, Duration.ofSeconds(20), false);
+    }
+
+    private HttpResponse<String> post(Connection connection, String apiRoot, String path, String jsonBody,
+                                      Duration timeout, boolean retryTransientFailure) throws Exception {
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(connection.baseUrl() + apiRoot + path))
                 .header("Authorization", AtlassianAuth.authorizationHeader(connection.authMode(),
                         connection.authUsername(), credentialCipher.decrypt(connection.authSecretEncrypted())))
                 .header("Accept", "application/json")
                 .header("Content-Type", "application/json")
-                .timeout(Duration.ofSeconds(20))
+                .timeout(timeout)
                 .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
                 .build();
-        return httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+        return sendWithRetry(req, retryTransientFailure);
     }
 
-    private String snippet(String body) {
-        if (body == null) return "";
-        return body.length() > 300 ? body.substring(0, 300) + "…" : body;
+    private HttpResponse<String> sendWithRetry(HttpRequest request, boolean retryTransientFailure) throws Exception {
+        for (int attempt = 0; ; attempt++) {
+            try {
+                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                if (!retryTransientFailure || attempt > 0 || !isTransient(response.statusCode())) return response;
+                waitBeforeRetry(response);
+            } catch (java.io.IOException exception) {
+                if (!retryTransientFailure || attempt > 0) {
+                    throw new ConnectorException(ConnectorFailureCategory.UNREACHABLE,
+                            "Jira request could not reach the source", exception);
+                }
+                Thread.sleep(200);
+            }
+        }
+    }
+
+    private static boolean isTransient(int statusCode) {
+        return statusCode == 429 || statusCode >= 500;
+    }
+
+    private static void waitBeforeRetry(HttpResponse<?> response) throws InterruptedException {
+        String retryAfter = response.headers().firstValue("Retry-After").orElse("");
+        long waitMillis = 200;
+        try {
+            waitMillis = Math.min(5_000L, Math.max(0L, Long.parseLong(retryAfter.trim()) * 1_000L));
+        } catch (NumberFormatException ignored) {
+            // A malformed header falls back to the short transient-error delay.
+        }
+        Thread.sleep(waitMillis);
+    }
+
+    private static String discoveryJql(String query) {
+        TreeSet<String> terms = new TreeSet<>(TextSignals.terms(query));
+        if (terms.isEmpty()) return null;
+        return terms.stream().limit(5)
+                .map(term -> "text ~ \"" + term + "\"")
+                .collect(java.util.stream.Collectors.joining(" AND ")) + " order by updated desc";
     }
 }

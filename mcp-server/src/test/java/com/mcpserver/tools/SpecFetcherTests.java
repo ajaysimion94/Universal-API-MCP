@@ -27,7 +27,23 @@ class SpecFetcherTests {
     @Test
     void parseContentHandlesPostmanJson() throws IOException {
         String json = fixture("/specs/postman-todo.json");
-        assertThat(fetcher.parseContent(json, null).parser().format()).isEqualTo("POSTMAN");
+        SpecFetcher.FetchedSpec spec = fetcher.parseContent(json, null);
+        assertThat(spec.parser().format()).isEqualTo("POSTMAN");
+        assertThat(SpecFetcher.resolveBaseUrl(spec)).isEqualTo("https://todo.example.com");
+    }
+
+    @Test
+    void resolvesRelativeOpenApiServerAgainstFetchedSpecUrl() {
+        String json = """
+                {"openapi":"3.0.3","info":{"title":"Relative","version":"1"},
+                 "servers":[{"url":"/api/v2"}],"paths":{}}
+                """;
+
+        SpecFetcher.FetchedSpec spec = fetcher.parseContent(
+                json, "https://docs.example.test/openapi.json");
+
+        assertThat(SpecFetcher.resolveBaseUrl(spec))
+                .isEqualTo("https://docs.example.test/api/v2");
     }
 
     @Test
