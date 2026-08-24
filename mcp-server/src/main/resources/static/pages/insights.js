@@ -1698,11 +1698,12 @@ function loadStore() {
       // The Insights landing page is consumption-first. Restore the document, not the authoring
       // surface; Create/Edit are the explicit entry points into the IDE.
       mode: "view",
+      autoSave: Boolean(parsed?.autoSave),
     };
   } catch {
     // The workspace stays fully usable when browser storage is unavailable.
   }
-  return { lastInsightId: null, mode: "view" };
+  return { lastInsightId: null, mode: "view", autoSave: false };
 }
 
 function saveStore(store) {
@@ -1710,6 +1711,7 @@ function saveStore(store) {
     localStorage.setItem(STORE_KEY, JSON.stringify({
       lastInsightId: store.lastInsightId || null,
       mode: MODES.includes(store.mode) ? store.mode : "design",
+      autoSave: Boolean(store.autoSave),
     }));
   } catch {
     // Remembering the last insight is an optional convenience.
@@ -1734,6 +1736,8 @@ export async function mount(outlet) {
     activeId: null,
     name: "Untitled insight",
     saving: false,
+    // Kept as an editor preference. Saving is debounced so typing never sends one request per key.
+    autoSave: false,
     // The document as last saved, so "edited since this run" is a plain comparison.
     savedSource: "",
     savedName: "",
@@ -1772,6 +1776,8 @@ export async function mount(outlet) {
   };
   const abort = new AbortController();
   let analysisTimer = 0;
+  let autoSaveTimer = 0;
+  let lastAutoSaveAttempt = "";
   let elapsedTimer = 0;
   let analysisSequence = 0;
   let runSequence = 0;
@@ -1788,6 +1794,25 @@ export async function mount(outlet) {
   function invalidateAnalysis() {
     analysisSequence += 1;
     clearTimeout(analysisTimer);
+  }
+
+  function autoSaveKey() {
+    return `${state.name}\u0000${state.connectionId}\u0000${state.source}`;
+  }
+
+  /** Queue one quiet-period save for the current document revision. */
+  function scheduleAutoSave() {
+    clearTimeout(autoSaveTimer);
+    if (!state.autoSave || state.mode === "view" || state.saving || state.running
+      || !hasUnsavedChanges(state) || !state.name.trim()) return;
+    const key = autoSaveKey();
+    if (key === lastAutoSaveAttempt) return;
+    autoSaveTimer = window.setTimeout(async () => {
+      if (!state.autoSave || state.mode === "view" || state.saving || state.running
+        || !hasUnsavedChanges(state) || autoSaveKey() !== key) return;
+      lastAutoSaveAttempt = key;
+      await saveInsight();
+    }, 900);
   }
 
   /**
@@ -2634,7 +2659,7 @@ export async function mount(outlet) {
 
   function mastheadContent(documentState) {
     return `<div class="insight-studio-heading"><span class="insight-studio-heading-mark" aria-hidden="true">${icon("wand", 16)}</span><div class="insight-studio-heading-copy"><p>Dashboard IDE</p><div class="insight-studio-title-row"><h1 id="insight-page-title">Insights</h1><span class="insight-studio-document-state ${documentState.tone}" aria-live="polite">${escapeHtml(documentState.label)}</span></div></div><label class="insight-title-field"><span>Dashboard name</span><input id="insight-name" value="${escapeAttr(state.name)}" aria-label="Dashboard name"></label></div>
-      <div class="insight-studio-masthead-actions"><button class="btn btn-ghost" type="button" data-action="new-insight" title="Start a new insight">${icon("plus", 15)} Create</button><button class="btn" type="button" data-action="save-insight" ${state.saving || state.running || (state.activeId && !hasUnsavedChanges(state)) ? "disabled" : ""} title="Save insight (${SHORTCUT_KEY}S)">${icon("save", 15)} ${state.saving ? "Saving…" : "Save"}</button></div>`;
+      <div class="insight-studio-masthead-actions"><button class="btn btn-ghost" type="button" data-action="back-to-preview" title="Return to the insight preview">Back to preview</button><button class="btn btn-ghost" type="button" data-action="toggle-auto-save" aria-pressed="${state.autoSave}" title="Automatically save changes after you pause editing">Auto-save: ${state.autoSave ? "On" : "Off"}</button><button class="btn btn-ghost" type="button" data-action="new-insight" title="Start a new insight">${icon("plus", 15)} Create</button><button class="btn" type="button" data-action="save-insight" ${state.saving || state.running || (state.activeId && !hasUnsavedChanges(state)) ? "disabled" : ""} title="Save insight (${SHORTCUT_KEY}S)">${icon("save", 15)} ${state.saving ? "Saving…" : "Save"}</button></div>`;
   }
 
   function buildPanelContent(usable) {
@@ -2718,6 +2743,7 @@ export async function mount(outlet) {
     syncRegion("status-bar", statusBar());
     restoreFocus(focus);
     tickElapsed();
+    scheduleAutoSave();
   }
 
   async function analyze() {
@@ -3138,7 +3164,7 @@ export async function mount(outlet) {
     state.apiTestSubmitting = false;
     state.queryFields = [];
     state.queryFieldsByDataset = {};
-    saveStore({ lastInsightId: null, mode: state.mode });
+    saveStore({ lastInsightId: null, mode: state.mode, autoSave: state.autoSave });
   }
 
   async function useStarter() {
@@ -3361,23 +3387,24 @@ export async function mount(outlet) {
     // Cleared so the next analyze() re-seeds defaults from this document instead of leaking
     // parameter names from the previously open one.
     state.parameters = {};
-    saveStore({ lastInsightId: insight.id, mode: state.mode });
+    saveStore({ lastInsightId: insight.id, mode: state.mode, autoSave: state.autoSave });
   }
 
   /** Last insight worked on, else the most recently updated, else the empty new-document state. */
   async function restoreLastOpened() {
     const stored = loadStore();
     state.mode = stored.mode;
+    state.autoSave = stored.autoSave;
     const wanted = state.saved.find((item) => item.id === stored.lastInsightId) || state.saved[0];
     if (!wanted) {
-      saveStore({ lastInsightId: null, mode: state.mode });
+      saveStore({ lastInsightId: null, mode: state.mode, autoSave: state.autoSave });
       return;
     }
     try {
       await openInsight(wanted.id);
     } catch {
       // Deleted from another browser: fall back to the empty state rather than an error.
-      saveStore({ lastInsightId: null, mode: state.mode });
+      saveStore({ lastInsightId: null, mode: state.mode, autoSave: state.autoSave });
     }
   }
 
@@ -3436,11 +3463,13 @@ export async function mount(outlet) {
       const wasNew = !state.activeId;
       const stored = state.activeId ? await api.updateInsight(state.activeId, payload) : await api.createInsight(payload);
       state.activeId = stored.id;
-      state.savedSource = state.source;
-      state.savedName = state.name;
-      state.savedConnectionId = state.connectionId;
+      // Preserve an edit made while the request was in flight as unsaved; it will be picked up by
+      // the next autosave instead of being incorrectly treated as part of this response.
+      state.savedSource = payload.source;
+      state.savedName = payload.name;
+      state.savedConnectionId = payload.connectionId || "";
       state.saved = await api.listInsights();
-      saveStore({ lastInsightId: stored.id, mode: state.mode });
+      saveStore({ lastInsightId: stored.id, mode: state.mode, autoSave: state.autoSave });
       // A draft's result was computed before the insight had an id, so nothing was stored for it.
       if (wasNew && state.data) state.runNote = "Run again to save this result with the insight.";
     } catch (error) {
@@ -3455,6 +3484,16 @@ export async function mount(outlet) {
     const { action, id } = target.dataset;
     if (action === "run-insight") {
       await runInsight();
+    } else if (action === "back-to-preview") {
+      if (state.autoSave && hasUnsavedChanges(state)) await saveInsight();
+      state.mode = "view";
+      saveStore({ lastInsightId: state.activeId, mode: state.mode, autoSave: state.autoSave });
+      render();
+    } else if (action === "toggle-auto-save") {
+      state.autoSave = !state.autoSave;
+      lastAutoSaveAttempt = "";
+      saveStore({ lastInsightId: state.activeId, mode: state.mode, autoSave: state.autoSave });
+      render();
     } else if (action === "accept-completion") {
       acceptCompletion(Number(target.dataset.completionIndex));
     } else if (action === "run-query") {
@@ -3468,7 +3507,7 @@ export async function mount(outlet) {
       if (!MODES.includes(mode) || mode === state.mode) return;
       state.mode = mode;
       if (mode === "design") setQueryDataset(state.queryDataset);
-      saveStore({ lastInsightId: state.activeId, mode: state.mode });
+      saveStore({ lastInsightId: state.activeId, mode: state.mode, autoSave: state.autoSave });
       render();
       // The editor is the reason Code was pressed — put the caret in it rather than leaving focus
       // on a button that just moved.
@@ -3476,7 +3515,7 @@ export async function mount(outlet) {
     } else if (action === "open-source") {
       state.mode = "design";
       state.authorTab = "source";
-      saveStore({ lastInsightId: state.activeId, mode: state.mode });
+      saveStore({ lastInsightId: state.activeId, mode: state.mode, autoSave: state.autoSave });
       render();
       outlet.querySelector("#insight-source")?.focus();
     } else if (action === "select-block") {
@@ -3520,7 +3559,7 @@ export async function mount(outlet) {
       if (!state.activeId && state.source === EMPTY_INSIGHT) return;
       state.mode = "design";
       setQueryDataset(state.queryDataset);
-      saveStore({ lastInsightId: state.activeId, mode: state.mode });
+      saveStore({ lastInsightId: state.activeId, mode: state.mode, autoSave: state.autoSave });
       render();
       analyze();
     } else if (action === "delete-component") {
@@ -3580,7 +3619,7 @@ export async function mount(outlet) {
         && !confirm(`Start a new insight? Unsaved changes to "${state.name}" will be lost.`)) return;
       resetDraft();
       state.mode = "design";
-      saveStore({ lastInsightId: null, mode: state.mode });
+      saveStore({ lastInsightId: null, mode: state.mode, autoSave: state.autoSave });
       render();
       analyze();
     } else if (action === "open-insight") {
@@ -3617,7 +3656,7 @@ export async function mount(outlet) {
       // The diagnostics list lives in the editor footer, so the only place to "show" them is Code.
       state.mode = "design";
       state.authorTab = "source";
-      saveStore({ lastInsightId: state.activeId, mode: state.mode });
+      saveStore({ lastInsightId: state.activeId, mode: state.mode, autoSave: state.autoSave });
       render();
       outlet.querySelector("#insight-source")?.focus();
     } else if (action === "dismiss-banner") {
@@ -3646,8 +3685,10 @@ export async function mount(outlet) {
       // text has shifted into that position.
       state.selected = null;
       scheduleAnalyze();
+      scheduleAutoSave();
     } else if (event.target.id === "insight-name") {
       state.name = event.target.value;
+      scheduleAutoSave();
     } else if (event.target.dataset.apiTestValue) {
       const tool = starterRequests().find((item) => item.id === state.apiTestToolId);
       const draft = apiTestDraft(tool);
@@ -4015,6 +4056,7 @@ export async function mount(outlet) {
   return () => {
     abort.abort();
     clearTimeout(analysisTimer);
+    clearTimeout(autoSaveTimer);
     clearInterval(elapsedTimer);
     document.body.classList.remove("is-resizing-insight");
     document.body.classList.remove("is-moving-insight");
