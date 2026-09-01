@@ -190,8 +190,10 @@ class InsightWorkspaceTests {
                 .contains("Replace this draft with")
                 .contains("Save insight")
                 .contains("icon(\"save\", 15)")
+                .contains("data-action=\"export-insight\"")
+                .contains("icon(\"download\", 15)")
                 .doesNotContain("Build starter")
-                .doesNotContain("icon(\"download\", 15)");
+                .doesNotContain("Export CSV");
     }
 
     @Test
@@ -341,7 +343,8 @@ class InsightWorkspaceTests {
 
         assertThat(page)
                 .contains("Dashboard IDE")
-                .contains("const AUTHOR_TABS = [\"compose\", \"api\", \"source\"]")
+                .contains("const AUTHOR_TABS = [\"compose\", \"explorer\", \"api\", \"source\"]")
+                .contains("explorer: \"Explorer\"")
                 .contains("class=\"insight-studio-heading-copy\"")
                 .contains("class=\"insight-title-field\"")
                 .contains("Dashboard inputs")
@@ -358,6 +361,8 @@ class InsightWorkspaceTests {
                 .contains("Step 1 of 3")
                 .contains("Add your first data source")
                 .contains("function projectExplorerDrawer()")
+                .contains("projectExplorer({ openCompose: true })")
+                .contains("data-open-compose=\"true\"")
                 .contains("Dataset map")
                 .contains("Build a visual")
                 .contains("function authorTabs(")
@@ -376,6 +381,7 @@ class InsightWorkspaceTests {
                 .contains("data-action=\"add-api-test-source\"")
                 .contains("api.invokeTool(tool.id, toolArguments(tool, draft.values))")
                 .contains("function insightListPanel(")
+                .contains("title=\"Delete insight\"")
                 .contains("class=\"insight-studio-workbench is-view\"")
                 .contains("class=\"insight-studio-page is-${state.mode}\"")
                 .contains("data-action=\"edit-insight\"")

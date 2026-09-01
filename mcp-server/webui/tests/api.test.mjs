@@ -119,7 +119,7 @@ test("every JSON and no-content API operation uses the documented route and payl
   }
 });
 
-for (const name of ["uploadFile", "uploadFolder", "createSummaryExport",
+for (const name of ["uploadFile", "uploadFolder", "createSummaryExport", "exportInsight",
   "importSpecFile", "detectImportAuth", "invokeTool"]) covered.add(name);
 
 test("file, folder, and specification uploads keep binary data in FormData", async () => {
@@ -167,6 +167,20 @@ test("summary export preserves response metadata and binary output", async () =>
   assert.equal(result.filename, "knowledge.txt");
   assert.equal(result.sourceCount, 3);
   assert.equal(result.chunkCount, 12);
+});
+
+test("insight export downloads an Excel workbook", async () => {
+  const requests = capture(() => new Response("workbook", {
+    headers: { "Content-Disposition": "attachment; filename=ops-report.xlsx" },
+  }));
+
+  const result = await api.exportInsight({ source: "# Ops" });
+
+  assert.equal(requests[0].url, "/api/insights/export");
+  assert.equal(requests[0].options.method, "POST");
+  assert.deepEqual(bodyOf(requests[0].options), { source: "# Ops" });
+  assert.equal(await result.blob.text(), "workbook");
+  assert.equal(result.filename, "ops-report.xlsx");
 });
 
 test("tool invocation merges overrides and surfaces schema violations", async () => {

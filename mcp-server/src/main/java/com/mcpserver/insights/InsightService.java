@@ -128,6 +128,11 @@ public class InsightService {
                 document.params(), document.components());
     }
 
+    /** Parses a report document for export metadata without exposing parser internals to controllers. */
+    public Document parse(String source) {
+        return parser.parse(source);
+    }
+
     /** The RQL analyzer uses offsets within a fenced block; the editor uses document offsets. */
     private static Integer rqlCursorOffset(Document document, Integer documentCursorOffset) {
         if (documentCursorOffset == null || document.rqlEndOffset() <= document.rqlStartOffset()) return null;

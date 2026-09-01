@@ -1679,9 +1679,9 @@ const MODE_HINTS = {
   view: "Focus on the rendered result",
   code: "Inspect or edit the generated source document",
 };
-const AUTHOR_TABS = ["compose", "api", "source"];
-const AUTHOR_TAB_LABELS = { compose: "Build", api: "Test request", source: "Source" };
-const AUTHOR_TAB_ICONS = { compose: "wand", api: "globe", source: "hash" };
+const AUTHOR_TABS = ["compose", "explorer", "api", "source"];
+const AUTHOR_TAB_LABELS = { compose: "Compose", explorer: "Explorer", api: "Test request", source: "Source" };
+const AUTHOR_TAB_ICONS = { compose: "wand", explorer: "route", api: "globe", source: "hash" };
 
 /**
  * Which insight was open and which mode it was in. Only these two preferences are local — the run
@@ -2021,7 +2021,7 @@ export async function mount(outlet) {
   function apiTesterPanel() {
     const requests = starterRequests();
     if (!requests.length) {
-      return `<section class="insight-api-tester is-empty">${projectExplorer()}<div class="insight-api-empty-state">${icon("globe", 18)}<strong>No enabled GET requests</strong><span>Enable read requests in APIs, then test them here before adding them to an insight dashboard.</span><a class="btn btn-ghost" href="/apps">Open APIs</a></div></section>`;
+      return `<section class="insight-api-tester is-empty"><div class="insight-api-empty-state">${icon("globe", 18)}<strong>No enabled GET requests</strong><span>Enable read requests in APIs, then test them here before adding them to an insight dashboard.</span><a class="btn btn-ghost" href="/apps">Open APIs</a></div></section>`;
     }
     const tool = syncApiTestTool();
     const connection = toolConnection(tool);
@@ -2029,7 +2029,6 @@ export async function mount(outlet) {
     const inInsight = requestIsInInsight(tool);
     const sourceName = requestBindings(state.source).find((binding) => binding.label === requestLabel(tool, connection))?.name;
     return `<section class="insight-api-tester" aria-labelledby="insight-api-test-title">
-      ${projectExplorer()}
       <form id="insight-api-test-form" class="insight-api-form">
         <header>
           <div><p>Request test</p><h2 id="insight-api-test-title">${escapeHtml(tool?.displayName || "Select request")}</h2><span>${escapeHtml(connection?.name || "Collection")} · ${escapeHtml(tool?.urlTemplate || "")}</span></div>
@@ -2242,7 +2241,7 @@ export async function mount(outlet) {
     </section>`;
   }
 
-  function projectExplorer() {
+  function projectExplorer({ openCompose = false } = {}) {
     const inputs = requestBindings(state.source);
     const relationships = relationshipBindings(state.source);
     const datasetNames = allDatasetNames(state.source);
@@ -2260,14 +2259,14 @@ export async function mount(outlet) {
           const dataset = resultDatasets[input.name];
           const rows = dataset ? plural(dataset.rows.length, "row") : "not run";
           const shaping = input.name === state.queryDataset;
-          return `<li><button class="${shaping ? "is-active" : ""}" type="button" data-action="shape-request-source" data-dataset="${escapeAttr(input.name)}"><span>${icon("globe", 12)}<b>${escapeHtml(input.name)}</b><i>${escapeHtml(rows)}</i></span><small>${escapeHtml(parts.collection)} · ${escapeHtml(parts.request)}</small></button></li>`;
+          return `<li><button class="${shaping ? "is-active" : ""}" type="button" data-action="shape-request-source" data-dataset="${escapeAttr(input.name)}" ${openCompose ? 'data-open-compose="true"' : ""}><span>${icon("globe", 12)}<b>${escapeHtml(input.name)}</b><i>${escapeHtml(rows)}</i></span><small>${escapeHtml(parts.collection)} · ${escapeHtml(parts.request)}</small></button></li>`;
         }).join("")
       : `<li class="is-empty"><span>${icon("globe", 12)}<b>No request datasets</b></span><small>Add a GET request above.</small></li>`;
     const relationshipItems = relationships.length
       ? relationships.map((relationship) => {
           const rows = resultDatasets[relationship.name] ? plural(resultDatasets[relationship.name].rows.length, "row") : "not run";
           const shaping = relationship.name === state.queryDataset;
-          return `<li><button class="${shaping ? "is-active" : ""}" type="button" data-action="shape-request-source" data-dataset="${escapeAttr(relationship.name)}"><span>${icon("route", 12)}<b>${escapeHtml(relationship.name)}</b><i>${escapeHtml(rows)}</i></span><small>${escapeHtml(relationship.left)}.${escapeHtml(relationship.leftField)} → ${escapeHtml(relationship.right)}.${escapeHtml(relationship.rightField)}</small></button></li>`;
+          return `<li><button class="${shaping ? "is-active" : ""}" type="button" data-action="shape-request-source" data-dataset="${escapeAttr(relationship.name)}" ${openCompose ? 'data-open-compose="true"' : ""}><span>${icon("route", 12)}<b>${escapeHtml(relationship.name)}</b><i>${escapeHtml(rows)}</i></span><small>${escapeHtml(relationship.left)}.${escapeHtml(relationship.leftField)} → ${escapeHtml(relationship.right)}.${escapeHtml(relationship.rightField)}</small></button></li>`;
         }).join("")
       : `<li class="is-empty"><span>${icon("route", 12)}<b>No relationships</b></span><small>Add another dataset to join fields.</small></li>`;
     const visualItems = datasetNames.length
@@ -2554,6 +2553,7 @@ export async function mount(outlet) {
 
   function authorHeaderMeta() {
     const tab = activeAuthorTab();
+    if (tab === "explorer") return { kicker: "Project explorer", title: "Dashboard structure", detail: "Inputs, relationships, and visual bindings" };
     if (tab === "api") return { kicker: "Request test", title: "Test a selected request", detail: "" };
     if (tab === "source") return { kicker: "Generated source", title: "RQL document", detail: "" };
     const fieldCount = availableQueryFields(syncQueryDataset()).length;
@@ -2569,7 +2569,9 @@ export async function mount(outlet) {
     const hasInputs = requestBindings(state.source).length > 0;
     const hasData = Object.keys(datasets()).length > 0;
     const firstStep = `<section class="insight-first-step" aria-labelledby="insight-first-step-title"><p>Step 1 of 3</p><h2 id="insight-first-step-title">Add your first data source</h2><span>Choose a connected GET request. Run it once, then build the visual you need.</span></section>`;
-    const content = tab === "api"
+    const content = tab === "explorer"
+      ? projectExplorer({ openCompose: true })
+      : tab === "api"
       ? apiTesterPanel()
       : tab === "source"
         ? editorPanel()
@@ -2585,7 +2587,7 @@ export async function mount(outlet) {
         <div><small>Saved</small><strong>Insights</strong></div>
         <button class="btn btn-sm" type="button" data-action="new-insight">${icon("plus", 14)} Create</button>
       </header>
-      ${state.saved.length ? `<ul>${state.saved.map((insight) => `<li><button class="insight-library-item ${insight.id === state.activeId ? "is-active" : ""}" type="button" data-action="open-insight" data-id="${escapeAttr(insight.id)}"><strong>${escapeHtml(insight.name)}</strong>${insight.description ? `<small>${escapeHtml(insight.description)}</small>` : ""}</button></li>`).join("")}</ul>` : `<div class="insight-list-empty">${icon("file", 20)}<strong>No insights yet</strong><span>Create one dashboard from multiple requests and collections.</span></div>`}
+      ${state.saved.length ? `<ul>${state.saved.map((insight) => `<li><button class="insight-library-item ${insight.id === state.activeId ? "is-active" : ""}" type="button" data-action="open-insight" data-id="${escapeAttr(insight.id)}"><strong>${escapeHtml(insight.name)}</strong>${insight.description ? `<small>${escapeHtml(insight.description)}</small>` : ""}</button><button class="insight-library-delete" type="button" data-action="delete-insight" data-id="${escapeAttr(insight.id)}" aria-label="Delete ${escapeAttr(insight.name)}" title="Delete insight">${icon("trash", 14)}</button></li>`).join("")}</ul>` : `<div class="insight-list-empty">${icon("file", 20)}<strong>No insights yet</strong><span>Create one dashboard from multiple requests and collections.</span></div>`}
     </aside>`;
   }
 
@@ -2619,6 +2621,8 @@ export async function mount(outlet) {
       <div>
         <span aria-live="polite">${state.running ? "Running…" : previewStatus()}</span>
         ${readonly ? `<button class="btn btn-ghost" type="button" data-action="edit-insight" ${canEdit ? "" : "disabled"}>${icon("wand", 15)} Edit</button>` : ""}
+        <button class="btn btn-ghost" type="button" data-action="export-insight" ${state.running || !canEdit ? "disabled" : ""} title="Download the current RQL report as Excel">${icon("download", 15)} Excel</button>
+        <a class="btn btn-ghost" href="/reports${state.activeId ? `?insight=${encodeURIComponent(state.activeId)}` : ""}">${icon("table", 15)} Worksheet</a>
         <button class="insight-run-button" type="button" data-action="run-insight" ${state.running || !canEdit ? "disabled" : ""} title="Run insight (${SHORTCUT_KEY}Enter)">${state.running ? '<span class="insight-run-spinner" aria-hidden="true"></span>' : icon("play", 15)} ${state.running ? "Running…" : "Run"}</button>
       </div>
     </header>
@@ -3454,6 +3458,29 @@ export async function mount(outlet) {
     }
   }
 
+  async function exportInsight() {
+    if (state.running) return;
+    state.error = "";
+    render();
+    try {
+      const result = await api.exportInsight({
+        source: state.source,
+        connectionId: state.connectionId || undefined,
+        parameters: state.parameters,
+      });
+      const url = URL.createObjectURL(result.blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = result.filename;
+      link.click();
+      URL.revokeObjectURL(url);
+      state.runNote = "Excel report downloaded.";
+    } catch (error) {
+      state.error = message(error, "The Excel report could not be created.");
+    }
+    render();
+  }
+
   async function saveInsight() {
     if (state.saving || state.running) return;
     state.saving = true;
@@ -3484,6 +3511,8 @@ export async function mount(outlet) {
     const { action, id } = target.dataset;
     if (action === "run-insight") {
       await runInsight();
+    } else if (action === "export-insight") {
+      await exportInsight();
     } else if (action === "back-to-preview") {
       if (state.autoSave && hasUnsavedChanges(state)) await saveInsight();
       state.mode = "view";
@@ -3603,6 +3632,7 @@ export async function mount(outlet) {
       const binding = requestBindings(state.source).find((item) => item.name === state.queryDataset);
       const tool = binding && toolByRequestLabel(binding.label);
       if (tool) state.apiTestToolId = tool.id;
+      if (target.dataset.openCompose === "true") state.authorTab = "compose";
       render();
     } else if (action === "add-dataset-table") {
       await addDatasetTable(target.dataset.dataset);

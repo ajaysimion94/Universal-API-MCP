@@ -23,6 +23,8 @@ The intended flow is:
 4. Shape datasets with IDE controls: fields, filters, grouping, sorting, and limits.
 5. Bind visuals to datasets: tables, charts, KPI cards, labels, and status blocks.
 6. Inspect generated source only when advanced customization is required.
+7. Select **Excel** in the result canvas to execute the current RQL and download its summary,
+   request-status, and materialized datasets as an `.xlsx` report.
 
 RQL remains the generated source behind the IDE. Normal dashboard creation should not require typing RQL.
 

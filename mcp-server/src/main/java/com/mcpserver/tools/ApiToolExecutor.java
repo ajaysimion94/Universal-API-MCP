@@ -518,14 +518,20 @@ public class ApiToolExecutor {
         Map<String, String> headers = new HashMap<>();
         response.headers().map().forEach((name, values) -> headers.put(name, String.join(", ", values)));
 
+        boolean structuredJson = false;
         if (!truncated && (contentType.contains("json") || text.trim().startsWith("{") || text.trim().startsWith("["))) {
             try {
                 text = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(mapper.readTree(text));
+                structuredJson = true;
             } catch (Exception ignored) {
                 // leave as-is when the body isn't valid JSON after all
             }
         }
-        if (text.length() > MAX_DISPLAY_CHARS) {
+        // Insight execution parses this body after this method returns. Truncating a valid JSON
+        // array here turns a successful API response into malformed input and silently empties
+        // every BI visual. The response-byte limit above remains the hard safety bound; only
+        // unstructured display text is shortened for the request tester.
+        if (!structuredJson && text.length() > MAX_DISPLAY_CHARS) {
             text = text.substring(0, MAX_DISPLAY_CHARS);
             truncated = true;
         }

@@ -1,6 +1,9 @@
 package com.mcpserver.insights;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -22,9 +25,11 @@ import java.util.Map;
 public class InsightController {
 
     private final InsightService insightService;
+    private final InsightWorkbookExportService workbookExportService;
 
-    public InsightController(InsightService insightService) {
+    public InsightController(InsightService insightService, InsightWorkbookExportService workbookExportService) {
         this.insightService = insightService;
+        this.workbookExportService = workbookExportService;
     }
 
     @GetMapping
@@ -72,6 +77,20 @@ public class InsightController {
     @PostMapping("/{id}/run")
     public InsightModel.RunResult run(@PathVariable String id, @RequestBody DataRequest request) {
         return insightService.run(id, request.source, request.connectionId, request.parameters);
+    }
+
+    /** Executes the current report definition and downloads every materialized RQL dataset. */
+    @PostMapping("/export")
+    public ResponseEntity<byte[]> export(@RequestBody DataRequest request) {
+        InsightModel.Document document = insightService.parse(request.source);
+        InsightModel.Data data = insightService.data(request.source, request.connectionId, request.parameters);
+        String filename = document.title().replaceAll("[^A-Za-z0-9._-]+", "-").replaceAll("(^-|-$)", "");
+        if (filename.isBlank()) filename = "insight-report";
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment().filename(filename + ".xlsx").build().toString())
+                .body(workbookExportService.export(document.title(), data));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

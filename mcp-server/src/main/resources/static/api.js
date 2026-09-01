@@ -179,6 +179,19 @@ export const api = {
   createInsight: (input) => send("/api/insights", "POST", input),
   // Runs a saved insight and keeps the result on it; /api/insights/data stays the draft path.
   runInsight: (id, input) => send(`/api/insights/${id}/run`, "POST", input),
+  async exportInsight(input) {
+    const response = await fetch("/api/insights/export", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    if (!response.ok) throw await parseError(response, "Excel export failed");
+    const disposition = response.headers.get("Content-Disposition") || "";
+    return {
+      blob: await response.blob(),
+      filename: /filename="?([^\";]+)"?/i.exec(disposition)?.[1] || "insight-report.xlsx",
+    };
+  },
   updateInsight: (id, input) => send(`/api/insights/${id}`, "PUT", input),
   deleteInsight: async (id) =>
     noContent(await fetch(`/api/insights/${id}`, { method: "DELETE" }), "Delete failed"),

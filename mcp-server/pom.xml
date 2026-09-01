@@ -111,6 +111,14 @@
             <artifactId>jackson-dataformat-yaml</artifactId>
         </dependency>
 
+        <!-- Native Excel exports for Insights report runs. Kept as a direct dependency because
+             the report-export surface uses the POI workbook API. -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>5.2.5</version>
+        </dependency>
+
         <!-- Apache Tika for binary document text extraction (PDF, Word, Excel, PowerPoint, etc.) -->
         <dependency>
             <groupId>org.apache.tika</groupId>

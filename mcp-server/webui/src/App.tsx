@@ -52,6 +52,7 @@ const pageModules: Record<string, string> = {
   connections: "/pages/connections.js?v=ui-logic-5",
   apps: "/pages/apps.js?v=ui-logic-5",
   insights: "/pages/insights.js?v=ui-logic-30",
+  reports: "/pages/reports.js?v=report-workspace-1",
   help: "/pages/help.js?v=ui-logic-2",
   tutorial: "/pages/tutorial.js?v=ui-logic-2",
 };
@@ -215,7 +216,7 @@ export function App() {
         <Route path="/help" element={<LegacyPage page="help" />} />
         <Route path="/tutorial" element={<LegacyPage page="tutorial" />} />
         <Route path="/guide" element={<Navigate to="/help" replace />} />
-        <Route path="/reports/*" element={<Navigate to="/insights" replace />} />
+        <Route path="/reports/*" element={<LegacyPage page="reports" />} />
         <Route path="/dashboards/*" element={<Navigate to="/insights" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

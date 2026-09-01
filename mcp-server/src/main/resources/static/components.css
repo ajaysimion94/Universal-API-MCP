@@ -4762,6 +4762,14 @@
   flex-direction: column;
 }
 
+/* Explorer is a destination of its own, not a prelude to testing a request. */
+.insight-author-panel > .insight-project-explorer {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  border-bottom: 0;
+}
+
 @container insight-build (max-width: 340px) {
   .insight-studio-build > header {
     grid-template-columns: minmax(0, 1fr);
@@ -4815,14 +4823,24 @@
 
 .insight-studio-list li {
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .insight-studio-list .insight-library-item {
-  width: 100%;
+  width: auto;
   max-width: 100%;
   min-height: 42px;
   padding: var(--space-2xs) var(--space-xs);
   display: block;
+  flex: 1 1 auto;
+}
+
+.insight-studio-list .insight-library-delete {
+  align-self: stretch;
+  min-width: 30px;
+  padding-inline: 6px;
 }
 
 .insight-list-empty {
@@ -11015,3 +11033,5 @@ button.insight-status-segment:hover .insight-status-value { color: var(--text); 
     grid-template-columns: 1fr;
   }
 }
+/* Refined local worksheet: edits are deliberately a working copy, never source-system writes. */
+.report-workspace { --report-ink: oklch(.25 .025 250); --report-paper: oklch(.985 .006 250); --report-rule: oklch(.84 .018 250); max-width: 1440px; margin: 0 auto; padding: 32px; color: var(--report-ink); }.report-masthead { display:flex; justify-content:space-between; gap:32px; align-items:end; padding:20px 0 28px; border-bottom:1px solid var(--report-rule); }.report-masthead p,.report-masthead span,.report-back { font-size:.72rem; letter-spacing:.11em; text-transform:uppercase; color:oklch(.47 .03 250); }.report-masthead h1 { margin:6px 0; font-size:2rem; letter-spacing:-.045em; }.report-back { display:inline-flex; gap:4px; align-items:center; text-decoration:none; margin-bottom:18px; }.report-actions,.report-toolbar { display:flex; gap:8px; align-items:center; }.report-toolbar { justify-content:space-between; padding:18px 0; }.report-toolbar label { display:grid; gap:4px; font-size:.78rem; }.report-toolbar select { min-width:270px; padding:8px; border:1px solid var(--report-rule); background:var(--report-paper); }.report-dirty { font-size:.78rem; color:oklch(.5 .12 65); }.worksheet { border:1px solid var(--report-rule); background:var(--report-paper); }.worksheet-tabs { display:flex; gap:2px; padding:8px 8px 0; overflow-x:auto; background:oklch(.95 .012 250); }.worksheet-tabs button { border:0; padding:9px 12px; background:transparent; white-space:nowrap; }.worksheet-tabs button.is-active { background:var(--report-paper); font-weight:650; }.worksheet-tabs small { opacity:.65; margin-left:4px; }.worksheet-scroll { overflow:auto; max-height:min(68vh,760px); }.worksheet table { border-collapse:separate; border-spacing:0; min-width:100%; font-size:.82rem; }.worksheet th,.worksheet td { min-width:150px; padding:9px 11px; border-right:1px solid var(--report-rule); border-bottom:1px solid var(--report-rule); text-align:left; vertical-align:top; white-space:pre-wrap; }.worksheet thead th { position:sticky; top:0; background:oklch(.93 .018 250); z-index:1; font-weight:650; }.worksheet tbody th { min-width:44px; width:44px; background:oklch(.96 .01 250); text-align:right; }.worksheet td:focus { outline:2px solid oklch(.56 .11 245); outline-offset:-2px; background:oklch(.97 .018 245); }.report-empty { padding:96px 32px; text-align:center; background:var(--report-paper); border:1px dashed var(--report-rule); }.report-error { padding:10px 12px; color:oklch(.43 .13 25); background:oklch(.94 .035 25); } @media(max-width:700px){.report-workspace{padding:18px}.report-masthead,.report-toolbar{align-items:start;flex-direction:column}.report-actions{width:100%}.report-actions>*{flex:1;justify-content:center}}
